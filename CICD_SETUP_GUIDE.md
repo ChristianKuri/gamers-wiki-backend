@@ -96,6 +96,7 @@ By default, GitHub Container Registry packages are private. You need to make it 
      1. Commit and push your updated `docker-compose.yml` to GitHub
      2. In Portainer, click **"Pull and redeploy"**
      3. Portainer will fetch the new compose file from Git
+     4. Make sure Portainer is configured to pull from the `main` branch
 
 > **⚠️ First Deployment Note:** The first time you update the stack, it might show an error because the image doesn't exist yet in GHCR. This is expected! Continue to the next step.
 
