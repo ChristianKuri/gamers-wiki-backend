@@ -11,6 +11,9 @@ services:
     # This forces Portainer to always check for a new version of the image
     pull_policy: always
     restart: unless-stopped
+    networks:
+      - default
+      - nginx_proxy_manager_default
     environment:
       # --- All your environment variables from the .env file ---
       DATABASE_CLIENT: postgres
@@ -80,3 +83,7 @@ services:
 
 volumes:
   strapi-data:
+
+networks:
+  nginx_proxy_manager_default:
+    external: true
