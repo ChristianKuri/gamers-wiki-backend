@@ -1,15 +1,18 @@
-# docker-compose.yml (CORRECTED for Portainer Git Deployment)
+# In your docker-compose.yml
 
-version: '3.8'
+# ... (version and other services are the same)
 
-services:
   strapi:
     container_name: gamers-wiki-strapi
     platform: linux/arm64
     build: .
     restart: unless-stopped
     environment:
-      # We list every variable Strapi needs
+      # --- THIS IS THE FIX ---
+      # Add this line to disable BuildKit and use the classic builder
+      DOCKER_BUILDKIT: 0
+
+      # --- All your other variables remain the same ---
       DATABASE_CLIENT: postgres
       DATABASE_HOST: db
       DATABASE_PORT: 5432
@@ -34,43 +37,4 @@ services:
     depends_on:
       - db
 
-  db:
-    container_name: gamers-wiki-postgres
-    platform: linux/arm64
-    image: postgres:14-alpine
-    restart: unless-stopped
-    environment:
-      # We list every variable Postgres needs
-      POSTGRES_DB: ${DATABASE_NAME}
-      POSTGRES_USER: ${DATABASE_USER}
-      POSTGRES_PASSWORD: ${DATABASE_PASSWORD}
-    volumes:
-      - ./strapi-data:/var/lib/postgresql/data
-    ports:
-      - "5432:5432"
-
-  strapi_db_backup:
-    container_name: gamers-wiki-db-backup
-    platform: linux/arm64
-    image: tiredofit/db-backup
-    restart: unless-stopped
-    environment:
-      # We list every variable the backup tool needs
-      CONTAINER_ENABLE_MONITORING: 'FALSE'
-      DB_TYPE: postgres
-      DB_HOST: db
-      DB_DUMP_FREQ: 1440
-      BACKUP_LOCATION: S3
-      DB_NAME: ${DATABASE_NAME}
-      DB_USER: ${DATABASE_USER}
-      DB_PASS: ${DATABASE_PASSWORD}
-      S3_BUCKET: ${S3_BUCKET_BACKUP}
-      S3_KEY_ID: ${S3_KEY_ID_BACKUP}
-      S3_KEY_SECRET: ${S3_KEY_SECRET_BACKUP}
-      S3_PATH: ${S3_PATH_BACKUP}
-      S3_REGION: ${S3_REGION_BACKUP}
-    depends_on:
-      - db
-
-volumes:
-  strapi-data:
+# ... (the rest of your file is the same)
