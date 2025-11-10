@@ -1,17 +1,15 @@
-# docker-compose.yml (ARM64 Production Version)
+# docker-compose.yml (CORRECTED for Portainer Git Deployment)
 
 version: '3.8'
 
 services:
   strapi:
     container_name: gamers-wiki-strapi
-    # This tells Docker to build a native ARM64 image
     platform: linux/arm64
-    # This builds the image from the Dockerfile in this directory
     build: .
     restart: unless-stopped
-    env_file: .env
     environment:
+      # We list every variable Strapi needs
       DATABASE_CLIENT: postgres
       DATABASE_HOST: db
       DATABASE_PORT: 5432
@@ -19,6 +17,18 @@ services:
       HOST: '0.0.0.0'
       PORT: 1337
       NODE_ENV: production
+      DATABASE_NAME: ${DATABASE_NAME}
+      DATABASE_USER: ${DATABASE_USER}
+      DATABASE_PASSWORD: ${DATABASE_PASSWORD}
+      APP_KEYS: ${APP_KEYS}
+      API_TOKEN_SALT: ${API_TOKEN_SALT}
+      ADMIN_JWT_SECRET: ${ADMIN_JWT_SECRET}
+      JWT_SECRET: ${JWT_SECRET}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
+      AWS_REGION: ${AWS_REGION}
+      AWS_BUCKET_NAME: ${AWS_BUCKET_NAME}
+      CDN_URL: ${CDN_URL}
     ports:
       - "1337:1337"
     depends_on:
@@ -26,35 +36,41 @@ services:
 
   db:
     container_name: gamers-wiki-postgres
-    # This ensures the ARM64 version of Postgres is used
     platform: linux/arm64
     image: postgres:14-alpine
     restart: unless-stopped
-    env_file: .env
     environment:
+      # We list every variable Postgres needs
       POSTGRES_DB: ${DATABASE_NAME}
       POSTGRES_USER: ${DATABASE_USER}
       POSTGRES_PASSWORD: ${DATABASE_PASSWORD}
     volumes:
-      # Persists the database data on your server in a folder named 'strapi-data'
       - ./strapi-data:/var/lib/postgresql/data
     ports:
-      # Optional: Exposes the database port. You can remove this for better security.
       - "5432:5432"
 
   strapi_db_backup:
     container_name: gamers-wiki-db-backup
-    # This ensures the ARM64 version of the backup tool is used
     platform: linux/arm64
     image: tiredofit/db-backup
     restart: unless-stopped
-    env_file: .env
     environment:
-      - CONTAINER_ENABLE_MONITORING=FALSE
-      - DB_TYPE=postgres
-      - DB_HOST=db
-      - DB_DUMP_FREQ=1440 # Backs up once every 24 hours
-      - BACKUP_LOCATION=S3
-      - S3_PATH=${S3_PATH_BACKUP}
+      # We list every variable the backup tool needs
+      CONTAINER_ENABLE_MONITORING: 'FALSE'
+      DB_TYPE: postgres
+      DB_HOST: db
+      DB_DUMP_FREQ: 1440
+      BACKUP_LOCATION: S3
+      DB_NAME: ${DATABASE_NAME}
+      DB_USER: ${DATABASE_USER}
+      DB_PASS: ${DATABASE_PASSWORD}
+      S3_BUCKET: ${S3_BUCKET_BACKUP}
+      S3_KEY_ID: ${S3_KEY_ID_BACKUP}
+      S3_KEY_SECRET: ${S3_KEY_SECRET_BACKUP}
+      S3_PATH: ${S3_PATH_BACKUP}
+      S3_REGION: ${S3_REGION_BACKUP}
     depends_on:
       - db
+
+volumes:
+  strapi-data:
