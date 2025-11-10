@@ -1,17 +1,17 @@
-# docker-compose.yml (FINAL PRODUCTION VERSION for ARM64 & Strapi v5)
+# docker-compose.yml (for Portainer Git Deployment)
 
 version: '3.8'
 
 services:
   strapi:
     container_name: gamers-wiki-strapi
+    # This now pulls the pre-built image from GHCR
+    image: ghcr.io/christiankuri/gamers-wiki-backend:latest
     platform: linux/arm64
-    build: .
+    # This forces Portainer to always check for a new version of the image
+    pull_policy: always
     restart: unless-stopped
     environment:
-      # --- Fix for Docker build error ---
-      DOCKER_BUILDKIT: 0
-
       # --- All your environment variables from the .env file ---
       DATABASE_CLIENT: postgres
       DATABASE_HOST: db
