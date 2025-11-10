@@ -11,6 +11,8 @@ export default ({ env }) => ({
         params: {
           Bucket: env('AWS_BUCKET_NAME'),
         },
+        // Use CloudFront CDN URL instead of direct S3 URLs
+        baseUrl: env('CDN_URL'),
         // For Cloudflare R2, uncomment and set R2_ENDPOINT in env vars
         // endpoint: env('R2_ENDPOINT'),
       },
