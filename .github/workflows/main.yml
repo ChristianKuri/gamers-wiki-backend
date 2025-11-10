@@ -29,7 +29,7 @@ jobs:
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
-          username: ${{ github.repository_owner }}
+          username: ${{ github.actor }}
           password: ${{ secrets.DOCKER_PASSWORD }}
 
       # Step 5: Build and push the ARM64 Docker image
@@ -41,7 +41,7 @@ jobs:
           platforms: linux/arm64
           push: true
           # This creates the image tag, e.g., ghcr.io/christiankuri/gamers-wiki-backend:latest
-          tags: ghcr.io/${{ github.repository }}:latest
+          tags: ghcr.io/${{ github.repository_owner }}/gamers-wiki-backend:latest
 
       # Step 6: Trigger the Portainer webhook to redeploy the service
       - name: Trigger Portainer Webhook
