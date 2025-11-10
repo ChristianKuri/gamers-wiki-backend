@@ -40,8 +40,8 @@ jobs:
           # This is the crucial part that builds for your ARM server
           platforms: linux/arm64
           push: true
-          # This creates the image tag, e.g., ghcr.io/christiankuri/gamers-wiki-backend:latest
-          tags: ghcr.io/${{ github.repository_owner }}/gamers-wiki-backend:latest
+          # This creates the image tag in lowercase as required by Docker
+          tags: ghcr.io/christiankuri/gamers-wiki-backend:latest
 
       # Step 6: Trigger the Portainer webhook to redeploy the service
       - name: Trigger Portainer Webhook
