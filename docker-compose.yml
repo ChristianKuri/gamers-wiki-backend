@@ -52,8 +52,9 @@ services:
       POSTGRES_PASSWORD: ${DATABASE_PASSWORD}
     volumes:
       - ./strapi-data:/var/lib/postgresql/data
-    ports:
-      - "5432:5432"
+    # Removed external port mapping - only accessible within Docker network
+    # ports:
+    #   - "5432:5432"
 
   strapi_db_backup:
     container_name: gamers-wiki-db-backup
