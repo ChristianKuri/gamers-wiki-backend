@@ -3,18 +3,19 @@ export default ({ env }) => ({
     config: {
       provider: 'aws-s3',
       providerOptions: {
-        credentials: {
-          accessKeyId: env('AWS_ACCESS_KEY_ID'),
-          secretAccessKey: env('AWS_SECRET_ACCESS_KEY'),
-        },
-        region: env('AWS_REGION'),
-        params: {
-          Bucket: env('AWS_BUCKET_NAME'),
-        },
-        // Use CloudFront CDN URL instead of direct S3 URLs
         baseUrl: env('CDN_URL'),
-        // For Cloudflare R2, uncomment and set R2_ENDPOINT in env vars
-        // endpoint: env('R2_ENDPOINT'),
+        s3Options: {
+          credentials: {
+            accessKeyId: env('AWS_ACCESS_KEY_ID'),
+            secretAccessKey: env('AWS_SECRET_ACCESS_KEY'),
+          },
+          region: env('AWS_REGION'),
+          params: {
+            Bucket: env('AWS_BUCKET_NAME'),
+          },
+          // For Cloudflare R2, uncomment and set R2_ENDPOINT in env vars
+          // endpoint: env('R2_ENDPOINT'),
+        },
       },
       actionOptions: {
         upload: {},
