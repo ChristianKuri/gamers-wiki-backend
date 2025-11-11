@@ -5,7 +5,8 @@ export default ({ env }) => ({
       providerOptions: {
         // CloudFront URL - files will be served through CDN, not direct S3
         baseUrl: env('CDN_URL'),
-        rootPath: env('CDN_ROOT_PATH'),
+        // Optional: only include rootPath if CDN_ROOT_PATH is set
+        ...(env('CDN_ROOT_PATH') && { rootPath: env('CDN_ROOT_PATH') }),
         s3Options: {
           credentials: {
             accessKeyId: env('AWS_ACCESS_KEY_ID'),
