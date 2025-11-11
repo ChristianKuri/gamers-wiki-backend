@@ -21,7 +21,7 @@ services:
       PORT: 1337
       NODE_ENV: production
       DATABASE_NAME: ${DATABASE_NAME}
-      DATABASE_USER: ${DATABASE_USER}
+      DATABASE_USERNAME: ${DATABASE_USERNAME}
       DATABASE_PASSWORD: ${DATABASE_PASSWORD}
       APP_KEYS: ${APP_KEYS}
       API_TOKEN_SALT: ${API_TOKEN_SALT}
@@ -48,7 +48,7 @@ services:
     restart: unless-stopped
     environment:
       POSTGRES_DB: ${DATABASE_NAME}
-      POSTGRES_USER: ${DATABASE_USER}
+      POSTGRES_USER: ${DATABASE_USERNAME}
       POSTGRES_PASSWORD: ${DATABASE_PASSWORD}
     volumes:
       - ./strapi-data:/var/lib/postgresql/data
@@ -68,7 +68,7 @@ services:
       DB_DUMP_FREQ: 1440
       BACKUP_LOCATION: S3
       DB_NAME: ${DATABASE_NAME}
-      DB_USER: ${DATABASE_USER}
+      DB_USER: ${DATABASE_USERNAME}
       DB_PASS: ${DATABASE_PASSWORD}
       S3_BUCKET: ${S3_BUCKET_BACKUP}
       S3_KEY_ID: ${S3_KEY_ID_BACKUP}
