@@ -36,6 +36,7 @@ services:
       AWS_REGION: ${AWS_REGION}
       AWS_BUCKET_NAME: ${AWS_BUCKET_NAME}
       CDN_URL: ${CDN_URL}
+      CDN_ROOT_PATH: ${CDN_ROOT_PATH}
     ports:
       - "1337:1337"
     depends_on:
