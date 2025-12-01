@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "strapi": {
+      "url": "http://localhost:1337/mcp/sse",
+      "transport": "sse"
+    }
+  }
+}

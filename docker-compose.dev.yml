@@ -1,0 +1,29 @@
+# docker-compose.dev.yml
+# Local development PostgreSQL database only
+# Usage: docker compose -f docker-compose.dev.yml up -d
+#
+# This runs ONLY the database. Strapi runs natively on your machine
+# with any Node.js version you prefer.
+
+services:
+  db:
+    container_name: gamers-wiki-postgres-dev
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: strapi_dev
+      POSTGRES_USER: strapi
+      POSTGRES_PASSWORD: strapi_dev_password
+    volumes:
+      - postgres_dev_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U strapi -d strapi_dev"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  postgres_dev_data:
+

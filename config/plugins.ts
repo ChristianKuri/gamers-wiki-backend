@@ -26,4 +26,15 @@ export default ({ env }) => ({
       },
     },
   },
+  // MCP plugin - only enabled in development for AI-assisted development
+  ...(env('NODE_ENV') === 'development' && {
+    mcp: {
+      enabled: true,
+      resolve: './node_modules/@sensinum/strapi-plugin-mcp',
+      config: {
+        // Session storage: 'memory' for local dev, 'redis' for shared environments
+        sessionStorage: 'memory',
+      },
+    },
+  }),
 });
