@@ -12,7 +12,7 @@ services:
     environment:
       # --- All your environment variables from the .env file ---
       DATABASE_CLIENT: postgres
-      DATABASE_HOST: db
+      DATABASE_HOST: gamers-wiki-postgres
       DATABASE_PORT: 5432
       DATABASE_SSL: 'false'
       HOST: '0.0.0.0'
@@ -38,7 +38,6 @@ services:
     ports:
       - "1337:1337"
     networks:
-      - internal
       - nginx_proxy
     depends_on:
       - db
@@ -55,7 +54,7 @@ services:
     volumes:
       - ./strapi-data:/var/lib/postgresql/data
     networks:
-      - internal
+      - nginx_proxy
 
   strapi_db_backup:
     container_name: gamers-wiki-db-backup
@@ -65,7 +64,7 @@ services:
     environment:
       CONTAINER_ENABLE_MONITORING: 'FALSE'
       DB_TYPE: postgres
-      DB_HOST: db
+      DB_HOST: gamers-wiki-postgres
       DB_DUMP_FREQ: 1440
       BACKUP_LOCATION: S3
       DB_NAME: ${DATABASE_NAME}
@@ -77,7 +76,7 @@ services:
       S3_PATH: ${S3_PATH_BACKUP}
       S3_REGION: ${S3_REGION_BACKUP}
     networks:
-      - internal
+      - nginx_proxy
     depends_on:
       - db
 
@@ -85,9 +84,6 @@ volumes:
   strapi-data:
 
 networks:
-  internal:
-    # Internal network for strapi/db/backup communication
-    name: gamers-wiki-internal
   nginx_proxy:
     name: nginx_proxy_manager_default
     external: true
