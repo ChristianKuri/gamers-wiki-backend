@@ -39,6 +39,9 @@ services:
       CDN_ROOT_PATH: ${CDN_ROOT_PATH}
     ports:
       - "1337:1337"
+    networks:
+      - default
+      - nginx_proxy
     depends_on:
       - db
 
@@ -81,3 +84,10 @@ services:
 
 volumes:
   strapi-data:
+
+networks:
+  default:
+    # Internal network for strapi/db communication
+  nginx_proxy:
+    name: nginx_proxy_manager_default
+    external: true
