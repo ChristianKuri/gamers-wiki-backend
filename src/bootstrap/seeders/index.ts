@@ -2,6 +2,7 @@ import type { Core } from '@strapi/strapi';
 import type { Seeder } from './types';
 import { localeSeeder } from './locale.seeder';
 import { categorySeeder } from './category.seeder';
+import { tagSeeder } from './tag.seeder';
 
 /**
  * All seeders to run during bootstrap.
@@ -13,8 +14,8 @@ import { categorySeeder } from './category.seeder';
 const seeders: Seeder[] = [
   localeSeeder,    // Must be first - creates locales
   categorySeeder,
+  tagSeeder,
   // Add more seeders here as needed:
-  // tagSeeder,
   // genreSeeder,
   // authorSeeder,
   // gameSeeder,
