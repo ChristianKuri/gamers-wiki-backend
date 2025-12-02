@@ -42,6 +42,14 @@
           "localized": true
         }
       }
+    },
+    "systemPrompt": {
+      "type": "text",
+      "pluginOptions": {
+        "i18n": {
+          "localized": false
+        }
+      }
     }
   }
 }
