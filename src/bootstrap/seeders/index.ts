@@ -4,6 +4,7 @@ import { localeSeeder } from './locale.seeder';
 import { categorySeeder } from './category.seeder';
 import { tagSeeder } from './tag.seeder';
 import { genreSeeder } from './genre.seeder';
+import { authorSeeder } from './author.seeder';
 
 /**
  * All seeders to run during bootstrap.
@@ -17,8 +18,8 @@ const seeders: Seeder[] = [
   categorySeeder,
   tagSeeder,
   genreSeeder,
+  authorSeeder,
   // Add more seeders here as needed:
-  // authorSeeder,
   // gameSeeder,
 ];
 
