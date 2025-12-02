@@ -27,13 +27,16 @@ export default ({ env }) => ({
     },
   },
   // MCP plugin - only enabled in development for AI-assisted development
-  mcp: {
-    enabled: process.env.NODE_ENV === 'development',
-    resolve: './node_modules/@sensinum/strapi-plugin-mcp',
-    config: {
-      sessionStorage: 'memory',
+  // Conditionally include plugin config to avoid resolution errors in production
+  ...(process.env.NODE_ENV === 'development' && {
+    mcp: {
+      enabled: true,
+      resolve: './node_modules/@sensinum/strapi-plugin-mcp',
+      config: {
+        sessionStorage: 'memory',
+      },
     },
-  },
+  }),
   // Internationalization plugin for multi-language content
   i18n: {
     enabled: true,
