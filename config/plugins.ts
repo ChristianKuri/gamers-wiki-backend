@@ -34,4 +34,11 @@ export default ({ env }) => ({
       sessionStorage: 'memory',
     },
   },
+  // Internationalization plugin for multi-language content
+  i18n: {
+    enabled: true,
+    config: {
+      defaultLocale: 'en',
+    },
+  },
 });
