@@ -44,4 +44,6 @@ export default ({ env }) => ({
       defaultLocale: 'en',
     },
   },
+  // Note: Game Fetcher is implemented as a custom API at src/api/game-fetcher/
+  // instead of a plugin for simpler development workflow
 });

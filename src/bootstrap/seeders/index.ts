@@ -3,8 +3,9 @@ import type { Seeder } from './types';
 import { localeSeeder } from './locale.seeder';
 import { categorySeeder } from './category.seeder';
 import { tagSeeder } from './tag.seeder';
-import { genreSeeder } from './genre.seeder';
+// import { genreSeeder } from './genre.seeder';
 import { authorSeeder } from './author.seeder';
+// import { gameSeeder } from './game.seeder';
 
 /**
  * All seeders to run during bootstrap.
@@ -17,10 +18,11 @@ const seeders: Seeder[] = [
   localeSeeder,    // Must be first - creates locales
   categorySeeder,
   tagSeeder,
-  genreSeeder,
+  // genreSeeder - Disabled: Genres are now populated from IGDB when importing games.
+  //               This ensures genre names match exactly with IGDB's naming conventions.
   authorSeeder,
-  // Add more seeders here as needed:
-  // gameSeeder,
+  // gameSeeder - Disabled: We want to test the game-fetcher plugin manually
+  //              before seeding games. Uncomment when ready to seed test games.
 ];
 
 /**

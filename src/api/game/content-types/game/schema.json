@@ -1,0 +1,312 @@
+{
+  "kind": "collectionType",
+  "collectionName": "games",
+  "info": {
+    "singularName": "game",
+    "pluralName": "games",
+    "displayName": "Game",
+    "description": "The pillar content type - video games that all other content revolves around"
+  },
+  "options": {
+    "draftAndPublish": true
+  },
+  "pluginOptions": {
+    "i18n": {
+      "localized": true
+    }
+  },
+  "attributes": {
+    "name": {
+      "type": "string",
+      "required": true,
+      "pluginOptions": {
+        "i18n": {
+          "localized": true
+        }
+      }
+    },
+    "slug": {
+      "type": "uid",
+      "targetField": "name",
+      "required": true,
+      "pluginOptions": {
+        "i18n": {
+          "localized": true
+        }
+      }
+    },
+    "description": {
+      "type": "richtext",
+      "pluginOptions": {
+        "i18n": {
+          "localized": true
+        }
+      }
+    },
+    "releaseDate": {
+      "type": "date",
+      "pluginOptions": {
+        "i18n": {
+          "localized": false
+        }
+      }
+    },
+    "gameCategory": {
+      "type": "enumeration",
+      "enum": ["main_game", "dlc_addon", "expansion", "bundle", "standalone_expansion", "mod", "episode", "season", "remake", "remaster", "expanded_game", "port", "fork", "pack", "update"],
+      "default": "main_game",
+      "pluginOptions": {
+        "i18n": {
+          "localized": false
+        }
+      }
+    },
+    "gameStatus": {
+      "type": "enumeration",
+      "enum": ["released", "alpha", "beta", "early_access", "offline", "cancelled", "rumored", "delisted"],
+      "default": "released",
+      "pluginOptions": {
+        "i18n": {
+          "localized": false
+        }
+      }
+    },
+    "developers": {
+      "type": "relation",
+      "relation": "manyToMany",
+      "target": "api::company.company",
+      "inversedBy": "developedGames"
+    },
+    "publishers": {
+      "type": "relation",
+      "relation": "manyToMany",
+      "target": "api::company.company",
+      "inversedBy": "publishedGames"
+    },
+    "franchises": {
+      "type": "relation",
+      "relation": "manyToMany",
+      "target": "api::franchise.franchise",
+      "inversedBy": "games"
+    },
+    "platforms": {
+      "type": "relation",
+      "relation": "manyToMany",
+      "target": "api::platform.platform",
+      "inversedBy": "games"
+    },
+    "genres": {
+      "type": "relation",
+      "relation": "manyToMany",
+      "target": "api::genre.genre",
+      "inversedBy": "games"
+    },
+    "languages": {
+      "type": "relation",
+      "relation": "manyToMany",
+      "target": "api::language.language"
+    },
+    "parentGame": {
+      "type": "relation",
+      "relation": "manyToOne",
+      "target": "api::game.game",
+      "inversedBy": "dlcs"
+    },
+    "dlcs": {
+      "type": "relation",
+      "relation": "oneToMany",
+      "target": "api::game.game",
+      "mappedBy": "parentGame"
+    },
+    "remakes": {
+      "type": "relation",
+      "relation": "manyToMany",
+      "target": "api::game.game"
+    },
+    "remasters": {
+      "type": "relation",
+      "relation": "manyToMany",
+      "target": "api::game.game"
+    },
+    "similarGames": {
+      "type": "relation",
+      "relation": "manyToMany",
+      "target": "api::game.game"
+    },
+    "ageRatings": {
+      "type": "relation",
+      "relation": "manyToMany",
+      "target": "api::age-rating.age-rating",
+      "inversedBy": "games"
+    },
+    "gameEngines": {
+      "type": "relation",
+      "relation": "manyToMany",
+      "target": "api::game-engine.game-engine",
+      "inversedBy": "games"
+    },
+    "heroImage": {
+      "type": "media",
+      "multiple": false,
+      "required": false,
+      "allowedTypes": ["images"],
+      "pluginOptions": {
+        "i18n": {
+          "localized": false
+        }
+      }
+    },
+    "coverImageUrl": {
+      "type": "string",
+      "pluginOptions": {
+        "i18n": {
+          "localized": false
+        }
+      }
+    },
+    "screenshotUrls": {
+      "type": "json",
+      "pluginOptions": {
+        "i18n": {
+          "localized": false
+        }
+      }
+    },
+    "trailerIds": {
+      "type": "json",
+      "pluginOptions": {
+        "i18n": {
+          "localized": false
+        }
+      }
+    },
+    "metacriticScore": {
+      "type": "integer",
+      "min": 0,
+      "max": 100,
+      "pluginOptions": {
+        "i18n": {
+          "localized": false
+        }
+      }
+    },
+    "userRating": {
+      "type": "decimal",
+      "min": 0,
+      "max": 100,
+      "pluginOptions": {
+        "i18n": {
+          "localized": false
+        }
+      }
+    },
+    "userRatingCount": {
+      "type": "integer",
+      "pluginOptions": {
+        "i18n": {
+          "localized": false
+        }
+      }
+    },
+    "gameModes": {
+      "type": "relation",
+      "relation": "manyToMany",
+      "target": "api::game-mode.game-mode",
+      "inversedBy": "games"
+    },
+    "playerPerspectives": {
+      "type": "relation",
+      "relation": "manyToMany",
+      "target": "api::player-perspective.player-perspective",
+      "inversedBy": "games"
+    },
+    "themes": {
+      "type": "relation",
+      "relation": "manyToMany",
+      "target": "api::theme.theme",
+      "inversedBy": "games"
+    },
+    "officialWebsite": {
+      "type": "string",
+      "pluginOptions": {
+        "i18n": {
+          "localized": false
+        }
+      }
+    },
+    "steamUrl": {
+      "type": "string",
+      "pluginOptions": {
+        "i18n": {
+          "localized": false
+        }
+      }
+    },
+    "affiliateLinks": {
+      "type": "relation",
+      "relation": "oneToMany",
+      "target": "api::affiliate-link.affiliate-link",
+      "mappedBy": "game"
+    },
+    "igdbId": {
+      "type": "integer",
+      "unique": true,
+      "pluginOptions": {
+        "i18n": {
+          "localized": false
+        }
+      }
+    },
+    "igdbUrl": {
+      "type": "string",
+      "pluginOptions": {
+        "i18n": {
+          "localized": false
+        }
+      }
+    },
+    "isSponsored": {
+      "type": "boolean",
+      "default": false,
+      "pluginOptions": {
+        "i18n": {
+          "localized": false
+        }
+      }
+    },
+    "sponsorTier": {
+      "type": "enumeration",
+      "enum": ["bronze", "silver", "gold", "platinum"],
+      "pluginOptions": {
+        "i18n": {
+          "localized": false
+        }
+      }
+    },
+    "sponsorStartDate": {
+      "type": "date",
+      "pluginOptions": {
+        "i18n": {
+          "localized": false
+        }
+      }
+    },
+    "sponsorEndDate": {
+      "type": "date",
+      "pluginOptions": {
+        "i18n": {
+          "localized": false
+        }
+      }
+    },
+    "sponsorBadgeText": {
+      "type": "string",
+      "maxLength": 50,
+      "pluginOptions": {
+        "i18n": {
+          "localized": true
+        }
+      }
+    }
+  }
+}

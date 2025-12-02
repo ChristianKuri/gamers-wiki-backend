@@ -1,11 +1,11 @@
 {
   "kind": "collectionType",
-  "collectionName": "genres",
+  "collectionName": "game_modes",
   "info": {
-    "singularName": "genre",
-    "pluralName": "genres",
-    "displayName": "Genre",
-    "description": "Game genres for classification (e.g., Action RPG, Roguelite, Souls-like)"
+    "singularName": "game-mode",
+    "pluralName": "game-modes",
+    "displayName": "Game Mode",
+    "description": "Game modes (e.g., Single player, Multiplayer, Co-op)"
   },
   "options": {
     "draftAndPublish": true
@@ -22,7 +22,7 @@
       "unique": true,
       "pluginOptions": {
         "i18n": {
-          "localized": true
+          "localized": false
         }
       }
     },
@@ -32,7 +32,16 @@
       "required": true,
       "pluginOptions": {
         "i18n": {
-          "localized": true
+          "localized": false
+        }
+      }
+    },
+    "igdbId": {
+      "type": "integer",
+      "unique": true,
+      "pluginOptions": {
+        "i18n": {
+          "localized": false
         }
       }
     },
@@ -40,7 +49,7 @@
       "type": "relation",
       "relation": "manyToMany",
       "target": "api::game.game",
-      "mappedBy": "genres"
+      "mappedBy": "gameModes"
     }
   }
 }

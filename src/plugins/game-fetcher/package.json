@@ -1,0 +1,24 @@
+{
+  "name": "game-fetcher",
+  "version": "1.0.0",
+  "description": "Fetch game data from IGDB API for auto-populating game entries",
+  "strapi": {
+    "displayName": "Game Fetcher",
+    "name": "game-fetcher",
+    "description": "Fetch game data from IGDB API",
+    "kind": "plugin"
+  },
+  "exports": {
+    "./package.json": "./package.json",
+    "./strapi-server": {
+      "source": "./server/src/index.ts",
+      "require": "./server/src/index.ts",
+      "default": "./server/src/index.ts"
+    }
+  },
+  "scripts": {},
+  "dependencies": {},
+  "peerDependencies": {
+    "@strapi/strapi": "^5.0.0"
+  }
+}

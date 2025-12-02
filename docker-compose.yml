@@ -35,6 +35,9 @@ services:
       AWS_BUCKET_NAME: ${AWS_BUCKET_NAME}
       CDN_URL: ${CDN_URL}
       CDN_ROOT_PATH: ${CDN_ROOT_PATH}
+      # --- IGDB API for game data fetching ---
+      IGDB_CLIENT_ID: ${IGDB_CLIENT_ID}
+      IGDB_CLIENT_SECRET: ${IGDB_CLIENT_SECRET}
     ports:
       - "1337:1337"
     networks:

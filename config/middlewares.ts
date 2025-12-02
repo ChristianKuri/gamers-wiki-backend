@@ -18,6 +18,7 @@ export default ({ env }) => {
               'data:',
               'blob:',
               'market-assets.strapi.io',
+              'images.igdb.com',
               ...(cdnDomain ? [cdnDomain] : []),
             ],
             'media-src': [
