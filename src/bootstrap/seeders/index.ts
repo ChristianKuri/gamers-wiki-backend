@@ -3,6 +3,7 @@ import type { Seeder } from './types';
 import { localeSeeder } from './locale.seeder';
 import { categorySeeder } from './category.seeder';
 import { tagSeeder } from './tag.seeder';
+import { genreSeeder } from './genre.seeder';
 
 /**
  * All seeders to run during bootstrap.
@@ -15,8 +16,8 @@ const seeders: Seeder[] = [
   localeSeeder,    // Must be first - creates locales
   categorySeeder,
   tagSeeder,
+  genreSeeder,
   // Add more seeders here as needed:
-  // genreSeeder,
   // authorSeeder,
   // gameSeeder,
 ];
