@@ -41,7 +41,7 @@ export const categorySeeder: Seeder = {
         continue;
       }
 
-      // Create English version (default locale)
+      // Step 1: Create English version (draft)
       const created = await service.create({
         data: {
           name: data.en.name,
@@ -51,27 +51,46 @@ export const categorySeeder: Seeder = {
         locale: 'en',
       });
 
-      strapi.log.info(`[Seeder] Created category: ${data.en.name} (en)`);
+      strapi.log.info(`[Seeder] Created category draft: ${data.en.name} (en)`);
 
-      // Create Spanish version
-      await service.update({
-        documentId: created.documentId,
-        data: {
-          name: data.es.name,
-          slug: data.es.slug,
-          description: data.es.description,
-        },
-        locale: 'es',
-      });
+      // Step 2: Create Spanish version using update with locale
+      // This creates a NEW locale entry for the same document
+      try {
+        await service.update({
+          documentId: created.documentId,
+          locale: 'es',
+          data: {
+            name: data.es.name,
+            slug: data.es.slug,
+            description: data.es.description,
+          },
+        });
+        strapi.log.info(`[Seeder] Created category draft: ${data.es.name} (es)`);
+      } catch (error) {
+        strapi.log.error(`[Seeder] Failed to create Spanish locale: ${error}`);
+      }
 
-      strapi.log.info(`[Seeder] Created category: ${data.es.name} (es)`);
+      // Step 3: Publish English version
+      try {
+        await service.publish({
+          documentId: created.documentId,
+          locale: 'en',
+        });
+        strapi.log.info(`[Seeder] Published category: ${data.en.name} (en)`);
+      } catch (error) {
+        strapi.log.error(`[Seeder] Failed to publish English: ${error}`);
+      }
 
-      // Publish all locales
-      await service.publish({
-        documentId: created.documentId,
-        locale: '*',
-      });
+      // Step 4: Publish Spanish version
+      try {
+        await service.publish({
+          documentId: created.documentId,
+          locale: 'es',
+        });
+        strapi.log.info(`[Seeder] Published category: ${data.es.name} (es)`);
+      } catch (error) {
+        strapi.log.error(`[Seeder] Failed to publish Spanish: ${error}`);
+      }
     }
   },
 };
-
