@@ -42,6 +42,24 @@ export default {
         policies: [],
       },
     },
+    {
+      method: 'POST',
+      path: '/game-fetcher/regenerate-description',
+      handler: 'game-fetcher.regenerateDescription',
+      config: {
+        auth: false, // TODO: Add auth after testing
+        policies: [],
+      },
+    },
+    {
+      method: 'GET',
+      path: '/game-fetcher/ai-status',
+      handler: 'game-fetcher.aiStatus',
+      config: {
+        auth: false,
+        policies: [],
+      },
+    },
   ],
 };
 

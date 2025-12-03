@@ -23,6 +23,13 @@ import type {
   GameEngineDocument,
   DocumentQueryOptions,
 } from '../../../types/strapi';
+import { 
+  generateGameDescriptions, 
+  isAIConfigured, 
+  generateGameDescription,
+  getAIStatus,
+  type SupportedLocale,
+} from '../../../ai';
 
 interface SearchQuery {
   q?: string;
@@ -31,6 +38,11 @@ interface SearchQuery {
 
 interface ImportBody {
   igdbId: number;
+}
+
+interface RegenerateBody {
+  gameId: string;
+  locale?: SupportedLocale | 'both';
 }
 
 // Type for Strapi document service - using generics for better type safety
@@ -689,11 +701,70 @@ export default ({ strapi }: { strapi: Core.Strapi }) => ({
 
       strapi.log.info(`[GameFetcher] Created game: ${gameData.name}`);
 
+      // Generate AI descriptions if configured
+      let aiGenerated = false;
+      let aiError: string | null = null;
+      
+      if (isAIConfigured()) {
+        strapi.log.info(`[GameFetcher] Generating AI descriptions for: ${gameData.name}`);
+        try {
+          // Get platform names for context
+          const platformNames = gameData.platforms.map(p => p.name);
+          
+          // Get developer name from the first developer
+          const developerName = gameData.developersData[0]?.name || null;
+          
+          // Get publisher name from the first publisher
+          const publisherName = gameData.publishersData[0]?.name || null;
+
+          // Generate descriptions for both locales in parallel
+          const descriptions = await generateGameDescriptions({
+            name: gameData.name,
+            igdbDescription: gameData.description,
+            genres: gameData.genres,
+            platforms: platformNames,
+            releaseDate: gameData.releaseDate,
+            developer: developerName,
+            publisher: publisherName,
+          });
+
+          // Update English description
+          await gameService.update({
+            documentId: created.documentId,
+            data: { description: descriptions.en },
+            locale: 'en',
+          } as any);
+
+          // Create Spanish locale version with AI description
+          try {
+            await gameService.update({
+              documentId: created.documentId,
+              data: { description: descriptions.es },
+              locale: 'es',
+            } as any);
+          } catch {
+            // Spanish locale might not exist, try creating it
+            strapi.log.info(`[GameFetcher] Creating Spanish locale for: ${gameData.name}`);
+          }
+
+          aiGenerated = true;
+          strapi.log.info(`[GameFetcher] AI descriptions generated for: ${gameData.name}`);
+        } catch (error) {
+          aiError = error instanceof Error ? error.message : 'Unknown AI error';
+          strapi.log.error(`[GameFetcher] AI description error: ${aiError}`);
+          // Continue with import - AI is optional
+        }
+      } else {
+        strapi.log.info(`[GameFetcher] AI not configured, skipping description generation`);
+      }
+
       ctx.body = {
         success: true,
         message: `Game "${gameData.name}" imported successfully`,
         game: created,
         created: true,
+        aiGenerated,
+        aiError,
         stats: {
           platforms: platformIds.length,
           genres: genreIds.length,
@@ -716,5 +787,104 @@ export default ({ strapi }: { strapi: Core.Strapi }) => ({
       strapi.log.error('[GameFetcher] Import error:', error);
       return ctx.internalServerError('Failed to import game');
     }
+  },
+
+  /**
+   * Regenerate AI description for an existing game
+   * POST /api/game-fetcher/regenerate-description
+   * Body: { gameId: string, locale?: 'en' | 'es' | 'both' }
+   */
+  async regenerateDescription(ctx) {
+    const { gameId, locale = 'both' } = ctx.request.body as RegenerateBody;
+
+    if (!gameId) {
+      return ctx.badRequest('gameId is required');
+    }
+
+    if (!isAIConfigured()) {
+      return ctx.badRequest('AI is not configured. Set OPENROUTER_API_KEY environment variable.');
+    }
+
+    try {
+      const gameService = strapi.documents('api::game.game') as unknown as DocumentService<GameDocument>;
+
+      // Find the game
+      const game = await gameService.findOne({
+        documentId: gameId,
+        locale: 'en',
+        populate: ['genres', 'platforms', 'developers', 'publishers'],
+      } as any);
+
+      if (!game) {
+        return ctx.notFound('Game not found');
+      }
+
+      // Extract context from the game
+      const genreNames = (game as any).genres?.map((g: { name: string }) => g.name) || [];
+      const platformNames = (game as any).platforms?.map((p: { name: string }) => p.name) || [];
+      const developerName = (game as any).developers?.[0]?.name || null;
+      const publisherName = (game as any).publishers?.[0]?.name || null;
+
+      const context = {
+        name: game.name,
+        igdbDescription: game.description,
+        genres: genreNames,
+        platforms: platformNames,
+        releaseDate: game.releaseDate,
+        developer: developerName,
+        publisher: publisherName,
+      };
+
+      const results: { en?: string; es?: string } = {};
+
+      if (locale === 'en' || locale === 'both') {
+        const enDescription = await generateGameDescription(context, 'en');
+        await gameService.update({
+          documentId: gameId,
+          data: { description: enDescription },
+          locale: 'en',
+        } as any);
+        results.en = enDescription;
+        strapi.log.info(`[GameFetcher] Regenerated English description for: ${game.name}`);
+      }
+
+      if (locale === 'es' || locale === 'both') {
+        const esDescription = await generateGameDescription(context, 'es');
+        try {
+          await gameService.update({
+            documentId: gameId,
+            data: { description: esDescription },
+            locale: 'es',
+          } as any);
+          results.es = esDescription;
+          strapi.log.info(`[GameFetcher] Regenerated Spanish description for: ${game.name}`);
+        } catch {
+          strapi.log.warn(`[GameFetcher] Could not update Spanish locale for: ${game.name}`);
+        }
+      }
+
+      ctx.body = {
+        success: true,
+        message: `Description regenerated for "${game.name}"`,
+        descriptions: results,
+      };
+    } catch (error) {
+      strapi.log.error('[GameFetcher] Regenerate description error:', error);
+      return ctx.internalServerError('Failed to regenerate description');
+    }
+  },
+
+  /**
+   * Check AI configuration status
+   * GET /api/game-fetcher/ai-status
+   */
+  async aiStatus(ctx) {
+    const status = getAIStatus();
+    ctx.body = {
+      ...status,
+      message: status.configured
+        ? 'AI is configured and ready'
+        : 'AI is not configured. Set OPENROUTER_API_KEY environment variable.',
+    };
   },
 });
