@@ -2,6 +2,7 @@ import type { Core } from '@strapi/strapi';
 import {
   type IGDBGame,
   type IGDBPlatformFull,
+  type IGDBGameLocalization,
   type TwitchAuthResponse,
   IGDB_GAME_TYPE_MAP,
   IGDB_GAME_STATUS_MAP,
@@ -111,9 +112,32 @@ export interface GameEngineData {
   logoUrl: string | null;
 }
 
+/**
+ * Localized data for a specific locale
+ */
+export interface LocalizedData {
+  /** Localized name */
+  name: string;
+  /** Localized cover URL (if available) */
+  coverUrl: string | null;
+}
+
+/**
+ * Localized game name data
+ * Maps locale codes to localized data
+ */
+export interface LocalizedNames {
+  /** English data (always present) */
+  en: LocalizedData;
+  /** Spanish data (falls back to English if not available) */
+  es: LocalizedData;
+}
+
 export interface GameData {
   name: string;
   slug: string;
+  /** Localized names for different locales */
+  localizedNames: LocalizedNames;
   description: string;
   releaseDate: string | null;
   gameCategory: string;
@@ -551,9 +575,23 @@ export default ({ strapi }: { strapi: Core.Strapi }) => ({
     const remakeIds = game.remakes || [];
     const remasterIds = game.remasters || [];
 
+    // Fetch localized names (Spanish, etc.) from both localizations and alternative names
+    const localizations = await this.getGameLocalizations(game.id);
+    const alternativeNames = await this.getAlternativeNames(game.id);
+    const spanishData = this.getSpanishName(localizations, alternativeNames, game.name);
+    
+    const localizedNames: LocalizedNames = {
+      en: { name: game.name, coverUrl: coverImageUrl },
+      es: { 
+        name: spanishData.name, 
+        coverUrl: spanishData.coverUrl || coverImageUrl, // Fall back to main cover if no localized cover
+      },
+    };
+
     return {
       name: game.name,
       slug: game.slug,
+      localizedNames,
       description,
       releaseDate: game.first_release_date
         ? new Date(game.first_release_date * 1000).toISOString().split('T')[0]
@@ -586,6 +624,109 @@ export default ({ strapi }: { strapi: Core.Strapi }) => ({
       igdbId: game.id,
       igdbUrl: game.url || null,
     };
+  },
+
+  /**
+   * Get game localizations (translated names) from IGDB
+   * Returns localized names for different regions/languages
+   * Also fetches localized covers
+   */
+  async getGameLocalizations(gameId: number): Promise<IGDBGameLocalization[]> {
+    try {
+      const localizations = await this.igdbRequest<IGDBGameLocalization[]>(
+        'game_localizations',
+        `where game = ${gameId};
+         fields name, region.id, region.name, region.identifier, region.category,
+                cover.image_id, cover.width, cover.height;`
+      );
+      strapi.log.info(`[IGDB] Found ${localizations?.length || 0} localizations for game ${gameId}`);
+      if (localizations?.length) {
+        localizations.forEach(loc => {
+          strapi.log.info(`[IGDB] Localization: "${loc.name}" - Region: ${loc.region?.identifier || 'unknown'} (${loc.region?.name || 'unknown'})`);
+        });
+      }
+      return localizations || [];
+    } catch (error) {
+      // Localizations are optional, don't fail the import if they can't be fetched
+      strapi.log.warn(`[IGDB] Could not fetch localizations for game ${gameId}: ${error}`);
+      return [];
+    }
+  },
+
+  /**
+   * Get alternative names for a game (includes localized titles like "Spanish title")
+   */
+  async getAlternativeNames(gameId: number): Promise<Array<{ name: string; comment?: string }>> {
+    try {
+      const altNames = await this.igdbRequest<Array<{ id: number; name: string; comment?: string }>>(
+        'alternative_names',
+        `where game = ${gameId};
+         fields name, comment;`
+      );
+      strapi.log.info(`[IGDB] Found ${altNames?.length || 0} alternative names for game ${gameId}`);
+      if (altNames?.length) {
+        altNames.forEach(an => {
+          strapi.log.info(`[IGDB] Alternative name: "${an.name}" - Comment: ${an.comment || 'none'}`);
+        });
+      }
+      return altNames || [];
+    } catch (error) {
+      strapi.log.warn(`[IGDB] Could not fetch alternative names for game ${gameId}: ${error}`);
+      return [];
+    }
+  },
+
+  /**
+   * Extract Spanish localized name from IGDB localizations and alternative names
+   * Checks both game_localizations (by region) and alternative_names (by comment)
+   * Falls back to English name if no Spanish localization found
+   */
+  getSpanishName(
+    localizations: IGDBGameLocalization[], 
+    alternativeNames: Array<{ name: string; comment?: string }>,
+    englishName: string
+  ): { name: string; coverUrl: string | null } {
+    // 1. First check game_localizations for Spanish region
+    const spanishRegionIdentifiers = ['es_ES', 'es_MX', 'es_419', 'es'];
+    
+    for (const identifier of spanishRegionIdentifiers) {
+      const spanishLocalization = localizations.find(
+        loc => loc.region?.identifier?.toLowerCase() === identifier.toLowerCase()
+      );
+      if (spanishLocalization?.name) {
+        const coverUrl = spanishLocalization.cover?.image_id
+          ? `https://images.igdb.com/igdb/image/upload/t_cover_big_2x/${spanishLocalization.cover.image_id}.jpg`
+          : null;
+        strapi.log.info(`[IGDB] Using Spanish localization: "${spanishLocalization.name}" (region: ${identifier})`);
+        return { name: spanishLocalization.name, coverUrl };
+      }
+    }
+    
+    // Also check by region name containing "Spain" or "Spanish"
+    const spanishByName = localizations.find(
+      loc => loc.region?.name?.toLowerCase().includes('spain') ||
+             loc.region?.name?.toLowerCase().includes('spanish')
+    );
+    if (spanishByName?.name) {
+      const coverUrl = spanishByName.cover?.image_id
+        ? `https://images.igdb.com/igdb/image/upload/t_cover_big_2x/${spanishByName.cover.image_id}.jpg`
+        : null;
+      strapi.log.info(`[IGDB] Using Spanish localization by name: "${spanishByName.name}"`);
+      return { name: spanishByName.name, coverUrl };
+    }
+    
+    // 2. Check alternative_names for Spanish title comment
+    const spanishAltName = alternativeNames.find(
+      an => an.comment?.toLowerCase().includes('spanish')
+    );
+    if (spanishAltName?.name) {
+      strapi.log.info(`[IGDB] Using Spanish alternative name: "${spanishAltName.name}" (comment: ${spanishAltName.comment})`);
+      return { name: spanishAltName.name, coverUrl: null };
+    }
+    
+    // 3. Fallback to English name
+    strapi.log.info(`[IGDB] No Spanish localization found, using English name: "${englishName}"`);
+    return { name: englishName, coverUrl: null };
   },
 
   /**

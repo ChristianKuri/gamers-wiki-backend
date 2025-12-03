@@ -555,6 +555,7 @@ export interface IGDBGame {
   remakes?: number[];
   remasters?: number[];
   similar_games?: number[];
+  game_localizations?: IGDBGameLocalization[];
 }
 
 /**
@@ -570,6 +571,33 @@ export interface IGDBSearchResult {
   rating?: number;
   total_rating?: number;
   hypes?: number;
+}
+
+// ============================================================================
+// GAME LOCALIZATION TYPES
+// ============================================================================
+
+/**
+ * IGDB Region
+ * https://api-docs.igdb.com/#region
+ */
+export interface IGDBRegion {
+  id: number;
+  name: string;
+  identifier: string;
+  category: 'locale' | 'continent';
+}
+
+/**
+ * IGDB Game Localization
+ * https://api-docs.igdb.com/#game-localization
+ */
+export interface IGDBGameLocalization {
+  id: number;
+  game: number;
+  name: string;
+  region?: IGDBRegion;
+  cover?: IGDBCover;
 }
 
 // ============================================================================

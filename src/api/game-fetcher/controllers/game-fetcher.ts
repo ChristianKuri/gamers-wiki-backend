@@ -735,16 +735,38 @@ export default ({ strapi }: { strapi: Core.Strapi }) => ({
             locale: 'en',
           } as any);
 
-          // Create Spanish locale version with AI description
+          // Create/update Spanish locale version with AI description and localized name
+          const spanishName = gameData.localizedNames.es.name;
+          const spanishCoverUrl = gameData.localizedNames.es.coverUrl;
+          const spanishSlug = spanishName
+            .toLowerCase()
+            .normalize('NFD')
+            .replace(/[\u0300-\u036f]/g, '') // Remove accents
+            .replace(/[^a-z0-9]+/g, '-')
+            .replace(/^-|-$/g, '');
+          
           try {
             await gameService.update({
               documentId: created.documentId,
-              data: { description: descriptions.es },
+              data: { 
+                name: spanishName,
+                slug: spanishSlug,
+                description: descriptions.es,
+                // Use localized cover if available
+                ...(spanishCoverUrl && spanishCoverUrl !== gameData.coverImageUrl && { coverImageUrl: spanishCoverUrl }),
+              },
               locale: 'es',
             } as any);
+            
+            if (spanishName !== gameData.name) {
+              strapi.log.info(`[GameFetcher] Spanish locale: "${spanishName}" (from IGDB localization)`);
+            }
+            if (spanishCoverUrl && spanishCoverUrl !== gameData.coverImageUrl) {
+              strapi.log.info(`[GameFetcher] Spanish cover: ${spanishCoverUrl}`);
+            }
           } catch {
             // Spanish locale might not exist, try creating it
-            strapi.log.info(`[GameFetcher] Creating Spanish locale for: ${gameData.name}`);
+            strapi.log.info(`[GameFetcher] Creating Spanish locale for: ${spanishName}`);
           }
 
           aiGenerated = true;
@@ -756,6 +778,33 @@ export default ({ strapi }: { strapi: Core.Strapi }) => ({
         }
       } else {
         strapi.log.info(`[GameFetcher] AI not configured, skipping description generation`);
+        
+        // Still create Spanish locale with localized name (without AI description)
+        const spanishName = gameData.localizedNames.es.name;
+        const spanishCoverUrl = gameData.localizedNames.es.coverUrl;
+        if (spanishName !== gameData.name || (spanishCoverUrl && spanishCoverUrl !== gameData.coverImageUrl)) {
+          const spanishSlug = spanishName
+            .toLowerCase()
+            .normalize('NFD')
+            .replace(/[\u0300-\u036f]/g, '') // Remove accents
+            .replace(/[^a-z0-9]+/g, '-')
+            .replace(/^-|-$/g, '');
+          
+          try {
+            await gameService.update({
+              documentId: created.documentId,
+              data: { 
+                name: spanishName,
+                slug: spanishSlug,
+                ...(spanishCoverUrl && spanishCoverUrl !== gameData.coverImageUrl && { coverImageUrl: spanishCoverUrl }),
+              },
+              locale: 'es',
+            } as any);
+            strapi.log.info(`[GameFetcher] Spanish locale created: "${spanishName}" (from IGDB localization)`);
+          } catch (error) {
+            strapi.log.warn(`[GameFetcher] Could not create Spanish locale: ${error}`);
+          }
+        }
       }
 
       ctx.body = {
@@ -765,6 +814,24 @@ export default ({ strapi }: { strapi: Core.Strapi }) => ({
         created: true,
         aiGenerated,
         aiError,
+        localizedNames: {
+          en: { 
+            name: gameData.localizedNames.en.name, 
+            slug: gameData.slug,
+            coverUrl: gameData.localizedNames.en.coverUrl,
+          },
+          es: { 
+            name: gameData.localizedNames.es.name, 
+            slug: gameData.localizedNames.es.name
+              .toLowerCase()
+              .normalize('NFD')
+              .replace(/[\u0300-\u036f]/g, '')
+              .replace(/[^a-z0-9]+/g, '-')
+              .replace(/^-|-$/g, ''),
+            coverUrl: gameData.localizedNames.es.coverUrl,
+            fromIGDB: gameData.localizedNames.es.name !== gameData.name,
+          },
+        },
         stats: {
           platforms: platformIds.length,
           genres: genreIds.length,
