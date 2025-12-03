@@ -7,7 +7,7 @@ import type {
   PlayerPerspectiveData, 
   ThemeData, 
   AgeRatingData, 
-  GameEngineData 
+  GameEngineData,
 } from '../services/igdb';
 import type {
   GameDocument,
@@ -440,13 +440,16 @@ export default ({ strapi }: { strapi: Core.Strapi }) => ({
           return existing[0].documentId;
         }
 
-        // Create new age rating
+        // Create new age rating with content descriptions as JSON array
         const newAgeRating = await ageRatingService.create({
           data: {
             category: arData.category,
             rating: arData.rating,
+            ratingCoverUrl: arData.ratingCoverUrl,
             synopsis: arData.synopsis,
             igdbId: arData.igdbId,
+            // Store content descriptions as JSON array (e.g., ["Blood and Gore", "Violence"])
+            contentDescriptions: arData.contentDescriptions.map(cd => cd.description || cd.name),
           },
           locale: 'en',
         } as any);
@@ -456,7 +459,7 @@ export default ({ strapi }: { strapi: Core.Strapi }) => ({
           locale: 'en',
         });
 
-        strapi.log.info(`[GameFetcher] Created age rating: ${arData.category} ${arData.rating}`);
+        strapi.log.info(`[GameFetcher] Created age rating: ${arData.category} ${arData.rating} with ${arData.contentDescriptions.length} content descriptions`);
         return newAgeRating.documentId;
       };
 

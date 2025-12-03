@@ -138,6 +138,7 @@ export interface ThemeDocument extends StrapiDocument {
 export interface AgeRatingDocument extends StrapiDocument {
   category: string;
   rating: string;
+  ratingCoverUrl: string | null;
   synopsis: string | null;
   igdbId: number | null;
 }

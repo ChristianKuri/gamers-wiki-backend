@@ -89,11 +89,19 @@ export interface ThemeData {
   name: string;
 }
 
+export interface ContentDescriptionData {
+  igdbId: number;
+  name: string;
+  description: string | null;
+}
+
 export interface AgeRatingData {
   igdbId: number;
   category: string;
   rating: string;
+  ratingCoverUrl: string | null;
   synopsis: string | null;
+  contentDescriptions: ContentDescriptionData[];
 }
 
 export interface GameEngineData {
@@ -355,8 +363,12 @@ export default ({ strapi }: { strapi: Core.Strapi }) => ({
               language_supports.language.native_name, language_supports.language.locale,
               language_supports.language_support_type.name,
               age_ratings.id, age_ratings.category, age_ratings.rating, age_ratings.synopsis,
+              age_ratings.rating_cover_url,
               age_ratings.organization.id, age_ratings.organization.name,
               age_ratings.rating_category.id, age_ratings.rating_category.rating,
+              age_ratings.rating_content_descriptions.id,
+              age_ratings.rating_content_descriptions.description,
+              age_ratings.rating_content_descriptions.description_type.name,
               game_engines.id, game_engines.name, game_engines.slug, game_engines.logo.image_id,
               similar_games, remakes, remasters;
        limit 1;`
@@ -507,11 +519,20 @@ export default ({ strapi }: { strapi: Core.Strapi }) => ({
         || IGDB_AGE_RATING_MAP[ar.rating || 0] 
         || String(ar.rating || 'Unknown');
       
+      // Process content descriptions (reasons for the rating like "Blood", "Violence")
+      const contentDescriptions: ContentDescriptionData[] = ar.rating_content_descriptions?.map(cd => ({
+        igdbId: cd.id,
+        name: cd.description_type?.name || cd.description || 'Unknown',
+        description: cd.description || null,
+      })) || [];
+      
       return {
         igdbId: ar.id,
         category,
         rating,
+        ratingCoverUrl: ar.rating_cover_url || null,
         synopsis: ar.synopsis || null,
+        contentDescriptions,
       };
     }) || [];
 
