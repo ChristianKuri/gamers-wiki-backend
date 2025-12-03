@@ -1167,7 +1167,19 @@ export interface ApiGameGame extends Struct.CollectionTypeSchema {
         };
       }>;
     developers: Schema.Attribute.Relation<'manyToMany', 'api::company.company'>;
+    discordUrl: Schema.Attribute.String &
+      Schema.Attribute.SetPluginOptions<{
+        i18n: {
+          localized: false;
+        };
+      }>;
     dlcs: Schema.Attribute.Relation<'oneToMany', 'api::game.game'>;
+    epicUrl: Schema.Attribute.String &
+      Schema.Attribute.SetPluginOptions<{
+        i18n: {
+          localized: false;
+        };
+      }>;
     franchises: Schema.Attribute.Relation<
       'manyToMany',
       'api::franchise.franchise'
@@ -1224,7 +1236,19 @@ export interface ApiGameGame extends Struct.CollectionTypeSchema {
       }> &
       Schema.Attribute.DefaultTo<'released'>;
     genres: Schema.Attribute.Relation<'manyToMany', 'api::genre.genre'>;
+    gogUrl: Schema.Attribute.String &
+      Schema.Attribute.SetPluginOptions<{
+        i18n: {
+          localized: false;
+        };
+      }>;
     heroImage: Schema.Attribute.Media<'images'> &
+      Schema.Attribute.SetPluginOptions<{
+        i18n: {
+          localized: false;
+        };
+      }>;
+    hypes: Schema.Attribute.Integer &
       Schema.Attribute.SetPluginOptions<{
         i18n: {
           localized: false;
@@ -1250,6 +1274,18 @@ export interface ApiGameGame extends Struct.CollectionTypeSchema {
         };
       }> &
       Schema.Attribute.DefaultTo<false>;
+    itchUrl: Schema.Attribute.String &
+      Schema.Attribute.SetPluginOptions<{
+        i18n: {
+          localized: false;
+        };
+      }>;
+    keywords: Schema.Attribute.JSON &
+      Schema.Attribute.SetPluginOptions<{
+        i18n: {
+          localized: false;
+        };
+      }>;
     languages: Schema.Attribute.Relation<
       'manyToMany',
       'api::language.language'
@@ -1269,6 +1305,12 @@ export interface ApiGameGame extends Struct.CollectionTypeSchema {
         },
         number
       >;
+    multiplayerModes: Schema.Attribute.JSON &
+      Schema.Attribute.SetPluginOptions<{
+        i18n: {
+          localized: false;
+        };
+      }>;
     name: Schema.Attribute.String &
       Schema.Attribute.Required &
       Schema.Attribute.SetPluginOptions<{
@@ -1351,6 +1393,25 @@ export interface ApiGameGame extends Struct.CollectionTypeSchema {
         };
       }>;
     themes: Schema.Attribute.Relation<'manyToMany', 'api::theme.theme'>;
+    totalRating: Schema.Attribute.Decimal &
+      Schema.Attribute.SetPluginOptions<{
+        i18n: {
+          localized: false;
+        };
+      }> &
+      Schema.Attribute.SetMinMax<
+        {
+          max: 100;
+          min: 0;
+        },
+        number
+      >;
+    totalRatingCount: Schema.Attribute.Integer &
+      Schema.Attribute.SetPluginOptions<{
+        i18n: {
+          localized: false;
+        };
+      }>;
     trailerIds: Schema.Attribute.JSON &
       Schema.Attribute.SetPluginOptions<{
         i18n: {

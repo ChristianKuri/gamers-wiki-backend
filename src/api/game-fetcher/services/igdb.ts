@@ -1,16 +1,56 @@
 import type { Core } from '@strapi/strapi';
 import {
   type IGDBGame,
-  type IGDBPlatformFull,
+  type IGDBPlatform,
   type IGDBGameLocalization,
+  type IGDBCover,
+  type IGDBInvolvedCompany,
+  type IGDBCompany,
+  type IGDBFranchise,
+  type IGDBCollection,
+  type IGDBWebsite,
+  type IGDBPlatformFamily,
+  type IGDBPlatformLogo,
+  type IGDBPlatformTypeEntity,
+  type IGDBRegion,
   type TwitchAuthResponse,
   IGDB_GAME_TYPE_MAP,
   IGDB_GAME_STATUS_MAP,
   IGDB_AGE_RATING_CATEGORY_MAP,
-  IGDB_AGE_RATING_MAP,
+  IGDB_AGE_RATING_RATING_MAP,
   IGDB_PLATFORM_TYPE_MAP,
-  IGDBWebsiteCategory,
+  IGDBWebsiteCategoryEnum,
 } from '../../../types/igdb';
+
+// -----------------------------------------------------------------------------
+// Type Helpers
+// -----------------------------------------------------------------------------
+// IGDB types use unions like `number | IGDBCover` because the API can return
+// either IDs or expanded objects depending on what fields you request.
+// When we request expanded fields (e.g., "cover.image_id"), we get objects.
+// This helper asserts the expanded (object) form of union types.
+
+/**
+ * Assert that a value is the expanded object form, not just an ID.
+ * Use when you've requested nested fields in your IGDB query.
+ */
+function asObject<T>(value: number | T | undefined | null): T | undefined {
+  if (value === undefined || value === null || typeof value === 'number') {
+    return undefined;
+  }
+  return value;
+}
+
+/**
+ * Assert that an array contains expanded objects, not just IDs.
+ * Use when you've requested nested fields in your IGDB query.
+ */
+function asObjectArray<T>(value: number[] | T[] | undefined): T[] {
+  if (!value || value.length === 0) return [];
+  // If first element is a number, it's an ID array - return empty
+  if (typeof value[0] === 'number') return [];
+  return value as T[];
+}
 
 /**
  * IGDB API Service
@@ -78,6 +118,23 @@ export interface LanguageData {
 export interface GameModeData {
   igdbId: number;
   name: string;
+}
+
+export interface KeywordData {
+  igdbId: number;
+  name: string;
+  slug: string;
+}
+
+export interface MultiplayerModeData {
+  platform?: string;
+  campaignCoop: boolean;
+  onlineCoop: boolean;
+  offlineCoop: boolean;
+  onlineMax: number | null;
+  offlineMax: number | null;
+  splitscreen: boolean;
+  dropIn: boolean;
 }
 
 export interface PlayerPerspectiveData {
@@ -158,11 +215,16 @@ export interface GameData {
   metacriticScore: number | null;
   userRating: number | null;
   userRatingCount: number | null;
+  totalRating: number | null;
+  totalRatingCount: number | null;
+  hypes: number | null;
   // Metadata (structured with igdbId for collection lookup)
   gameModes: GameModeData[];
   playerPerspectives: PlayerPerspectiveData[];
   themes: ThemeData[];
   genres: string[];
+  keywords: KeywordData[];
+  multiplayerModes: MultiplayerModeData[];
   // Age ratings
   ageRatings: AgeRatingData[];
   // Game engines
@@ -171,11 +233,17 @@ export interface GameData {
   similarGameIds: number[];
   remakeIds: number[];
   remasterIds: number[];
+  dlcIds: number[];
+  expansionIds: number[];
   // Languages
   languages: LanguageData[];
   // URLs
   officialWebsite: string | null;
   steamUrl: string | null;
+  epicUrl: string | null;
+  gogUrl: string | null;
+  itchUrl: string | null;
+  discordUrl: string | null;
   igdbId: number;
   igdbUrl: string | null;
 }
@@ -344,20 +412,28 @@ export default ({ strapi }: { strapi: Core.Strapi }) => ({
     });
 
     // Return top results
-    return sortedGames.slice(0, limit).map((game) => ({
-      igdbId: game.id,
-      name: game.name,
-      slug: game.slug,
-      coverUrl: game.cover?.image_id
-        ? `https://images.igdb.com/igdb/image/upload/t_cover_big/${game.cover.image_id}.jpg`
-        : undefined,
-      releaseDate: game.first_release_date
-        ? new Date(game.first_release_date * 1000).toISOString().split('T')[0]
-        : undefined,
-      platforms: game.platforms?.map((p) => p.abbreviation || p.name) || [],
-      developer: game.involved_companies?.find((c) => c.developer)?.company?.name,
-      rating: game.rating,
-    }));
+    return sortedGames.slice(0, limit).map((game) => {
+      const cover = asObject<IGDBCover>(game.cover);
+      const platforms = asObjectArray<IGDBPlatform>(game.platforms);
+      const involvedCompanies = asObjectArray<IGDBInvolvedCompany>(game.involved_companies);
+      const developerCompany = involvedCompanies.find((c) => c.developer);
+      const developer = asObject<IGDBCompany>(developerCompany?.company);
+      
+      return {
+        igdbId: game.id,
+        name: game.name,
+        slug: game.slug,
+        coverUrl: cover?.image_id
+          ? `https://images.igdb.com/igdb/image/upload/t_cover_big/${cover.image_id}.jpg`
+          : undefined,
+        releaseDate: game.first_release_date
+          ? new Date(game.first_release_date * 1000).toISOString().split('T')[0]
+          : undefined,
+        platforms: platforms.map((p) => p.abbreviation || p.name),
+        developer: developer?.name,
+        rating: game.rating,
+      };
+    });
   },
 
   /**
@@ -369,6 +445,7 @@ export default ({ strapi }: { strapi: Core.Strapi }) => ({
       `where id = ${igdbId};
        fields name, slug, summary, storyline, first_release_date, category, game_status, parent_game, url,
               aggregated_rating, aggregated_rating_count, rating, rating_count,
+              total_rating, total_rating_count, hypes,
               cover.image_id, 
               screenshots.image_id, artworks.image_id, videos.video_id,
               genres.name, 
@@ -394,7 +471,11 @@ export default ({ strapi }: { strapi: Core.Strapi }) => ({
               age_ratings.rating_content_descriptions.description,
               age_ratings.rating_content_descriptions.description_type.name,
               game_engines.id, game_engines.name, game_engines.slug, game_engines.logo.image_id,
-              similar_games, remakes, remasters;
+              keywords.id, keywords.name, keywords.slug,
+              multiplayer_modes.campaigncoop, multiplayer_modes.onlinecoop, multiplayer_modes.offlinecoop,
+              multiplayer_modes.onlinemax, multiplayer_modes.offlinemax, multiplayer_modes.splitscreen,
+              multiplayer_modes.dropin, multiplayer_modes.platform.name,
+              similar_games, remakes, remasters, dlcs, expansions;
        limit 1;`
     );
 
@@ -404,55 +485,73 @@ export default ({ strapi }: { strapi: Core.Strapi }) => ({
 
     const game = games[0];
 
+    // Extract expanded objects using type helpers
+    const involvedCompanies = asObjectArray<IGDBInvolvedCompany>(game.involved_companies);
+    const gameCollections = asObjectArray<IGDBCollection>(game.collections);
+    const gameFranchise = asObject<IGDBFranchise>(game.franchise);
+    const gameCover = asObject<IGDBCover>(game.cover);
+    const gameWebsites = asObjectArray<IGDBWebsite>(game.websites);
+    const gamePlatforms = asObjectArray<IGDBPlatform>(game.platforms);
+
     // Get ALL developers and publishers (a game can have multiple of each, e.g., co-development)
-    const developerCompanies = game.involved_companies?.filter((c) => c.developer).map((c) => c.company) || [];
-    const publisherCompanies = game.involved_companies?.filter((c) => c.publisher).map((c) => c.company) || [];
+    const developerCompanies = involvedCompanies
+      .filter((c) => c.developer)
+      .map((c) => asObject<IGDBCompany>(c.company))
+      .filter((c): c is IGDBCompany => c !== undefined);
+    const publisherCompanies = involvedCompanies
+      .filter((c) => c.publisher)
+      .map((c) => asObject<IGDBCompany>(c.company))
+      .filter((c): c is IGDBCompany => c !== undefined);
 
-    const developersData: CompanyData[] = developerCompanies.map((company) => ({
-      igdbId: company.id,
-      name: company.name,
-      slug: company.slug,
-      description: company.description || null,
-      logoUrl: company.logo?.image_id 
-        ? `https://images.igdb.com/igdb/image/upload/t_logo_med/${company.logo.image_id}.png`
-        : null,
-    }));
+    const developersData: CompanyData[] = developerCompanies.map((company) => {
+      const logo = asObject(company.logo);
+      return {
+        igdbId: company.id,
+        name: company.name,
+        slug: company.slug,
+        description: company.description || null,
+        logoUrl: logo?.image_id 
+          ? `https://images.igdb.com/igdb/image/upload/t_logo_med/${logo.image_id}.png`
+          : null,
+      };
+    });
 
-    const publishersData: CompanyData[] = publisherCompanies.map((company) => ({
-      igdbId: company.id,
-      name: company.name,
-      slug: company.slug,
-      description: company.description || null,
-      logoUrl: company.logo?.image_id
-        ? `https://images.igdb.com/igdb/image/upload/t_logo_med/${company.logo.image_id}.png`
-        : null,
-    }));
+    const publishersData: CompanyData[] = publisherCompanies.map((company) => {
+      const logo = asObject(company.logo);
+      return {
+        igdbId: company.id,
+        name: company.name,
+        slug: company.slug,
+        description: company.description || null,
+        logoUrl: logo?.image_id
+          ? `https://images.igdb.com/igdb/image/upload/t_logo_med/${logo.image_id}.png`
+          : null,
+      };
+    });
 
     // Franchises (combine franchise field + all collections)
     const franchises: FranchiseData[] = [];
     
     // Add franchise if available
-    if (game.franchise) {
+    if (gameFranchise) {
       franchises.push({
-        igdbId: game.franchise.id,
-        name: game.franchise.name,
-        slug: game.franchise.slug,
-        igdbUrl: game.franchise.url || null,
+        igdbId: gameFranchise.id,
+        name: gameFranchise.name,
+        slug: gameFranchise.slug,
+        igdbUrl: gameFranchise.url || null,
       });
     }
     
     // Add all collections as franchises
-    if (game.collections && game.collections.length > 0) {
-      for (const collection of game.collections) {
-        // Avoid duplicates (in case franchise is also in collections)
-        if (!franchises.some(f => f.igdbId === collection.id)) {
-          franchises.push({
-            igdbId: collection.id,
-            name: collection.name,
-            slug: collection.slug,
-            igdbUrl: collection.url || null,
-          });
-        }
+    for (const collection of gameCollections) {
+      // Avoid duplicates (in case franchise is also in collections)
+      if (!franchises.some(f => f.igdbId === collection.id)) {
+        franchises.push({
+          igdbId: collection.id,
+          name: collection.name,
+          slug: collection.slug,
+          igdbUrl: collection.url || null,
+        });
       }
     }
 
@@ -466,65 +565,80 @@ export default ({ strapi }: { strapi: Core.Strapi }) => ({
     }
 
     // Cover image
-    const coverImageUrl = game.cover?.image_id
-      ? `https://images.igdb.com/igdb/image/upload/t_cover_big_2x/${game.cover.image_id}.jpg`
+    const coverImageUrl = gameCover?.image_id
+      ? `https://images.igdb.com/igdb/image/upload/t_cover_big_2x/${gameCover.image_id}.jpg`
       : null;
 
     // Screenshots (combine screenshots and artworks)
+    const screenshots = asObjectArray(game.screenshots);
+    const artworks = asObjectArray(game.artworks);
     const screenshotUrls = [
-      ...(game.screenshots?.map(s => `https://images.igdb.com/igdb/image/upload/t_screenshot_big/${s.image_id}.jpg`) || []),
-      ...(game.artworks?.map(a => `https://images.igdb.com/igdb/image/upload/t_screenshot_big/${a.image_id}.jpg`) || []),
+      ...screenshots.map(s => `https://images.igdb.com/igdb/image/upload/t_screenshot_big/${s.image_id}.jpg`),
+      ...artworks.map(a => `https://images.igdb.com/igdb/image/upload/t_screenshot_big/${a.image_id}.jpg`),
     ];
 
     // Trailer IDs (YouTube)
-    const trailerIds = game.videos?.map(v => v.video_id) || [];
+    const videos = asObjectArray(game.videos);
+    const trailerIds = videos.map(v => v.video_id);
 
     // Platforms
-    const platforms: PlatformData[] = game.platforms
-      ? game.platforms.map((p) => ({
-          igdbId: p.id,
-          name: p.name,
-          abbreviation: p.abbreviation || null,
-        }))
-      : [];
+    const platforms: PlatformData[] = gamePlatforms.map((p) => ({
+      igdbId: p.id,
+      name: p.name,
+      abbreviation: p.abbreviation || null,
+    }));
 
     // Metadata arrays (structured with igdbId for collection lookup)
-    const genres = game.genres?.map((g) => g.name) || [];
-    const themes: ThemeData[] = game.themes?.map((t) => ({
+    const gameGenres = asObjectArray(game.genres);
+    const gameThemes = asObjectArray(game.themes);
+    const gameGameModes = asObjectArray(game.game_modes);
+    const gamePlayerPerspectives = asObjectArray(game.player_perspectives);
+    const gameLanguageSupports = asObjectArray(game.language_supports);
+    
+    const genres = gameGenres.map((g) => g.name);
+    const themes: ThemeData[] = gameThemes.map((t) => ({
       igdbId: t.id,
       name: t.name,
-    })) || [];
-    const gameModes: GameModeData[] = game.game_modes?.map((gm) => ({
+    }));
+    const gameModes: GameModeData[] = gameGameModes.map((gm) => ({
       igdbId: gm.id,
       name: gm.name,
-    })) || [];
-    const playerPerspectives: PlayerPerspectiveData[] = game.player_perspectives?.map((pp) => ({
+    }));
+    const playerPerspectives: PlayerPerspectiveData[] = gamePlayerPerspectives.map((pp) => ({
       igdbId: pp.id,
       name: pp.name,
-    })) || [];
+    }));
 
     // Languages (unique by language ID)
     const languageMap = new Map<number, LanguageData>();
-    game.language_supports?.forEach(ls => {
-      if (!languageMap.has(ls.language.id)) {
-        languageMap.set(ls.language.id, {
-          igdbId: ls.language.id,
-          name: ls.language.name,
-          nativeName: ls.language.native_name || null,
-          locale: ls.language.locale || null,
+    gameLanguageSupports.forEach(ls => {
+      const lang = asObject(ls.language);
+      if (lang && !languageMap.has(lang.id)) {
+        languageMap.set(lang.id, {
+          igdbId: lang.id,
+          name: lang.name,
+          nativeName: lang.native_name || null,
+          locale: lang.locale || null,
         });
       }
     });
     const languages = Array.from(languageMap.values());
 
     // Websites
-    const officialWebsite = game.websites?.find(w => w.category === IGDBWebsiteCategory.Official)?.url || null;
-    const steamUrl = game.websites?.find(w => w.category === IGDBWebsiteCategory.Steam)?.url || null;
+    const officialWebsite = gameWebsites.find(w => w.category === IGDBWebsiteCategoryEnum.Official)?.url || null;
+    const steamUrl = gameWebsites.find(w => w.category === IGDBWebsiteCategoryEnum.Steam)?.url || null;
+    const epicUrl = gameWebsites.find(w => w.category === IGDBWebsiteCategoryEnum.EpicGames)?.url || null;
+    const gogUrl = gameWebsites.find(w => w.category === IGDBWebsiteCategoryEnum.GOG)?.url || null;
+    const itchUrl = gameWebsites.find(w => w.category === IGDBWebsiteCategoryEnum.Itch)?.url || null;
+    const discordUrl = gameWebsites.find(w => w.category === IGDBWebsiteCategoryEnum.Discord)?.url || null;
 
     // Ratings
     const metacriticScore = game.aggregated_rating ? Math.round(game.aggregated_rating) : null;
     const userRating = game.rating || null;
     const userRatingCount = game.rating_count || null;
+    const totalRating = game.total_rating ? Math.round(game.total_rating) : null;
+    const totalRatingCount = game.total_rating_count || null;
+    const hypes = game.hypes || null;
 
     // Game category and status
     const gameCategory = IGDB_GAME_TYPE_MAP[game.category || 0] || 'main_game';
@@ -532,23 +646,29 @@ export default ({ strapi }: { strapi: Core.Strapi }) => ({
 
     // Process age ratings
     // Use new fields (organization, rating_category) with fallback to deprecated fields (category, rating)
-    const ageRatings: AgeRatingData[] = game.age_ratings?.map(ar => {
+    const gameAgeRatings = asObjectArray(game.age_ratings);
+    const ageRatings: AgeRatingData[] = gameAgeRatings.map(ar => {
+      const org = asObject(ar.organization);
+      const ratingCat = asObject(ar.rating_category);
+      const contentDescs = asObjectArray(ar.rating_content_descriptions);
+      
       // Get organization name - prefer new field, fallback to deprecated enum
-      const category = ar.organization?.name 
+      const category = org?.name 
         || IGDB_AGE_RATING_CATEGORY_MAP[ar.category || 0] 
         || 'Unknown';
       
       // Get rating string - prefer new field, fallback to deprecated enum
-      const rating = ar.rating_category?.rating 
-        || IGDB_AGE_RATING_MAP[ar.rating || 0] 
+      const rating = ratingCat?.rating 
+        || IGDB_AGE_RATING_RATING_MAP[ar.rating || 0] 
         || String(ar.rating || 'Unknown');
       
       // Process content descriptions (reasons for the rating like "Blood", "Violence")
-      const contentDescriptions: ContentDescriptionData[] = ar.rating_content_descriptions?.map(cd => ({
+      // rating_content_descriptions uses V2 format which has description directly
+      const contentDescriptions: ContentDescriptionData[] = contentDescs.map(cd => ({
         igdbId: cd.id,
-        name: cd.description_type?.name || cd.description || 'Unknown',
+        name: cd.description || 'Unknown',
         description: cd.description || null,
-      })) || [];
+      }));
       
       return {
         igdbId: ar.id,
@@ -558,22 +678,52 @@ export default ({ strapi }: { strapi: Core.Strapi }) => ({
         synopsis: ar.synopsis || null,
         contentDescriptions,
       };
-    }) || [];
+    });
 
     // Process game engines
-    const gameEngines: GameEngineData[] = game.game_engines?.map(ge => ({
-      igdbId: ge.id,
-      name: ge.name,
-      slug: ge.slug,
-      logoUrl: ge.logo?.image_id
-        ? `https://images.igdb.com/igdb/image/upload/t_logo_med/${ge.logo.image_id}.png`
-        : null,
-    })) || [];
+    const gameGameEngines = asObjectArray(game.game_engines);
+    const gameEngines: GameEngineData[] = gameGameEngines.map(ge => {
+      const logo = asObject(ge.logo);
+      return {
+        igdbId: ge.id,
+        name: ge.name,
+        slug: ge.slug,
+        logoUrl: logo?.image_id
+          ? `https://images.igdb.com/igdb/image/upload/t_logo_med/${logo.image_id}.png`
+          : null,
+      };
+    });
+
+    // Keywords (for SEO tags)
+    const gameKeywords = asObjectArray(game.keywords);
+    const keywords: KeywordData[] = gameKeywords.map(k => ({
+      igdbId: k.id,
+      name: k.name,
+      slug: k.slug,
+    }));
+
+    // Multiplayer modes
+    const gameMultiplayerModes = asObjectArray(game.multiplayer_modes);
+    const multiplayerModes: MultiplayerModeData[] = gameMultiplayerModes.map(mm => {
+      const platform = asObject(mm.platform);
+      return {
+        platform: platform?.name || undefined,
+        campaignCoop: mm.campaigncoop || false,
+        onlineCoop: mm.onlinecoop || false,
+        offlineCoop: mm.offlinecoop || false,
+        onlineMax: mm.onlinemax || null,
+        offlineMax: mm.offlinemax || null,
+        splitscreen: mm.splitscreen || false,
+        dropIn: mm.dropin || false,
+      };
+    });
 
     // Related game IDs (we'll look these up in the controller)
     const similarGameIds = game.similar_games || [];
     const remakeIds = game.remakes || [];
     const remasterIds = game.remasters || [];
+    const dlcIds = game.dlcs || [];
+    const expansionIds = game.expansions || [];
 
     // Fetch localized names (Spanish, etc.) from both localizations and alternative names
     const localizations = await this.getGameLocalizations(game.id);
@@ -609,18 +759,29 @@ export default ({ strapi }: { strapi: Core.Strapi }) => ({
       metacriticScore,
       userRating,
       userRatingCount,
+      totalRating,
+      totalRatingCount,
+      hypes,
       gameModes,
       playerPerspectives,
       themes,
       genres,
+      keywords,
+      multiplayerModes,
       ageRatings,
       gameEngines,
       similarGameIds,
       remakeIds,
       remasterIds,
+      dlcIds,
+      expansionIds,
       languages,
       officialWebsite,
       steamUrl,
+      epicUrl,
+      gogUrl,
+      itchUrl,
+      discordUrl,
       igdbId: game.id,
       igdbUrl: game.url || null,
     };
@@ -642,7 +803,8 @@ export default ({ strapi }: { strapi: Core.Strapi }) => ({
       strapi.log.info(`[IGDB] Found ${localizations?.length || 0} localizations for game ${gameId}`);
       if (localizations?.length) {
         localizations.forEach(loc => {
-          strapi.log.info(`[IGDB] Localization: "${loc.name}" - Region: ${loc.region?.identifier || 'unknown'} (${loc.region?.name || 'unknown'})`);
+          const region = asObject<IGDBRegion>(loc.region);
+          strapi.log.info(`[IGDB] Localization: "${loc.name}" - Region: ${region?.identifier || 'unknown'} (${region?.name || 'unknown'})`);
         });
       }
       return localizations || [];
@@ -690,12 +852,14 @@ export default ({ strapi }: { strapi: Core.Strapi }) => ({
     const spanishRegionIdentifiers = ['es_ES', 'es_MX', 'es_419', 'es'];
     
     for (const identifier of spanishRegionIdentifiers) {
-      const spanishLocalization = localizations.find(
-        loc => loc.region?.identifier?.toLowerCase() === identifier.toLowerCase()
-      );
+      const spanishLocalization = localizations.find(loc => {
+        const region = asObject<IGDBRegion>(loc.region);
+        return region?.identifier?.toLowerCase() === identifier.toLowerCase();
+      });
       if (spanishLocalization?.name) {
-        const coverUrl = spanishLocalization.cover?.image_id
-          ? `https://images.igdb.com/igdb/image/upload/t_cover_big_2x/${spanishLocalization.cover.image_id}.jpg`
+        const cover = asObject<IGDBCover>(spanishLocalization.cover);
+        const coverUrl = cover?.image_id
+          ? `https://images.igdb.com/igdb/image/upload/t_cover_big_2x/${cover.image_id}.jpg`
           : null;
         strapi.log.info(`[IGDB] Using Spanish localization: "${spanishLocalization.name}" (region: ${identifier})`);
         return { name: spanishLocalization.name, coverUrl };
@@ -703,13 +867,15 @@ export default ({ strapi }: { strapi: Core.Strapi }) => ({
     }
     
     // Also check by region name containing "Spain" or "Spanish"
-    const spanishByName = localizations.find(
-      loc => loc.region?.name?.toLowerCase().includes('spain') ||
-             loc.region?.name?.toLowerCase().includes('spanish')
-    );
+    const spanishByName = localizations.find(loc => {
+      const region = asObject<IGDBRegion>(loc.region);
+      return region?.name?.toLowerCase().includes('spain') ||
+             region?.name?.toLowerCase().includes('spanish');
+    });
     if (spanishByName?.name) {
-      const coverUrl = spanishByName.cover?.image_id
-        ? `https://images.igdb.com/igdb/image/upload/t_cover_big_2x/${spanishByName.cover.image_id}.jpg`
+      const cover = asObject<IGDBCover>(spanishByName.cover);
+      const coverUrl = cover?.image_id
+        ? `https://images.igdb.com/igdb/image/upload/t_cover_big_2x/${cover.image_id}.jpg`
         : null;
       strapi.log.info(`[IGDB] Using Spanish localization by name: "${spanishByName.name}"`);
       return { name: spanishByName.name, coverUrl };
@@ -733,7 +899,7 @@ export default ({ strapi }: { strapi: Core.Strapi }) => ({
    * Get full platform details by IGDB ID
    */
   async getPlatformById(igdbId: number): Promise<FullPlatformData | null> {
-    const platforms = await this.igdbRequest<IGDBPlatformFull[]>(
+    const platforms = await this.igdbRequest<IGDBPlatform[]>(
       'platforms',
       `where id = ${igdbId};
        fields name, slug, abbreviation, generation, platform_type,
@@ -746,14 +912,20 @@ export default ({ strapi }: { strapi: Core.Strapi }) => ({
     }
 
     const platform = platforms[0];
+    const platformLogo = asObject<IGDBPlatformLogo>(platform.platform_logo);
+    const platformFamily = asObject<IGDBPlatformFamily>(platform.platform_family);
 
-    const logoUrl = platform.platform_logo?.image_id
-      ? `https://images.igdb.com/igdb/image/upload/t_logo_med/${platform.platform_logo.image_id}.png`
+    const logoUrl = platformLogo?.image_id
+      ? `https://images.igdb.com/igdb/image/upload/t_logo_med/${platformLogo.image_id}.png`
       : null;
 
     // Map IGDB platform_type to our category
-    const category = platform.platform_type 
-      ? (IGDB_PLATFORM_TYPE_MAP[platform.platform_type] as 'console' | 'pc' | 'mobile' | 'handheld' | 'vr' | null) || null 
+    // platform_type can be a number (enum) or an entity object depending on the query
+    const platformTypeValue = typeof platform.platform_type === 'number' 
+      ? platform.platform_type 
+      : asObject<IGDBPlatformTypeEntity>(platform.platform_type)?.id;
+    const category = platformTypeValue 
+      ? (IGDB_PLATFORM_TYPE_MAP[platformTypeValue] as 'console' | 'pc' | 'mobile' | 'handheld' | 'vr' | null) || null 
       : null;
 
     return {
@@ -761,7 +933,7 @@ export default ({ strapi }: { strapi: Core.Strapi }) => ({
       name: platform.name,
       slug: platform.slug,
       abbreviation: platform.abbreviation || null,
-      manufacturer: platform.platform_family?.name || null,
+      manufacturer: platformFamily?.name || null,
       generation: platform.generation || null,
       logoUrl,
       category,

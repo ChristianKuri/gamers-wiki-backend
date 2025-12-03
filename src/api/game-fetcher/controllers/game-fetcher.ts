@@ -686,13 +686,23 @@ export default ({ strapi }: { strapi: Core.Strapi }) => ({
           metacriticScore: gameData.metacriticScore,
           userRating: gameData.userRating,
           userRatingCount: gameData.userRatingCount,
+          totalRating: gameData.totalRating,
+          totalRatingCount: gameData.totalRatingCount,
+          hypes: gameData.hypes,
           // Metadata (relations to collections)
           gameModes: gameModeIds,
           playerPerspectives: playerPerspectiveIds,
           themes: themeIds,
+          // SEO/Metadata as JSON
+          keywords: gameData.keywords,
+          multiplayerModes: gameData.multiplayerModes,
           // URLs
           officialWebsite: gameData.officialWebsite,
           steamUrl: gameData.steamUrl,
+          epicUrl: gameData.epicUrl,
+          gogUrl: gameData.gogUrl,
+          itchUrl: gameData.itchUrl,
+          discordUrl: gameData.discordUrl,
           igdbId: gameData.igdbId,
           igdbUrl: gameData.igdbUrl,
         },
@@ -729,11 +739,17 @@ export default ({ strapi }: { strapi: Core.Strapi }) => ({
           });
 
           // Update English description
-          await gameService.update({
-            documentId: created.documentId,
-            data: { description: descriptions.en },
-            locale: 'en',
-          } as any);
+          strapi.log.info(`[GameFetcher] Updating English description (length: ${descriptions.en?.length || 0})`);
+          try {
+            await gameService.update({
+              documentId: created.documentId,
+              data: { description: descriptions.en },
+              locale: 'en',
+            } as any);
+            strapi.log.info(`[GameFetcher] English description updated successfully`);
+          } catch (updateError) {
+            strapi.log.error(`[GameFetcher] Failed to update English description: ${updateError}`);
+          }
 
           // Create/update Spanish locale version with AI description and localized name
           const spanishName = gameData.localizedNames.es.name;

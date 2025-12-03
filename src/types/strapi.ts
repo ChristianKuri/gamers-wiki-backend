@@ -18,6 +18,29 @@ export interface StrapiDocument {
 }
 
 /**
+ * Keyword data stored as JSON
+ */
+export interface KeywordData {
+  igdbId: number;
+  name: string;
+  slug: string;
+}
+
+/**
+ * Multiplayer mode data stored as JSON
+ */
+export interface MultiplayerModeData {
+  platform?: string;
+  campaignCoop: boolean;
+  onlineCoop: boolean;
+  offlineCoop: boolean;
+  onlineMax: number | null;
+  offlineMax: number | null;
+  splitscreen: boolean;
+  dropIn: boolean;
+}
+
+/**
  * Game document
  */
 export interface GameDocument extends StrapiDocument {
@@ -33,8 +56,17 @@ export interface GameDocument extends StrapiDocument {
   metacriticScore: number | null;
   userRating: number | null;
   userRatingCount: number | null;
+  totalRating: number | null;
+  totalRatingCount: number | null;
+  hypes: number | null;
+  keywords: KeywordData[] | null;
+  multiplayerModes: MultiplayerModeData[] | null;
   officialWebsite: string | null;
   steamUrl: string | null;
+  epicUrl: string | null;
+  gogUrl: string | null;
+  itchUrl: string | null;
+  discordUrl: string | null;
   igdbId: number | null;
   igdbUrl: string | null;
   isSponsored: boolean;
