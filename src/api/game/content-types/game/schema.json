@@ -301,12 +301,10 @@
       }
     },
     "keywords": {
-      "type": "json",
-      "pluginOptions": {
-        "i18n": {
-          "localized": false
-        }
-      }
+      "type": "relation",
+      "relation": "manyToMany",
+      "target": "api::keyword.keyword",
+      "inversedBy": "games"
     },
     "multiplayerModes": {
       "type": "json",

@@ -1280,12 +1280,7 @@ export interface ApiGameGame extends Struct.CollectionTypeSchema {
           localized: false;
         };
       }>;
-    keywords: Schema.Attribute.JSON &
-      Schema.Attribute.SetPluginOptions<{
-        i18n: {
-          localized: false;
-        };
-      }>;
+    keywords: Schema.Attribute.Relation<'manyToMany', 'api::keyword.keyword'>;
     languages: Schema.Attribute.Relation<
       'manyToMany',
       'api::language.language'
@@ -1480,6 +1475,61 @@ export interface ApiGenreGenre extends Struct.CollectionTypeSchema {
       Schema.Attribute.SetPluginOptions<{
         i18n: {
           localized: true;
+        };
+      }>;
+    updatedAt: Schema.Attribute.DateTime;
+    updatedBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
+      Schema.Attribute.Private;
+  };
+}
+
+export interface ApiKeywordKeyword extends Struct.CollectionTypeSchema {
+  collectionName: 'keywords';
+  info: {
+    description: 'Game keywords for SEO and tagging (e.g., Open World, Roguelike, Multiplayer)';
+    displayName: 'Keyword';
+    pluralName: 'keywords';
+    singularName: 'keyword';
+  };
+  options: {
+    draftAndPublish: true;
+  };
+  pluginOptions: {
+    i18n: {
+      localized: true;
+    };
+  };
+  attributes: {
+    createdAt: Schema.Attribute.DateTime;
+    createdBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
+      Schema.Attribute.Private;
+    games: Schema.Attribute.Relation<'manyToMany', 'api::game.game'>;
+    igdbId: Schema.Attribute.Integer &
+      Schema.Attribute.Unique &
+      Schema.Attribute.SetPluginOptions<{
+        i18n: {
+          localized: false;
+        };
+      }>;
+    locale: Schema.Attribute.String;
+    localizations: Schema.Attribute.Relation<
+      'oneToMany',
+      'api::keyword.keyword'
+    >;
+    name: Schema.Attribute.String &
+      Schema.Attribute.Required &
+      Schema.Attribute.Unique &
+      Schema.Attribute.SetPluginOptions<{
+        i18n: {
+          localized: false;
+        };
+      }>;
+    publishedAt: Schema.Attribute.DateTime;
+    slug: Schema.Attribute.UID<'name'> &
+      Schema.Attribute.Required &
+      Schema.Attribute.SetPluginOptions<{
+        i18n: {
+          localized: false;
         };
       }>;
     updatedAt: Schema.Attribute.DateTime;
@@ -2320,6 +2370,7 @@ declare module '@strapi/strapi' {
       'api::game-mode.game-mode': ApiGameModeGameMode;
       'api::game.game': ApiGameGame;
       'api::genre.genre': ApiGenreGenre;
+      'api::keyword.keyword': ApiKeywordKeyword;
       'api::language.language': ApiLanguageLanguage;
       'api::platform.platform': ApiPlatformPlatform;
       'api::player-perspective.player-perspective': ApiPlayerPerspectivePlayerPerspective;

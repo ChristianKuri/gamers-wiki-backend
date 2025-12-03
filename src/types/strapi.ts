@@ -18,12 +18,12 @@ export interface StrapiDocument {
 }
 
 /**
- * Keyword data stored as JSON
+ * Keyword document
  */
-export interface KeywordData {
-  igdbId: number;
+export interface KeywordDocument extends StrapiDocument {
   name: string;
   slug: string;
+  igdbId: number | null;
 }
 
 /**
@@ -59,7 +59,7 @@ export interface GameDocument extends StrapiDocument {
   totalRating: number | null;
   totalRatingCount: number | null;
   hypes: number | null;
-  keywords: KeywordData[] | null;
+  // keywords is a relation, populated separately
   multiplayerModes: MultiplayerModeData[] | null;
   officialWebsite: string | null;
   steamUrl: string | null;

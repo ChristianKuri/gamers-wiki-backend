@@ -466,13 +466,17 @@ export enum IGDBPlatformTypeEnum {
   Computer = 6,
 }
 
-export const IGDB_PLATFORM_TYPE_MAP: Record<number, string> = {
+/**
+ * Maps IGDB platform types to Strapi platform category enum values
+ * Strapi accepts: 'console', 'pc', 'mobile', 'handheld', 'vr'
+ */
+export const IGDB_PLATFORM_TYPE_MAP: Record<number, string | null> = {
   [IGDBPlatformTypeEnum.Console]: 'console',
-  [IGDBPlatformTypeEnum.Arcade]: 'arcade',
-  [IGDBPlatformTypeEnum.Platform]: 'platform',
-  [IGDBPlatformTypeEnum.OperatingSystem]: 'operating_system',
-  [IGDBPlatformTypeEnum.PortableConsole]: 'portable_console',
-  [IGDBPlatformTypeEnum.Computer]: 'computer',
+  [IGDBPlatformTypeEnum.Arcade]: null, // No direct mapping, skip
+  [IGDBPlatformTypeEnum.Platform]: 'mobile', // Platform/mobile devices
+  [IGDBPlatformTypeEnum.OperatingSystem]: 'pc', // Windows, macOS, Linux
+  [IGDBPlatformTypeEnum.PortableConsole]: 'handheld',
+  [IGDBPlatformTypeEnum.Computer]: 'pc',
 };
 
 // -----------------------------------------------------------------------------

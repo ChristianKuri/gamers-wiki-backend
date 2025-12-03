@@ -8,6 +8,7 @@ import type {
   ThemeData, 
   AgeRatingData, 
   GameEngineData,
+  KeywordData,
 } from '../services/igdb';
 import type {
   GameDocument,
@@ -21,6 +22,7 @@ import type {
   ThemeDocument,
   AgeRatingDocument,
   GameEngineDocument,
+  KeywordDocument,
   DocumentQueryOptions,
 } from '../../../types/strapi';
 import { 
@@ -157,6 +159,7 @@ export default ({ strapi }: { strapi: Core.Strapi }) => ({
       const themeService = strapi.documents('api::theme.theme') as unknown as DocumentService<ThemeDocument>;
       const ageRatingService = strapi.documents('api::age-rating.age-rating') as unknown as DocumentService<AgeRatingDocument>;
       const gameEngineService = strapi.documents('api::game-engine.game-engine') as unknown as DocumentService<GameEngineDocument>;
+      const keywordService = strapi.documents('api::keyword.keyword') as unknown as DocumentService<KeywordDocument>;
 
       // Check if game already exists
       const existingGames = await gameService.findMany({
@@ -515,6 +518,45 @@ export default ({ strapi }: { strapi: Core.Strapi }) => ({
         return newEngine.documentId;
       };
 
+      // Helper: Find or create keyword
+      const findOrCreateKeyword = async (keywordData: KeywordData): Promise<string> => {
+        // Check by igdbId first
+        let existing = await keywordService.findMany({
+          filters: { igdbId: keywordData.igdbId },
+        } as any);
+
+        if (existing.length > 0) {
+          return existing[0].documentId;
+        }
+
+        // Fallback: check by name
+        existing = await keywordService.findMany({
+          filters: { name: keywordData.name },
+        } as any);
+
+        if (existing.length > 0) {
+          return existing[0].documentId;
+        }
+
+        // Create new keyword
+        const newKeyword = await keywordService.create({
+          data: {
+            name: keywordData.name,
+            slug: keywordData.slug,
+            igdbId: keywordData.igdbId,
+          },
+          locale: 'en',
+        } as any);
+
+        await (keywordService as any).publish({
+          documentId: newKeyword.documentId,
+          locale: 'en',
+        });
+
+        strapi.log.info(`[GameFetcher] Created keyword: ${keywordData.name}`);
+        return newKeyword.documentId;
+      };
+
       // Find or create genres
       const genreIds: string[] = [];
       for (const genreName of gameData.genres) {
@@ -576,7 +618,8 @@ export default ({ strapi }: { strapi: Core.Strapi }) => ({
               manufacturer: fullPlatformData?.manufacturer,
               generation: fullPlatformData?.generation,
               logoUrl: fullPlatformData?.logoUrl,
-              category: fullPlatformData?.category,
+              // Only include category if it has a valid value (not null)
+              ...(fullPlatformData?.category && { category: fullPlatformData.category }),
             },
             locale: 'en',
           } as any);
@@ -660,6 +703,13 @@ export default ({ strapi }: { strapi: Core.Strapi }) => ({
         gameEngineIds.push(engineId);
       }
 
+      // Find or create keywords
+      const keywordIds: string[] = [];
+      for (const keywordData of gameData.keywords) {
+        const keywordId = await findOrCreateKeyword(keywordData);
+        keywordIds.push(keywordId);
+      }
+
       // Create the game
       const created = await gameService.create({
         data: {
@@ -693,8 +743,8 @@ export default ({ strapi }: { strapi: Core.Strapi }) => ({
           gameModes: gameModeIds,
           playerPerspectives: playerPerspectiveIds,
           themes: themeIds,
-          // SEO/Metadata as JSON
-          keywords: gameData.keywords,
+          keywords: keywordIds,
+          // Metadata as JSON
           multiplayerModes: gameData.multiplayerModes,
           // URLs
           officialWebsite: gameData.officialWebsite,
@@ -855,6 +905,7 @@ export default ({ strapi }: { strapi: Core.Strapi }) => ({
           gameModes: gameModeIds.length,
           playerPerspectives: playerPerspectiveIds.length,
           themes: themeIds.length,
+          keywords: keywordIds.length,
           franchises: franchiseIds.length,
           ageRatings: ageRatingIds.length,
           gameEngines: gameEngineIds.length,
