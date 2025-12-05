@@ -26,11 +26,11 @@ import type {
   DocumentQueryOptions,
 } from '../../../types/strapi';
 import { 
-  generateGameDescriptions, 
   isAIConfigured, 
   generateGameDescription,
   getAIStatus,
   type SupportedLocale,
+  type GameDescriptionContext,
 } from '../../../ai';
 
 interface SearchQuery {
@@ -777,23 +777,32 @@ export default ({ strapi }: { strapi: Core.Strapi }) => ({
           // Get publisher name from the first publisher
           const publisherName = gameData.publishersData[0]?.name || null;
 
-          // Generate descriptions for both locales in parallel
-          const descriptions = await generateGameDescriptions({
-            name: gameData.name,
+          // Get localized names
+          const englishName = gameData.localizedNames.en.name;
+          const spanishName = gameData.localizedNames.es.name;
+
+          // Build base context (shared between locales)
+          const baseContext: Omit<GameDescriptionContext, 'name'> = {
             igdbDescription: gameData.description,
             genres: gameData.genres,
             platforms: platformNames,
             releaseDate: gameData.releaseDate,
             developer: developerName,
             publisher: publisherName,
-          });
+          };
+
+          // Generate descriptions for both locales in parallel, using locale-specific names
+          const [enDescription, esDescription] = await Promise.all([
+            generateGameDescription({ ...baseContext, name: englishName }, 'en'),
+            generateGameDescription({ ...baseContext, name: spanishName }, 'es'),
+          ]);
 
           // Update English description
-          strapi.log.info(`[GameFetcher] Updating English description (length: ${descriptions.en?.length || 0})`);
+          strapi.log.info(`[GameFetcher] Updating English description (length: ${enDescription?.length || 0})`);
           try {
             await gameService.update({
               documentId: created.documentId,
-              data: { description: descriptions.en },
+              data: { description: enDescription },
               locale: 'en',
             } as any);
             strapi.log.info(`[GameFetcher] English description updated successfully`);
@@ -802,7 +811,6 @@ export default ({ strapi }: { strapi: Core.Strapi }) => ({
           }
 
           // Create/update Spanish locale version with AI description and localized name
-          const spanishName = gameData.localizedNames.es.name;
           const spanishCoverUrl = gameData.localizedNames.es.coverUrl;
           const spanishSlug = spanishName
             .toLowerCase()
@@ -817,7 +825,7 @@ export default ({ strapi }: { strapi: Core.Strapi }) => ({
               data: { 
                 name: spanishName,
                 slug: spanishSlug,
-                description: descriptions.es,
+                description: esDescription,
                 // Use localized cover if available
                 ...(spanishCoverUrl && spanishCoverUrl !== gameData.coverImageUrl && { coverImageUrl: spanishCoverUrl }),
               },
@@ -959,8 +967,8 @@ export default ({ strapi }: { strapi: Core.Strapi }) => ({
       const developerName = (game as any).developers?.[0]?.name || null;
       const publisherName = (game as any).publishers?.[0]?.name || null;
 
-      const context = {
-        name: game.name,
+      // Build base context (shared between locales)
+      const baseContext: Omit<GameDescriptionContext, 'name'> = {
         igdbDescription: game.description,
         genres: genreNames,
         platforms: platformNames,
@@ -972,7 +980,7 @@ export default ({ strapi }: { strapi: Core.Strapi }) => ({
       const results: { en?: string; es?: string } = {};
 
       if (locale === 'en' || locale === 'both') {
-        const enDescription = await generateGameDescription(context, 'en');
+        const enDescription = await generateGameDescription({ ...baseContext, name: game.name }, 'en');
         await gameService.update({
           documentId: gameId,
           data: { description: enDescription },
@@ -983,7 +991,16 @@ export default ({ strapi }: { strapi: Core.Strapi }) => ({
       }
 
       if (locale === 'es' || locale === 'both') {
-        const esDescription = await generateGameDescription(context, 'es');
+        // Fetch the Spanish locale to get the localized name
+        const spanishGame = await gameService.findOne({
+          documentId: gameId,
+          locale: 'es',
+        } as any);
+        
+        // Use Spanish name if available, otherwise fall back to English name
+        const spanishName = spanishGame?.name || game.name;
+        
+        const esDescription = await generateGameDescription({ ...baseContext, name: spanishName }, 'es');
         try {
           await gameService.update({
             documentId: gameId,
@@ -991,7 +1008,7 @@ export default ({ strapi }: { strapi: Core.Strapi }) => ({
             locale: 'es',
           } as any);
           results.es = esDescription;
-          strapi.log.info(`[GameFetcher] Regenerated Spanish description for: ${game.name}`);
+          strapi.log.info(`[GameFetcher] Regenerated Spanish description for: ${spanishName}`);
         } catch {
           strapi.log.warn(`[GameFetcher] Could not update Spanish locale for: ${game.name}`);
         }
