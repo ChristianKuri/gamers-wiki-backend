@@ -32,6 +32,7 @@ import {
   type SupportedLocale,
   type GameDescriptionContext,
 } from '../../../ai';
+import { syncLocales, type GameLocaleData } from '../../game/locale-sync';
 
 interface SearchQuery {
   q?: string;
@@ -761,6 +762,52 @@ export default ({ strapi }: { strapi: Core.Strapi }) => ({
 
       strapi.log.info(`[GameFetcher] Created game: ${gameData.name}`);
 
+      // Build locale data for sync service
+      // This data is passed to the locale-sync module to create localized entries
+      const localeData: GameLocaleData = {
+        documentId: created.documentId,
+        sourceId: created.id,
+        localizedNames: gameData.localizedNames,
+        gameData: {
+          description: gameData.description,
+          releaseDate: gameData.releaseDate,
+          gameCategory: gameData.gameCategory,
+          gameStatus: gameData.gameStatus,
+          coverImageUrl: gameData.coverImageUrl,
+          screenshotUrls: gameData.screenshotUrls,
+          trailerIds: gameData.trailerIds,
+          metacriticScore: gameData.metacriticScore,
+          userRating: gameData.userRating,
+          userRatingCount: gameData.userRatingCount,
+          totalRating: gameData.totalRating,
+          totalRatingCount: gameData.totalRatingCount,
+          hypes: gameData.hypes,
+          multiplayerModes: gameData.multiplayerModes,
+          officialWebsite: gameData.officialWebsite,
+          steamUrl: gameData.steamUrl,
+          epicUrl: gameData.epicUrl,
+          gogUrl: gameData.gogUrl,
+          itchUrl: gameData.itchUrl,
+          discordUrl: gameData.discordUrl,
+          igdbId: gameData.igdbId,
+          igdbUrl: gameData.igdbUrl,
+        },
+        relationIds: {
+          developers: developerIds,
+          publishers: publisherIds,
+          franchises: franchiseIds,
+          platforms: platformIds,
+          genres: genreIds,
+          languages: languageIds,
+          ageRatings: ageRatingIds,
+          gameEngines: gameEngineIds,
+          gameModes: gameModeIds,
+          playerPerspectives: playerPerspectiveIds,
+          themes: themeIds,
+          keywords: keywordIds,
+        },
+      };
+
       // Generate AI descriptions if configured
       let aiGenerated = false;
       let aiError: string | null = null;
@@ -810,75 +857,22 @@ export default ({ strapi }: { strapi: Core.Strapi }) => ({
             strapi.log.error(`[GameFetcher] Failed to update English description: ${updateError}`);
           }
 
-          // Create/update Spanish locale version with AI description and localized name
-          const spanishCoverUrl = gameData.localizedNames.es.coverUrl;
-          const spanishSlug = spanishName
-            .toLowerCase()
-            .normalize('NFD')
-            .replace(/[\u0300-\u036f]/g, '') // Remove accents
-            .replace(/[^a-z0-9]+/g, '-')
-            .replace(/^-|-$/g, '');
-          
-          try {
-            await gameService.update({
-              documentId: created.documentId,
-              data: { 
-                name: spanishName,
-                slug: spanishSlug,
-                description: esDescription,
-                // Use localized cover if available
-                ...(spanishCoverUrl && spanishCoverUrl !== gameData.coverImageUrl && { coverImageUrl: spanishCoverUrl }),
-              },
-              locale: 'es',
-            } as any);
-            
-            if (spanishName !== gameData.name) {
-              strapi.log.info(`[GameFetcher] Spanish locale: "${spanishName}" (from IGDB localization)`);
-            }
-            if (spanishCoverUrl && spanishCoverUrl !== gameData.coverImageUrl) {
-              strapi.log.info(`[GameFetcher] Spanish cover: ${spanishCoverUrl}`);
-            }
-          } catch {
-            // Spanish locale might not exist, try creating it
-            strapi.log.info(`[GameFetcher] Creating Spanish locale for: ${spanishName}`);
-          }
+          // Sync locales with AI-generated Spanish description
+          localeData.aiDescription = esDescription;
+          await syncLocales(strapi, localeData);
 
           aiGenerated = true;
           strapi.log.info(`[GameFetcher] AI descriptions generated for: ${gameData.name}`);
         } catch (error) {
           aiError = error instanceof Error ? error.message : 'Unknown AI error';
           strapi.log.error(`[GameFetcher] AI description error: ${aiError}`);
-          // Continue with import - AI is optional
+          // Continue with import - AI is optional, but still sync locales
+          await syncLocales(strapi, localeData);
         }
       } else {
         strapi.log.info(`[GameFetcher] AI not configured, skipping description generation`);
-        
-        // Still create Spanish locale with localized name (without AI description)
-        const spanishName = gameData.localizedNames.es.name;
-        const spanishCoverUrl = gameData.localizedNames.es.coverUrl;
-        if (spanishName !== gameData.name || (spanishCoverUrl && spanishCoverUrl !== gameData.coverImageUrl)) {
-          const spanishSlug = spanishName
-            .toLowerCase()
-            .normalize('NFD')
-            .replace(/[\u0300-\u036f]/g, '') // Remove accents
-            .replace(/[^a-z0-9]+/g, '-')
-            .replace(/^-|-$/g, '');
-          
-          try {
-            await gameService.update({
-              documentId: created.documentId,
-              data: { 
-                name: spanishName,
-                slug: spanishSlug,
-                ...(spanishCoverUrl && spanishCoverUrl !== gameData.coverImageUrl && { coverImageUrl: spanishCoverUrl }),
-              },
-              locale: 'es',
-            } as any);
-            strapi.log.info(`[GameFetcher] Spanish locale created: "${spanishName}" (from IGDB localization)`);
-          } catch (error) {
-            strapi.log.warn(`[GameFetcher] Could not create Spanish locale: ${error}`);
-          }
-        }
+        // Sync locales without AI description
+        await syncLocales(strapi, localeData);
       }
 
       ctx.body = {
