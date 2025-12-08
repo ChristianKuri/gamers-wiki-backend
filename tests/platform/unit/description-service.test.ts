@@ -11,7 +11,7 @@ import {
   shouldProcessPlatformEvent,
   type PlatformEventData,
   type PlatformDescriptionDependencies,
-} from '../../src/api/platform/services/platform-description';
+} from '../../../src/api/platform/services/platform-description';
 import type { Core } from '@strapi/strapi';
 
 // Mock Knex query builder

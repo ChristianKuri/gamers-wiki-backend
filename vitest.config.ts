@@ -20,7 +20,7 @@ export default defineConfig({
       'node_modules',
       'dist',
       'build',
-      'tests/e2e/**', // E2E tests require Strapi to be running
+      'tests/**/e2e/**', // E2E tests require Strapi to be running
     ],
     
     // Coverage configuration

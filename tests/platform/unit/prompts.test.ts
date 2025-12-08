@@ -6,8 +6,8 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { platformDescriptionsConfig } from '../../src/ai/config/platform-descriptions';
-import type { PlatformDescriptionContext } from '../../src/ai/config/types';
+import { platformDescriptionsConfig } from '../../../src/ai/config/platform-descriptions';
+import type { PlatformDescriptionContext } from '../../../src/ai/config/types';
 
 describe('Platform Description Prompts', () => {
   const context: PlatformDescriptionContext = {

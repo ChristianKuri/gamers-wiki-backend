@@ -19,6 +19,7 @@
     "test:unit": "vitest run tests/unit",
     "test:integration": "vitest run tests/integration",
     "test:e2e": "RUN_E2E_TESTS=true vitest run --config vitest.e2e.config.ts",
+    "test:e2e:env": "lsof -ti :1338 | xargs -r kill -9 2>/dev/null; PORT=1338 DATABASE_NAME=strapi_test npm run develop",
     "test:e2e:run": "bash scripts/run-e2e.sh",
     "test:all": "vitest run && bash scripts/run-e2e.sh",
     "test:ai:game-descriptions": "npx tsx scripts/test-ai-game-descriptions.ts"

@@ -15,9 +15,9 @@ import {
   insertLinks, 
   copyAllRelations,
   generateSlug 
-} from '../../src/api/game/locale-sync/strategies/base';
-import { syncLocales } from '../../src/api/game/locale-sync';
-import type { GameLocaleData } from '../../src/api/game/locale-sync/types';
+} from '../../../src/api/game/locale-sync/strategies/base';
+import { syncLocales } from '../../../src/api/game/locale-sync';
+import type { GameLocaleData } from '../../../src/api/game/locale-sync/types';
 import type { Core } from '@strapi/strapi';
 import type { Knex } from 'knex';
 

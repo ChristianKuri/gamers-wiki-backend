@@ -20,8 +20,8 @@ export default defineConfig({
     // No setup file - E2E tests handle their own setup
     setupFiles: [],
     
-    // Only include E2E test patterns
-    include: ['tests/e2e/**/*.test.ts'],
+    // Only include E2E test patterns (feature-organized: tests/{feature}/e2e/)
+    include: ['tests/**/e2e/**/*.test.ts'],
     
     // Exclude patterns
     exclude: ['node_modules', 'dist', 'build'],

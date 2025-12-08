@@ -7,8 +7,8 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { generateSlug } from '../../src/api/game/locale-sync/strategies/base';
-import { getConfiguredLocales, isLocaleConfigured } from '../../src/api/game/locale-sync';
+import { generateSlug } from '../../../src/api/game/locale-sync/strategies/base';
+import { getConfiguredLocales, isLocaleConfigured } from '../../../src/api/game/locale-sync';
 
 describe('Locale Sync - Base Utilities', () => {
   describe('generateSlug', () => {

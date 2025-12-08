@@ -13,8 +13,8 @@ import {
   generateGameDescription,
   generateGameDescriptions,
   getAIStatus,
-} from '../../src/ai';
-import type { PlatformDescriptionContext, GameDescriptionContext } from '../../src/ai';
+} from '../../../src/ai';
+import type { PlatformDescriptionContext, GameDescriptionContext } from '../../../src/ai';
 
 describe('AI Service', () => {
   describe('isAIConfigured', () => {

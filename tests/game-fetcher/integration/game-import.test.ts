@@ -18,8 +18,8 @@
  */
 
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
-import { server } from '../mocks/server';
-import { errorHandlers } from '../mocks/handlers';
+import { server } from '../../mocks/server';
+import { errorHandlers } from '../../mocks/handlers';
 
 describe('Game Import Flow', () => {
   describe('AI Description Generation', () => {
@@ -194,7 +194,7 @@ describe('Platform Lifecycle Tests', () => {
 
   it('should have correct PlatformLocaleData structure', async () => {
     // Import the types to verify structure
-    const { syncPlatformLocales } = await import('../../src/api/platform/locale-sync');
+    const { syncPlatformLocales } = await import('../../../src/api/platform/locale-sync');
     
     // Verify the function exists and is callable
     expect(typeof syncPlatformLocales).toBe('function');
@@ -202,7 +202,7 @@ describe('Platform Lifecycle Tests', () => {
 
   it('should verify AI generates different EN/ES descriptions', async () => {
     // This is critical for the lifecycle - we need different descriptions per locale
-    const { generatePlatformDescriptions } = await import('../../src/ai');
+    const { generatePlatformDescriptions } = await import('../../../src/ai');
     
     const descriptions = await generatePlatformDescriptions({
       name: 'Nintendo Switch',

@@ -13,7 +13,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { shouldProcessPlatformEvent } from '../../src/api/platform/services/platform-description';
+import { shouldProcessPlatformEvent } from '../../../src/api/platform/services/platform-description';
 
 describe('Platform Lifecycle Protection', () => {
   describe('shouldProcessPlatformEvent', () => {
