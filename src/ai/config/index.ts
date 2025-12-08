@@ -23,6 +23,7 @@ export * from './utils';
 // Configurations
 export { gameDescriptionsConfig } from './game-descriptions';
 export { platformDescriptionsConfig } from './platform-descriptions';
+export { companyDescriptionsConfig } from './company-descriptions';
 
 // Future configurations (uncomment when implemented):
 // export { tagGenerationConfig } from './tag-generation';
@@ -36,6 +37,7 @@ export { platformDescriptionsConfig } from './platform-descriptions';
 export const allConfigs = {
   'game-descriptions': () => import('./game-descriptions').then(m => m.gameDescriptionsConfig),
   'platform-descriptions': () => import('./platform-descriptions').then(m => m.platformDescriptionsConfig),
+  'company-descriptions': () => import('./company-descriptions').then(m => m.companyDescriptionsConfig),
   // 'tag-generation': () => import('./tag-generation').then(m => m.tagGenerationConfig),
   // 'seo-meta': () => import('./seo-meta').then(m => m.seoMetaConfig),
 } as const;

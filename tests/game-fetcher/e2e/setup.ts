@@ -264,4 +264,23 @@ export const db = {
       .select('id', 'document_id', 'name', 'locale', 'description', 'created_at')
       .orderBy(['document_id', 'locale']);
   },
+
+  /**
+   * Get all companies with their descriptions
+   */
+  async getCompanies(knex: Knex) {
+    return knex('companies')
+      .select('id', 'document_id', 'name', 'locale', 'description', 'country', 'founded_year', 'created_at')
+      .orderBy(['document_id', 'locale']);
+  },
+
+  /**
+   * Get companies by document ID
+   */
+  async getCompaniesByDocumentId(knex: Knex, documentId: string) {
+    return knex('companies')
+      .select('id', 'document_id', 'name', 'locale', 'description', 'country', 'founded_year')
+      .where('document_id', documentId)
+      .orderBy('locale');
+  },
 };

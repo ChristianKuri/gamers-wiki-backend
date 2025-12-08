@@ -208,6 +208,86 @@ To run E2E tests, use: npm run test:e2e:run
     expect(esPlatform?.description).toMatch(/consola|videojuegos|jugadores|híbrida/i);
   });
 
+  it('should create company entries for both EN and ES locales', async ({ skip }) => {
+    if (!strapiReady || !knex) {
+      skip();
+      return;
+    }
+
+    const companies = await db.getCompanies(knex);
+    
+    // Should have at least one company (Nintendo is publisher/developer for Zelda)
+    expect(companies.length).toBeGreaterThan(0);
+
+    // Get a company that should exist (Nintendo)
+    const nintendoCompanies = companies.filter((c: { name: string }) => 
+      c.name === 'Nintendo'
+    );
+
+    // Should have 2 entries (EN and ES) with same document_id
+    if (nintendoCompanies.length > 0) {
+      const uniqueDocIds = [...new Set(nintendoCompanies.map((c: { document_id: string }) => c.document_id))];
+      expect(uniqueDocIds.length).toBe(1);
+
+      const enCompany = nintendoCompanies.find((c: { locale: string }) => c.locale === 'en');
+      const esCompany = nintendoCompanies.find((c: { locale: string }) => c.locale === 'es');
+
+      expect(enCompany).toBeDefined();
+      expect(esCompany).toBeDefined();
+      expect(enCompany?.document_id).toBe(esCompany?.document_id);
+    }
+  });
+
+  it('should generate English company description in English (not Spanish)', async ({ skip }) => {
+    if (!strapiReady || !knex) {
+      skip();
+      return;
+    }
+
+    const companies = await db.getCompanies(knex);
+    const enCompany = companies.find((c: { locale: string; name: string }) => 
+      c.locale === 'en' && c.name === 'Nintendo'
+    );
+
+    // Company might not exist if the test game doesn't have Nintendo as dev/publisher
+    // In that case, find any EN company
+    const anyEnCompany = enCompany || companies.find((c: { locale: string }) => c.locale === 'en');
+
+    if (anyEnCompany) {
+      expect(anyEnCompany?.description).toBeTruthy();
+      expect(anyEnCompany?.description?.length).toBeGreaterThan(50);
+      
+      // English description should NOT contain Spanish words
+      expect(anyEnCompany?.description).not.toMatch(/empresa|videojuegos|desarrollador|publicador|industria/i);
+      // English description should contain English words
+      expect(anyEnCompany?.description).toMatch(/game|developer|publisher|company|industry/i);
+    }
+  });
+
+  it('should generate Spanish company description in Spanish', async ({ skip }) => {
+    if (!strapiReady || !knex) {
+      skip();
+      return;
+    }
+
+    const companies = await db.getCompanies(knex);
+    const esCompany = companies.find((c: { locale: string; name: string }) => 
+      c.locale === 'es' && c.name === 'Nintendo'
+    );
+
+    // Company might not exist if the test game doesn't have Nintendo as dev/publisher
+    // In that case, find any ES company
+    const anyEsCompany = esCompany || companies.find((c: { locale: string }) => c.locale === 'es');
+
+    if (anyEsCompany) {
+      expect(anyEsCompany?.description).toBeTruthy();
+      expect(anyEsCompany?.description?.length).toBeGreaterThan(50);
+      
+      // Spanish description should contain Spanish words
+      expect(anyEsCompany?.description).toMatch(/empresa|videojuegos|desarrollador|publicador|industria|juegos/i);
+    }
+  });
+
   it('should prevent duplicate entries on re-import', async ({ skip }) => {
     if (!strapiReady || !knex) {
       skip();

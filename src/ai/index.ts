@@ -44,6 +44,8 @@ export {
   generateGameDescriptions,
   generatePlatformDescription,
   generatePlatformDescriptions,
+  generateCompanyDescription,
+  generateCompanyDescriptions,
   getAIStatus,
 } from './service';
 
@@ -52,6 +54,7 @@ export type {
   SupportedLocale,
   GameDescriptionContext,
   PlatformDescriptionContext,
+  CompanyDescriptionContext,
   AITaskConfig,
   TagGenerationContext,
   SEOMetaContext,
@@ -62,6 +65,7 @@ export type {
 export { 
   gameDescriptionsConfig,
   platformDescriptionsConfig,
+  companyDescriptionsConfig,
   getModel,
   getModelFromEnv,
   AI_ENV_KEYS,

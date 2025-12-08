@@ -10,9 +10,11 @@ import { generateText } from 'ai';
 import { 
   gameDescriptionsConfig,
   platformDescriptionsConfig,
+  companyDescriptionsConfig,
   type SupportedLocale, 
   type GameDescriptionContext,
   type PlatformDescriptionContext,
+  type CompanyDescriptionContext,
   type AITaskConfig,
 } from './config';
 
@@ -128,6 +130,41 @@ export async function generatePlatformDescriptions(
 }
 
 /**
+ * Generate a company description using AI
+ * 
+ * @param context - Company information for context
+ * @param locale - Target language ('en' or 'es')
+ * @returns Generated description
+ */
+export async function generateCompanyDescription(
+  context: CompanyDescriptionContext,
+  locale: SupportedLocale
+): Promise<string> {
+  return executeAITask(companyDescriptionsConfig, context, locale);
+}
+
+/**
+ * Generate company descriptions for both English and Spanish locales
+ * 
+ * @param context - Company information for context
+ * @returns Object with 'en' and 'es' descriptions
+ */
+export async function generateCompanyDescriptions(
+  context: CompanyDescriptionContext
+): Promise<{ en: string; es: string }> {
+  // Generate both descriptions in parallel for speed
+  const [enDescription, esDescription] = await Promise.all([
+    generateCompanyDescription(context, 'en'),
+    generateCompanyDescription(context, 'es'),
+  ]);
+
+  return {
+    en: enDescription,
+    es: esDescription,
+  };
+}
+
+/**
  * Get information about the current AI configuration
  * Shows active models (resolved from environment or defaults)
  */
@@ -146,6 +183,12 @@ export function getAIStatus() {
         model: platformDescriptionsConfig.model,
         envVar: 'AI_MODEL_PLATFORM_DESCRIPTIONS',
         isOverridden: Boolean(process.env.AI_MODEL_PLATFORM_DESCRIPTIONS),
+      },
+      'company-descriptions': {
+        name: companyDescriptionsConfig.name,
+        model: companyDescriptionsConfig.model,
+        envVar: 'AI_MODEL_COMPANY_DESCRIPTIONS',
+        isOverridden: Boolean(process.env.AI_MODEL_COMPANY_DESCRIPTIONS),
       },
       // Add more tasks here as they're implemented
     },

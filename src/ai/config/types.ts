@@ -63,6 +63,18 @@ export interface PlatformDescriptionContext {
 }
 
 /**
+ * Context for company description generation
+ */
+export interface CompanyDescriptionContext {
+  name: string;
+  country?: string | null;
+  foundedYear?: number | null;
+  notableGames?: string[];
+  isDeveloper?: boolean;
+  isPublisher?: boolean;
+}
+
+/**
  * Context for tag generation (future)
  */
 export interface TagGenerationContext {
