@@ -7,7 +7,7 @@
     },
     "strapi-test-env": {
       "type": "streamable-http",
-      "url": "http://localhost:1337/api/mcp/streamable",
+      "url": "http://localhost:1338/api/mcp/streamable",
       "note": "For Streamable HTTP connections, add this URL directly in your MCP Client"
     },
     "postgres": {
