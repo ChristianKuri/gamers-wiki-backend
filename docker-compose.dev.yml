@@ -4,6 +4,10 @@
 #
 # This runs ONLY the database. Strapi runs natively on your machine
 # with any Node.js version you prefer.
+#
+# Databases created:
+#   - strapi_dev: Development database
+#   - strapi_test: E2E test database (created by init script)
 
 services:
   db:
@@ -16,6 +20,8 @@ services:
       POSTGRES_PASSWORD: strapi_dev_password
     volumes:
       - postgres_dev_data:/var/lib/postgresql/data
+      # Init script creates strapi_test database on first run
+      - ./docker/init-test-db.sql:/docker-entrypoint-initdb.d/init-test-db.sql:ro
     ports:
       - "5432:5432"
     healthcheck:

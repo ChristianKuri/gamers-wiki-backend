@@ -4,15 +4,13 @@
  * This config defines how AI generates game descriptions for the wiki.
  * Descriptions are generated in both English and Spanish.
  * 
- * Environment Variable:
- * - AI_MODEL_GAME_DESCRIPTIONS: Override the model (default: anthropic/claude-sonnet-4)
+ * Model configuration:
+ * - Default model: Set in AI_DEFAULT_MODELS.GAME_DESCRIPTIONS (utils.ts)
+ * - Override via env: AI_MODEL_GAME_DESCRIPTIONS
  */
 
 import type { AITaskConfig, GameDescriptionContext, SupportedLocale } from './types';
-import { getModelFromEnv, AI_ENV_KEYS } from './utils';
-
-/** Default model for game descriptions - best quality for engaging content */
-const DEFAULT_MODEL = 'deepseek/deepseek-v3.2';
+import { getModel } from './utils';
 
 /**
  * Build the prompt for game description generation
@@ -86,20 +84,14 @@ Game: "${context.name}"${contextSection}
 /**
  * Game Description AI Configuration
  * 
- * Override model with: AI_MODEL_GAME_DESCRIPTIONS env var
- * Default: anthropic/claude-sonnet-4
+ * Model: Configured in AI_DEFAULT_MODELS.GAME_DESCRIPTIONS (utils.ts)
+ * Override: Set AI_MODEL_GAME_DESCRIPTIONS env var
  */
 export const gameDescriptionsConfig: AITaskConfig<GameDescriptionContext> = {
   name: 'Game Descriptions',
   description: 'Generates engaging game descriptions for the wiki in English and Spanish',
   
-  // Model: Set AI_MODEL_GAME_DESCRIPTIONS to override
-  // Recommended options:
-  // - 'anthropic/claude-sonnet-4' - Best quality (default)
-  // - 'anthropic/claude-3-haiku' - Faster, cheaper
-  // - 'openai/gpt-4o-mini' - Good balance
-  // - 'openai/gpt-4o' - Higher quality
-  model: getModelFromEnv(AI_ENV_KEYS.GAME_DESCRIPTIONS, DEFAULT_MODEL),
+  model: getModel('GAME_DESCRIPTIONS'),
   
   systemPrompt: `You are a senior gaming journalist and wiki editor at Gamers.Wiki, a comprehensive video game encyclopedia. You have deep expertise across all gaming genres, platforms, and eras—from retro classics to the latest releases.
 

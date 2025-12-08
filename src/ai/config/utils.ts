@@ -1,38 +1,68 @@
 /**
  * AI Configuration Utilities
  * 
- * Helper functions for AI configuration management.
+ * Centralized configuration for AI models and environment variables.
+ * Change default models here - no need to modify individual config files.
  */
-
-/**
- * Get the model for a specific AI task from environment variable
- * Falls back to the provided default if not set.
- * 
- * @param envKey - The environment variable name (e.g., 'AI_MODEL_GAME_DESCRIPTIONS')
- * @param defaultModel - The default model to use if env var is not set
- * @returns The model identifier string
- * 
- * @example
- * // Uses AI_MODEL_GAME_DESCRIPTIONS env var, or falls back to claude-sonnet-4
- * const model = getModelFromEnv('AI_MODEL_GAME_DESCRIPTIONS', 'anthropic/claude-sonnet-4');
- * 
- * @example
- * // For a task that should use a cheaper model by default
- * const model = getModelFromEnv('AI_MODEL_TAG_GENERATION', 'openai/gpt-4o-mini');
- */
-export function getModelFromEnv(envKey: string, defaultModel: string): string {
-  return process.env[envKey] || defaultModel;
-}
 
 /**
  * Environment variable names for each AI task
- * Each task checks only its own env var and uses its own default
+ * Set these env vars to override the default models
  */
 export const AI_ENV_KEYS = {
   GAME_DESCRIPTIONS: 'AI_MODEL_GAME_DESCRIPTIONS',
+  PLATFORM_DESCRIPTIONS: 'AI_MODEL_PLATFORM_DESCRIPTIONS',
   TAG_GENERATION: 'AI_MODEL_TAG_GENERATION',
   SEO_META: 'AI_MODEL_SEO_META',
   ARTICLE_SUMMARY: 'AI_MODEL_ARTICLE_SUMMARY',
 } as const;
 
+/**
+ * Default models for each AI task
+ * 
+ * Change these values to switch models globally.
+ * Environment variables (AI_ENV_KEYS) take precedence over these defaults.
+ * 
+ * Available models (OpenRouter):
+ * - 'deepseek/deepseek-v3.2' - Fast, cost-effective, good quality
+ * - 'anthropic/claude-sonnet-4' - Best quality for creative content
+ * - 'anthropic/claude-3-haiku' - Faster, cheaper
+ * - 'openai/gpt-4o' - High quality
+ * - 'openai/gpt-4o-mini' - Good balance of speed/cost
+ */
+export const AI_DEFAULT_MODELS = {
+  GAME_DESCRIPTIONS: 'deepseek/deepseek-v3.2',
+  PLATFORM_DESCRIPTIONS: 'deepseek/deepseek-v3.2',
+  TAG_GENERATION: 'openai/gpt-4o-mini',
+  SEO_META: 'openai/gpt-4o-mini',
+  ARTICLE_SUMMARY: 'openai/gpt-4o-mini',
+} as const;
+
+export type AITaskKey = keyof typeof AI_ENV_KEYS;
 export type AIEnvKey = typeof AI_ENV_KEYS[keyof typeof AI_ENV_KEYS];
+
+/**
+ * Get the model for a specific AI task
+ * Checks environment variable first, falls back to default model
+ * 
+ * @param taskKey - The AI task key (e.g., 'GAME_DESCRIPTIONS')
+ * @returns The model identifier string
+ * 
+ * @example
+ * const model = getModel('GAME_DESCRIPTIONS');
+ * // Returns env var AI_MODEL_GAME_DESCRIPTIONS if set, otherwise 'deepseek/deepseek-v3.2'
+ */
+export function getModel(taskKey: AITaskKey): string {
+  const envKey = AI_ENV_KEYS[taskKey];
+  const defaultModel = AI_DEFAULT_MODELS[taskKey];
+  return process.env[envKey] || defaultModel;
+}
+
+/**
+ * @deprecated Use getModel(taskKey) instead
+ * Get the model for a specific AI task from environment variable
+ * Falls back to the provided default if not set.
+ */
+export function getModelFromEnv(envKey: string, defaultModel: string): string {
+  return process.env[envKey] || defaultModel;
+}

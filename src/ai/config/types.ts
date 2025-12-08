@@ -51,6 +51,18 @@ export interface GameDescriptionContext {
 }
 
 /**
+ * Context for platform description generation
+ */
+export interface PlatformDescriptionContext {
+  name: string;
+  manufacturer?: string | null;
+  releaseYear?: number | null;
+  category?: string | null;
+  generation?: number | null;
+  abbreviation?: string | null;
+}
+
+/**
  * Context for tag generation (future)
  */
 export interface TagGenerationContext {

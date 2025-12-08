@@ -9,8 +9,10 @@ import { createOpenAI } from '@ai-sdk/openai';
 import { generateText } from 'ai';
 import { 
   gameDescriptionsConfig,
+  platformDescriptionsConfig,
   type SupportedLocale, 
   type GameDescriptionContext,
+  type PlatformDescriptionContext,
   type AITaskConfig,
 } from './config';
 
@@ -50,7 +52,6 @@ export async function executeAITask<TContext>(
     model: openrouter(config.model),
     system: config.systemPrompt,
     prompt,
-    // temperature and maxTokens can be added when supported
   });
 
   return text.trim();
@@ -92,6 +93,41 @@ export async function generateGameDescriptions(
 }
 
 /**
+ * Generate a platform description using AI
+ * 
+ * @param context - Platform information for context
+ * @param locale - Target language ('en' or 'es')
+ * @returns Generated description
+ */
+export async function generatePlatformDescription(
+  context: PlatformDescriptionContext,
+  locale: SupportedLocale
+): Promise<string> {
+  return executeAITask(platformDescriptionsConfig, context, locale);
+}
+
+/**
+ * Generate platform descriptions for both English and Spanish locales
+ * 
+ * @param context - Platform information for context
+ * @returns Object with 'en' and 'es' descriptions
+ */
+export async function generatePlatformDescriptions(
+  context: PlatformDescriptionContext
+): Promise<{ en: string; es: string }> {
+  // Generate both descriptions in parallel for speed
+  const [enDescription, esDescription] = await Promise.all([
+    generatePlatformDescription(context, 'en'),
+    generatePlatformDescription(context, 'es'),
+  ]);
+
+  return {
+    en: enDescription,
+    es: esDescription,
+  };
+}
+
+/**
  * Get information about the current AI configuration
  * Shows active models (resolved from environment or defaults)
  */
@@ -104,6 +140,12 @@ export function getAIStatus() {
         model: gameDescriptionsConfig.model,
         envVar: 'AI_MODEL_GAME_DESCRIPTIONS',
         isOverridden: Boolean(process.env.AI_MODEL_GAME_DESCRIPTIONS),
+      },
+      'platform-descriptions': {
+        name: platformDescriptionsConfig.name,
+        model: platformDescriptionsConfig.model,
+        envVar: 'AI_MODEL_PLATFORM_DESCRIPTIONS',
+        isOverridden: Boolean(process.env.AI_MODEL_PLATFORM_DESCRIPTIONS),
       },
       // Add more tasks here as they're implemented
     },

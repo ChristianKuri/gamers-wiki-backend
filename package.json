@@ -13,6 +13,14 @@
     "strapi": "strapi",
     "upgrade": "npx @strapi/upgrade latest",
     "upgrade:dry": "npx @strapi/upgrade latest --dry",
+    "test": "vitest",
+    "test:run": "vitest run",
+    "test:coverage": "vitest run --coverage",
+    "test:unit": "vitest run tests/unit",
+    "test:integration": "vitest run tests/integration",
+    "test:e2e": "RUN_E2E_TESTS=true vitest run --config vitest.e2e.config.ts",
+    "test:e2e:run": "bash scripts/run-e2e.sh",
+    "test:all": "vitest run && bash scripts/run-e2e.sh",
     "test:ai:game-descriptions": "npx tsx scripts/test-ai-game-descriptions.ts"
   },
   "dependencies": {
@@ -34,7 +42,13 @@
     "@types/node": "^20",
     "@types/react": "^18",
     "@types/react-dom": "^18",
-    "typescript": "^5"
+    "@types/supertest": "^6.0.3",
+    "@vitest/coverage-v8": "^4.0.15",
+    "knex": "^3.0.1",
+    "msw": "^2.12.4",
+    "supertest": "^7.1.4",
+    "typescript": "^5",
+    "vitest": "^4.0.15"
   },
   "engines": {
     "node": ">=18.0.0 <=22.x.x",
