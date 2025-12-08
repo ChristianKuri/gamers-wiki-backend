@@ -288,6 +288,160 @@ To run E2E tests, use: npm run test:e2e:run
     }
   });
 
+  it('should create franchise entries for both EN and ES locales', async ({ skip }) => {
+    if (!strapiReady || !knex) {
+      skip();
+      return;
+    }
+
+    const franchises = await db.getFranchises(knex);
+    
+    // Should have at least one franchise
+    expect(franchises.length).toBeGreaterThan(0);
+
+    // Group franchises by document_id
+    const franchisesByDocId = new Map<string, Array<{ locale: string; name: string; document_id: string }>>();
+    for (const f of franchises) {
+      const existing = franchisesByDocId.get(f.document_id) || [];
+      existing.push(f);
+      franchisesByDocId.set(f.document_id, existing);
+    }
+
+    // Each franchise should have both EN and ES locale entries
+    for (const [docId, localeEntries] of franchisesByDocId) {
+      const enEntry = localeEntries.find((f: { locale: string }) => f.locale === 'en');
+      const esEntry = localeEntries.find((f: { locale: string }) => f.locale === 'es');
+
+      expect(enEntry).toBeDefined();
+      expect(esEntry).toBeDefined();
+      expect(enEntry?.document_id).toBe(esEntry?.document_id);
+    }
+  });
+
+  it('should generate English franchise description in English (not Spanish)', async ({ skip }) => {
+    if (!strapiReady || !knex) {
+      skip();
+      return;
+    }
+
+    const franchises = await db.getFranchises(knex);
+    const enFranchise = franchises.find((f: { locale: string; name: string }) => 
+      f.locale === 'en' && f.name.toLowerCase().includes('zelda')
+    );
+
+    // Franchise might not exist if the test game doesn't have a franchise
+    // In that case, find any EN franchise
+    const anyEnFranchise = enFranchise || franchises.find((f: { locale: string }) => f.locale === 'en');
+
+    if (anyEnFranchise) {
+      expect(anyEnFranchise?.description).toBeTruthy();
+      expect(anyEnFranchise?.description?.length).toBeGreaterThan(50);
+      
+      // English description should NOT contain Spanish words
+      expect(anyEnFranchise?.description).not.toMatch(/franquicia|videojuegos|jugadores|aventura|legendaria/i);
+      // English description should contain English words
+      expect(anyEnFranchise?.description).toMatch(/game|series|franchise|player|adventure/i);
+    }
+  });
+
+  it('should generate Spanish franchise description in Spanish', async ({ skip }) => {
+    if (!strapiReady || !knex) {
+      skip();
+      return;
+    }
+
+    const franchises = await db.getFranchises(knex);
+    const esFranchise = franchises.find((f: { locale: string; name: string }) => 
+      f.locale === 'es' && f.name.toLowerCase().includes('zelda')
+    );
+
+    // Franchise might not exist if the test game doesn't have a franchise
+    // In that case, find any ES franchise
+    const anyEsFranchise = esFranchise || franchises.find((f: { locale: string }) => f.locale === 'es');
+
+    if (anyEsFranchise) {
+      expect(anyEsFranchise?.description).toBeTruthy();
+      expect(anyEsFranchise?.description?.length).toBeGreaterThan(50);
+      
+      // Spanish description should contain Spanish words
+      expect(anyEsFranchise?.description).toMatch(/franquicia|videojuegos|jugadores|aventura|serie|juegos/i);
+    }
+  });
+
+  // ====== COLLECTION TESTS ======
+  // Collections are IGDB groupings (trilogies, remasters, etc.) - separate from franchises
+
+  it('should create collection entries for both EN and ES locales', async ({ skip }) => {
+    if (!strapiReady || !knex) {
+      skip();
+      return;
+    }
+
+    const collections = await db.getCollections(knex);
+    
+    // Collections might not exist for all games - it depends on IGDB data
+    if (collections.length === 0) {
+      // Skip test if no collections (game might not have any)
+      return;
+    }
+
+    // Group collections by document_id
+    const collectionsByDocId = new Map<string, Array<{ locale: string; name: string; document_id: string }>>();
+    for (const c of collections) {
+      const existing = collectionsByDocId.get(c.document_id) || [];
+      existing.push(c);
+      collectionsByDocId.set(c.document_id, existing);
+    }
+
+    // Each collection should have both EN and ES locale entries
+    for (const [docId, localeEntries] of collectionsByDocId) {
+      const enEntry = localeEntries.find((c: { locale: string }) => c.locale === 'en');
+      const esEntry = localeEntries.find((c: { locale: string }) => c.locale === 'es');
+
+      expect(enEntry).toBeDefined();
+      expect(esEntry).toBeDefined();
+      expect(enEntry?.document_id).toBe(esEntry?.document_id);
+    }
+  });
+
+  it('should generate English collection description in English (not Spanish)', async ({ skip }) => {
+    if (!strapiReady || !knex) {
+      skip();
+      return;
+    }
+
+    const collections = await db.getCollections(knex);
+    const anyEnCollection = collections.find((c: { locale: string }) => c.locale === 'en');
+
+    if (anyEnCollection) {
+      expect(anyEnCollection?.description).toBeTruthy();
+      expect(anyEnCollection?.description?.length).toBeGreaterThan(50);
+      
+      // English description should NOT contain Spanish words
+      expect(anyEnCollection?.description).not.toMatch(/colección|videojuegos|jugadores|aventura|serie/i);
+      // English description should contain English words
+      expect(anyEnCollection?.description).toMatch(/game|collection|series|player/i);
+    }
+  });
+
+  it('should generate Spanish collection description in Spanish', async ({ skip }) => {
+    if (!strapiReady || !knex) {
+      skip();
+      return;
+    }
+
+    const collections = await db.getCollections(knex);
+    const anyEsCollection = collections.find((c: { locale: string }) => c.locale === 'es');
+
+    if (anyEsCollection) {
+      expect(anyEsCollection?.description).toBeTruthy();
+      expect(anyEsCollection?.description?.length).toBeGreaterThan(50);
+      
+      // Spanish description should contain Spanish words
+      expect(anyEsCollection?.description).toMatch(/colección|videojuegos|jugadores|serie|juegos/i);
+    }
+  });
+
   it('should prevent duplicate entries on re-import', async ({ skip }) => {
     if (!strapiReady || !knex) {
       skip();

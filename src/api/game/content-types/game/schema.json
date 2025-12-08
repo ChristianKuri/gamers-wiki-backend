@@ -89,6 +89,12 @@
       "target": "api::franchise.franchise",
       "inversedBy": "games"
     },
+    "collections": {
+      "type": "relation",
+      "relation": "manyToMany",
+      "target": "api::collection.collection",
+      "inversedBy": "games"
+    },
     "platforms": {
       "type": "relation",
       "relation": "manyToMany",

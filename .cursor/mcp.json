@@ -1,6 +1,11 @@
 {
   "mcpServers": {
-    "strapi": {
+    "strapi-dev-env": {
+      "type": "streamable-http",
+      "url": "http://localhost:1337/api/mcp/streamable",
+      "note": "For Streamable HTTP connections, add this URL directly in your MCP Client"
+    },
+    "strapi-test-env": {
       "type": "streamable-http",
       "url": "http://localhost:1337/api/mcp/streamable",
       "note": "For Streamable HTTP connections, add this URL directly in your MCP Client"

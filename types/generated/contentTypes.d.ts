@@ -851,6 +851,81 @@ export interface ApiCategoryCategory extends Struct.CollectionTypeSchema {
   };
 }
 
+export interface ApiCollectionCollection extends Struct.CollectionTypeSchema {
+  collectionName: 'collections';
+  info: {
+    description: 'Game collections - groupings of games based on various criteria (remasters, trilogies, spin-offs, etc.) with parent-child hierarchy support';
+    displayName: 'Collection';
+    pluralName: 'collections';
+    singularName: 'collection';
+  };
+  options: {
+    draftAndPublish: true;
+  };
+  pluginOptions: {
+    i18n: {
+      localized: true;
+    };
+  };
+  attributes: {
+    childCollections: Schema.Attribute.Relation<
+      'oneToMany',
+      'api::collection.collection'
+    >;
+    createdAt: Schema.Attribute.DateTime;
+    createdBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
+      Schema.Attribute.Private;
+    description: Schema.Attribute.RichText &
+      Schema.Attribute.SetPluginOptions<{
+        i18n: {
+          localized: true;
+        };
+      }>;
+    games: Schema.Attribute.Relation<'manyToMany', 'api::game.game'>;
+    igdbId: Schema.Attribute.Integer &
+      Schema.Attribute.Unique &
+      Schema.Attribute.SetPluginOptions<{
+        i18n: {
+          localized: false;
+        };
+      }>;
+    igdbUrl: Schema.Attribute.String &
+      Schema.Attribute.SetPluginOptions<{
+        i18n: {
+          localized: false;
+        };
+      }>;
+    locale: Schema.Attribute.String;
+    localizations: Schema.Attribute.Relation<
+      'oneToMany',
+      'api::collection.collection'
+    >;
+    name: Schema.Attribute.String &
+      Schema.Attribute.Required &
+      Schema.Attribute.Unique &
+      Schema.Attribute.SetPluginOptions<{
+        i18n: {
+          localized: false;
+        };
+      }>;
+    parentCollection: Schema.Attribute.Relation<
+      'manyToOne',
+      'api::collection.collection'
+    >;
+    publishedAt: Schema.Attribute.DateTime;
+    slug: Schema.Attribute.UID<'name'> &
+      Schema.Attribute.Required &
+      Schema.Attribute.SetPluginOptions<{
+        i18n: {
+          localized: false;
+        };
+      }>;
+    updatedAt: Schema.Attribute.DateTime;
+    updatedBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
+      Schema.Attribute.Private;
+  };
+}
+
 export interface ApiCompanyCompany extends Struct.CollectionTypeSchema {
   collectionName: 'companies';
   info: {
@@ -1150,6 +1225,10 @@ export interface ApiGameGame extends Struct.CollectionTypeSchema {
     ageRatings: Schema.Attribute.Relation<
       'manyToMany',
       'api::age-rating.age-rating'
+    >;
+    collections: Schema.Attribute.Relation<
+      'manyToMany',
+      'api::collection.collection'
     >;
     coverImageUrl: Schema.Attribute.String &
       Schema.Attribute.SetPluginOptions<{
@@ -2364,6 +2443,7 @@ declare module '@strapi/strapi' {
       'api::age-rating.age-rating': ApiAgeRatingAgeRating;
       'api::author.author': ApiAuthorAuthor;
       'api::category.category': ApiCategoryCategory;
+      'api::collection.collection': ApiCollectionCollection;
       'api::company.company': ApiCompanyCompany;
       'api::franchise.franchise': ApiFranchiseFranchise;
       'api::game-engine.game-engine': ApiGameEngineGameEngine;

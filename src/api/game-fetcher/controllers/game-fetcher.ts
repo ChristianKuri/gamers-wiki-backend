@@ -2,6 +2,7 @@ import type { Core } from '@strapi/strapi';
 import type { 
   CompanyData, 
   FranchiseData, 
+  CollectionData,
   LanguageData, 
   GameModeData, 
   PlayerPerspectiveData, 
@@ -16,6 +17,7 @@ import type {
   GenreDocument,
   CompanyDocument,
   FranchiseDocument,
+  CollectionDocument,
   LanguageDocument,
   GameModeDocument,
   PlayerPerspectiveDocument,
@@ -154,6 +156,7 @@ export default ({ strapi }: { strapi: Core.Strapi }) => ({
       const platformService = strapi.documents('api::platform.platform') as unknown as DocumentService<PlatformDocument>;
       const companyService = strapi.documents('api::company.company') as unknown as DocumentService<CompanyDocument>;
       const franchiseService = strapi.documents('api::franchise.franchise') as unknown as DocumentService<FranchiseDocument>;
+      const collectionService = strapi.documents('api::collection.collection') as unknown as DocumentService<CollectionDocument>;
       const languageService = strapi.documents('api::language.language') as unknown as DocumentService<LanguageDocument>;
       const gameModeService = strapi.documents('api::game-mode.game-mode') as unknown as DocumentService<GameModeDocument>;
       const playerPerspectiveService = strapi.documents('api::player-perspective.player-perspective') as unknown as DocumentService<PlayerPerspectiveDocument>;
@@ -280,6 +283,72 @@ export default ({ strapi }: { strapi: Core.Strapi }) => ({
         strapi.log.info(`[GameFetcher] Created franchise: ${franchiseData.name}`);
         franchiseCache.set(franchiseData.igdbId, newFranchise.documentId);
         return newFranchise.documentId;
+      };
+
+      // Helper: Find or create collection
+      // Cache to avoid duplicates within the same import
+      const collectionCache = new Map<number, string>();
+      const findOrCreateCollection = async (collectionData: CollectionData): Promise<string | null> => {
+        // Check cache first (for collections created in this import)
+        if (collectionCache.has(collectionData.igdbId)) {
+          return collectionCache.get(collectionData.igdbId)!;
+        }
+
+        // Check by igdbId first (search all locales since igdbId is not localized)
+        let existing = await collectionService.findMany({
+          filters: { igdbId: collectionData.igdbId },
+        } as any);
+
+        if (existing.length > 0) {
+          collectionCache.set(collectionData.igdbId, existing[0].documentId);
+          return existing[0].documentId;
+        }
+
+        // Fallback: check by name
+        existing = await collectionService.findMany({
+          filters: { name: collectionData.name },
+        } as any);
+
+        if (existing.length > 0) {
+          collectionCache.set(collectionData.igdbId, existing[0].documentId);
+          return existing[0].documentId;
+        }
+
+        // First, resolve parent collection if exists
+        let parentDocumentId: string | null = null;
+        if (collectionData.parentIgdbId) {
+          // Try to find or create parent collection (recursively)
+          // Note: We may need to fetch parent data from IGDB if we don't have it
+          const existingParent = await collectionService.findMany({
+            filters: { igdbId: collectionData.parentIgdbId },
+          } as any);
+          
+          if (existingParent.length > 0) {
+            parentDocumentId = existingParent[0].documentId;
+          }
+          // If parent doesn't exist and we have the igdbId, it will be created when that collection's game is imported
+        }
+
+        // Create new collection
+        const newCollection = await collectionService.create({
+          data: {
+            name: collectionData.name,
+            slug: collectionData.slug,
+            igdbId: collectionData.igdbId,
+            igdbUrl: collectionData.igdbUrl,
+            ...(parentDocumentId && { parentCollection: parentDocumentId }),
+          },
+          locale: 'en',
+        } as any);
+
+        await (collectionService as any).publish({
+          documentId: newCollection.documentId,
+          locale: 'en',
+        });
+
+        strapi.log.info(`[GameFetcher] Created collection: ${collectionData.name}${parentDocumentId ? ' (with parent)' : ''}`);
+        collectionCache.set(collectionData.igdbId, newCollection.documentId);
+        return newCollection.documentId;
       };
 
       // Helper: Find or create language
@@ -655,12 +724,21 @@ export default ({ strapi }: { strapi: Core.Strapi }) => ({
         }
       }
 
-      // Find or create franchises (a game can belong to multiple franchises)
+      // Find or create franchises (a game can belong to multiple franchises - the IP/brand)
       const franchiseIds: string[] = [];
       for (const franchiseData of gameData.franchises) {
         const franchiseId = await findOrCreateFranchise(franchiseData);
         if (franchiseId) {
           franchiseIds.push(franchiseId);
+        }
+      }
+
+      // Find or create collections (groupings - trilogies, remasters, etc.)
+      const collectionIds: string[] = [];
+      for (const collectionData of gameData.collections) {
+        const collectionId = await findOrCreateCollection(collectionData);
+        if (collectionId) {
+          collectionIds.push(collectionId);
         }
       }
 
@@ -726,6 +804,7 @@ export default ({ strapi }: { strapi: Core.Strapi }) => ({
           developers: developerIds,
           publishers: publisherIds,
           franchises: franchiseIds,
+          collections: collectionIds,
           platforms: platformIds,
           genres: genreIds,
           languages: languageIds,
@@ -798,6 +877,7 @@ export default ({ strapi }: { strapi: Core.Strapi }) => ({
           developers: developerIds,
           publishers: publisherIds,
           franchises: franchiseIds,
+          collections: collectionIds,
           platforms: platformIds,
           genres: genreIds,
           languages: languageIds,
@@ -911,6 +991,7 @@ export default ({ strapi }: { strapi: Core.Strapi }) => ({
           themes: themeIds.length,
           keywords: keywordIds.length,
           franchises: franchiseIds.length,
+          collections: collectionIds.length,
           ageRatings: ageRatingIds.length,
           gameEngines: gameEngineIds.length,
           developers: developerIds.length,

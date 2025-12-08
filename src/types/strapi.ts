@@ -128,6 +128,19 @@ export interface FranchiseDocument extends StrapiDocument {
 }
 
 /**
+ * Collection document
+ */
+export interface CollectionDocument extends StrapiDocument {
+  name: string;
+  slug: string;
+  description: string | null;
+  igdbId: number | null;
+  igdbUrl: string | null;
+  parentCollection?: CollectionDocument | null;
+  childCollections?: CollectionDocument[];
+}
+
+/**
  * Language document
  */
 export interface LanguageDocument extends StrapiDocument {

@@ -78,6 +78,7 @@ export async function copyAllRelations(
     developers: string[];
     publishers: string[];
     franchises: string[];
+    collections: string[];
     platforms: string[];
     genres: string[];
     languages: string[];
@@ -96,6 +97,7 @@ export async function copyAllRelations(
     { tableName: 'games_developers_lnk', gameField: 'game_id', relatedField: 'company_id', relatedTable: 'companies', docIds: relationDocIds.developers },
     { tableName: 'games_publishers_lnk', gameField: 'game_id', relatedField: 'company_id', relatedTable: 'companies', docIds: relationDocIds.publishers },
     { tableName: 'games_franchises_lnk', gameField: 'game_id', relatedField: 'franchise_id', relatedTable: 'franchises', docIds: relationDocIds.franchises },
+    { tableName: 'games_collections_lnk', gameField: 'game_id', relatedField: 'collection_id', relatedTable: 'collections', docIds: relationDocIds.collections },
     { tableName: 'games_languages_lnk', gameField: 'game_id', relatedField: 'language_id', relatedTable: 'languages', docIds: relationDocIds.languages },
     { tableName: 'games_game_modes_lnk', gameField: 'game_id', relatedField: 'game_mode_id', relatedTable: 'game_modes', docIds: relationDocIds.gameModes },
     { tableName: 'games_player_perspectives_lnk', gameField: 'game_id', relatedField: 'player_perspective_id', relatedTable: 'player_perspectives', docIds: relationDocIds.playerPerspectives },

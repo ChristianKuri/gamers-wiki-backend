@@ -46,6 +46,10 @@ export {
   generatePlatformDescriptions,
   generateCompanyDescription,
   generateCompanyDescriptions,
+  generateFranchiseDescription,
+  generateFranchiseDescriptions,
+  generateCollectionDescription,
+  generateCollectionDescriptions,
   getAIStatus,
 } from './service';
 
@@ -55,6 +59,8 @@ export type {
   GameDescriptionContext,
   PlatformDescriptionContext,
   CompanyDescriptionContext,
+  FranchiseDescriptionContext,
+  CollectionDescriptionContext,
   AITaskConfig,
   TagGenerationContext,
   SEOMetaContext,
@@ -66,6 +72,8 @@ export {
   gameDescriptionsConfig,
   platformDescriptionsConfig,
   companyDescriptionsConfig,
+  franchiseDescriptionsConfig,
+  collectionDescriptionsConfig,
   getModel,
   getModelFromEnv,
   AI_ENV_KEYS,

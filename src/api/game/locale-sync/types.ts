@@ -60,6 +60,7 @@ export interface GameLocaleData {
     developers: string[];
     publishers: string[];
     franchises: string[];
+    collections: string[];
     platforms: string[];
     genres: string[];
     languages: string[];

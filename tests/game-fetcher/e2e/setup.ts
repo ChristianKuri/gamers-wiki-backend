@@ -128,6 +128,7 @@ export async function cleanDatabase(knex: Knex): Promise<void> {
     'games_age_ratings_lnk',
     'games_developers_lnk',
     'games_franchises_lnk',
+    'games_collections_lnk',
     'games_game_engines_lnk',
     'games_game_modes_lnk',
     'games_genres_lnk',
@@ -142,11 +143,13 @@ export async function cleanDatabase(knex: Knex): Promise<void> {
     'games_similar_games_lnk',
     'games_themes_lnk',
     'affiliate_links_game_lnk',
+    'collections_parent_collection_lnk',
     // Main tables (game-related only)
     'affiliate_links',
     'games',
     'age_ratings',
     'companies',
+    'collections',
     'franchises',
     'game_engines',
     'game_modes',
@@ -280,6 +283,44 @@ export const db = {
   async getCompaniesByDocumentId(knex: Knex, documentId: string) {
     return knex('companies')
       .select('id', 'document_id', 'name', 'locale', 'description', 'country', 'founded_year')
+      .where('document_id', documentId)
+      .orderBy('locale');
+  },
+
+  /**
+   * Get all franchises with their descriptions
+   */
+  async getFranchises(knex: Knex) {
+    return knex('franchises')
+      .select('id', 'document_id', 'name', 'locale', 'description', 'igdb_id', 'created_at')
+      .orderBy(['document_id', 'locale']);
+  },
+
+  /**
+   * Get franchises by document ID
+   */
+  async getFranchisesByDocumentId(knex: Knex, documentId: string) {
+    return knex('franchises')
+      .select('id', 'document_id', 'name', 'locale', 'description', 'igdb_id')
+      .where('document_id', documentId)
+      .orderBy('locale');
+  },
+
+  /**
+   * Get all collections with their descriptions
+   */
+  async getCollections(knex: Knex) {
+    return knex('collections')
+      .select('id', 'document_id', 'name', 'locale', 'description', 'igdb_id', 'created_at')
+      .orderBy(['document_id', 'locale']);
+  },
+
+  /**
+   * Get collections by document ID
+   */
+  async getCollectionsByDocumentId(knex: Knex, documentId: string) {
+    return knex('collections')
+      .select('id', 'document_id', 'name', 'locale', 'description', 'igdb_id')
       .where('document_id', documentId)
       .orderBy('locale');
   },

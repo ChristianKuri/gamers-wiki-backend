@@ -75,6 +75,29 @@ export interface CompanyDescriptionContext {
 }
 
 /**
+ * Context for franchise description generation
+ */
+export interface FranchiseDescriptionContext {
+  name: string;
+  notableGames?: string[];
+  developer?: string | null;
+  publisher?: string | null;
+  firstReleaseYear?: number | null;
+  genres?: string[];
+}
+
+/**
+ * Context for collection description generation
+ */
+export interface CollectionDescriptionContext {
+  name: string;
+  gamesInCollection?: string[];
+  parentCollectionName?: string | null;
+  collectionType?: string | null;
+  relatedFranchise?: string | null;
+}
+
+/**
  * Context for tag generation (future)
  */
 export interface TagGenerationContext {

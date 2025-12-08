@@ -11,10 +11,14 @@ import {
   gameDescriptionsConfig,
   platformDescriptionsConfig,
   companyDescriptionsConfig,
+  franchiseDescriptionsConfig,
+  collectionDescriptionsConfig,
   type SupportedLocale, 
   type GameDescriptionContext,
   type PlatformDescriptionContext,
   type CompanyDescriptionContext,
+  type FranchiseDescriptionContext,
+  type CollectionDescriptionContext,
   type AITaskConfig,
 } from './config';
 
@@ -165,6 +169,76 @@ export async function generateCompanyDescriptions(
 }
 
 /**
+ * Generate a franchise description using AI
+ * 
+ * @param context - Franchise information for context
+ * @param locale - Target language ('en' or 'es')
+ * @returns Generated description
+ */
+export async function generateFranchiseDescription(
+  context: FranchiseDescriptionContext,
+  locale: SupportedLocale
+): Promise<string> {
+  return executeAITask(franchiseDescriptionsConfig, context, locale);
+}
+
+/**
+ * Generate franchise descriptions for both English and Spanish locales
+ * 
+ * @param context - Franchise information for context
+ * @returns Object with 'en' and 'es' descriptions
+ */
+export async function generateFranchiseDescriptions(
+  context: FranchiseDescriptionContext
+): Promise<{ en: string; es: string }> {
+  // Generate both descriptions in parallel for speed
+  const [enDescription, esDescription] = await Promise.all([
+    generateFranchiseDescription(context, 'en'),
+    generateFranchiseDescription(context, 'es'),
+  ]);
+
+  return {
+    en: enDescription,
+    es: esDescription,
+  };
+}
+
+/**
+ * Generate a collection description using AI
+ * 
+ * @param context - Collection information for context
+ * @param locale - Target language ('en' or 'es')
+ * @returns Generated description
+ */
+export async function generateCollectionDescription(
+  context: CollectionDescriptionContext,
+  locale: SupportedLocale
+): Promise<string> {
+  return executeAITask(collectionDescriptionsConfig, context, locale);
+}
+
+/**
+ * Generate collection descriptions for both English and Spanish locales
+ * 
+ * @param context - Collection information for context
+ * @returns Object with 'en' and 'es' descriptions
+ */
+export async function generateCollectionDescriptions(
+  context: CollectionDescriptionContext
+): Promise<{ en: string; es: string }> {
+  // Generate both descriptions in parallel for speed
+  const [enDescription, esDescription] = await Promise.all([
+    generateCollectionDescription(context, 'en'),
+    generateCollectionDescription(context, 'es'),
+  ]);
+
+  return {
+    en: enDescription,
+    es: esDescription,
+  };
+}
+
+/**
  * Get information about the current AI configuration
  * Shows active models (resolved from environment or defaults)
  */
@@ -189,6 +263,18 @@ export function getAIStatus() {
         model: companyDescriptionsConfig.model,
         envVar: 'AI_MODEL_COMPANY_DESCRIPTIONS',
         isOverridden: Boolean(process.env.AI_MODEL_COMPANY_DESCRIPTIONS),
+      },
+      'franchise-descriptions': {
+        name: franchiseDescriptionsConfig.name,
+        model: franchiseDescriptionsConfig.model,
+        envVar: 'AI_MODEL_FRANCHISE_DESCRIPTIONS',
+        isOverridden: Boolean(process.env.AI_MODEL_FRANCHISE_DESCRIPTIONS),
+      },
+      'collection-descriptions': {
+        name: collectionDescriptionsConfig.name,
+        model: collectionDescriptionsConfig.model,
+        envVar: 'AI_MODEL_COLLECTION_DESCRIPTIONS',
+        isOverridden: Boolean(process.env.AI_MODEL_COLLECTION_DESCRIPTIONS),
       },
       // Add more tasks here as they're implemented
     },

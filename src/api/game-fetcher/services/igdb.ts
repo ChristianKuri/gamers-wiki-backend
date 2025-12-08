@@ -108,6 +108,14 @@ export interface FranchiseData {
   igdbUrl: string | null;
 }
 
+export interface CollectionData {
+  igdbId: number;
+  name: string;
+  slug: string;
+  igdbUrl: string | null;
+  parentIgdbId: number | null;
+}
+
 export interface LanguageData {
   igdbId: number;
   name: string;
@@ -203,8 +211,10 @@ export interface GameData {
   // Company data (we'll look up by ID in controller)
   developersData: CompanyData[];  // Multiple developers supported (co-development)
   publishersData: CompanyData[];  // Multiple publishers supported
-  // Franchises (a game can belong to multiple franchises/collections)
+  // Franchises (a game can belong to multiple franchises - the IP/brand)
   franchises: FranchiseData[];
+  // Collections (groupings of games - trilogies, remasters, spin-offs, etc.)
+  collections: CollectionData[];
   // Platforms
   platforms: PlatformData[];
   // Media
@@ -458,7 +468,9 @@ export default ({ strapi }: { strapi: Core.Strapi }) => ({
               involved_companies.company.logo.image_id,
               involved_companies.developer, involved_companies.publisher,
               franchise.id, franchise.name, franchise.slug, franchise.url,
+              franchises.id, franchises.name, franchises.slug, franchises.url,
               collections.id, collections.name, collections.slug, collections.url,
+              collections.as_child_relations.parent_collection.id,
               websites.url, websites.category,
               language_supports.language.id, language_supports.language.name,
               language_supports.language.native_name, language_supports.language.locale,
@@ -529,10 +541,10 @@ export default ({ strapi }: { strapi: Core.Strapi }) => ({
       };
     });
 
-    // Franchises (combine franchise field + all collections)
+    // Franchises (the IP/brand - separate from collections)
     const franchises: FranchiseData[] = [];
     
-    // Add franchise if available
+    // Add main franchise if available
     if (gameFranchise) {
       franchises.push({
         igdbId: gameFranchise.id,
@@ -542,17 +554,40 @@ export default ({ strapi }: { strapi: Core.Strapi }) => ({
       });
     }
     
-    // Add all collections as franchises
-    for (const collection of gameCollections) {
-      // Avoid duplicates (in case franchise is also in collections)
-      if (!franchises.some(f => f.igdbId === collection.id)) {
+    // Add additional franchises from the franchises array (IGDB games can have multiple)
+    const gameFranchises = asObjectArray<IGDBFranchise>(game.franchises);
+    for (const franchise of gameFranchises) {
+      // Avoid duplicates (main franchise may also be in franchises array)
+      if (!franchises.some(f => f.igdbId === franchise.id)) {
         franchises.push({
-          igdbId: collection.id,
-          name: collection.name,
-          slug: collection.slug,
-          igdbUrl: collection.url || null,
+          igdbId: franchise.id,
+          name: franchise.name,
+          slug: franchise.slug,
+          igdbUrl: franchise.url || null,
         });
       }
+    }
+    
+    // Collections (groupings - trilogies, remasters, spin-offs, etc.)
+    const collections: CollectionData[] = [];
+    for (const collection of gameCollections) {
+      // Extract parent collection ID from as_child_relations if available
+      // as_child_relations = relations where THIS collection is the child (has a parent)
+      const childRelations = asObjectArray(collection.as_child_relations);
+      let parentIgdbId: number | null = null;
+      
+      if (childRelations.length > 0) {
+        const parentCollectionRef = asObject(childRelations[0]?.parent_collection);
+        parentIgdbId = parentCollectionRef?.id || null;
+      }
+      
+      collections.push({
+        igdbId: collection.id,
+        name: collection.name,
+        slug: collection.slug,
+        igdbUrl: collection.url || null,
+        parentIgdbId,
+      });
     }
 
     // Build description
@@ -752,6 +787,7 @@ export default ({ strapi }: { strapi: Core.Strapi }) => ({
       developersData,
       publishersData,
       franchises,
+      collections,
       platforms,
       coverImageUrl,
       screenshotUrls,
