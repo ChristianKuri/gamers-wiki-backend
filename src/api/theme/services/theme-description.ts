@@ -3,6 +3,9 @@
  * 
  * Handles generating AI descriptions for themes and syncing locales.
  * Extracted from lifecycle for testability.
+ * 
+ * IMPORTANT: Spanish descriptions are generated using the TRANSLATED name
+ * so the AI writes "El tema **Fantasía**..." not "El tema **Fantasy**..."
  */
 
 import type { Core } from '@strapi/strapi';
@@ -46,9 +49,14 @@ const THEME_TRANSLATIONS: Record<string, string> = {
 };
 
 /**
+ * Supported locales for description generation
+ */
+type SupportedLocale = 'en' | 'es';
+
+/**
  * Get Spanish translation for a theme name
  */
-function getSpanishThemeName(englishName: string): string {
+export function getSpanishThemeName(englishName: string): string {
   return THEME_TRANSLATIONS[englishName] || englishName;
 }
 
@@ -70,7 +78,7 @@ export interface ThemeEventData {
  */
 export interface ThemeDescriptionDependencies {
   isAIConfigured: () => boolean;
-  generateThemeDescriptions: (context: ThemeDescriptionContext) => Promise<{ en: string; es: string }>;
+  generateThemeDescription: (context: ThemeDescriptionContext, locale: SupportedLocale) => Promise<string>;
   syncThemeLocales: (strapi: Core.Strapi, data: ThemeLocaleData) => Promise<ThemeLocaleSyncResult[]>;
   log: {
     info: (message: string) => void;
@@ -92,6 +100,9 @@ export interface ThemeDescriptionResult {
 /**
  * Generate descriptions for a theme and sync locales
  * 
+ * IMPORTANT: Spanish description is generated using the TRANSLATED name
+ * so the AI writes "El tema **Fantasía**..." not "El tema **Fantasy**..."
+ * 
  * @param knex - Database connection (unused but kept for consistency)
  * @param strapi - Strapi instance (for locale sync)
  * @param theme - Theme data from lifecycle event
@@ -104,33 +115,40 @@ export async function generateThemeDescriptionsAndSync(
   theme: ThemeEventData,
   deps: ThemeDescriptionDependencies
 ): Promise<ThemeDescriptionResult> {
-  const { isAIConfigured, generateThemeDescriptions, syncThemeLocales, log } = deps;
+  const { isAIConfigured, generateThemeDescription, syncThemeLocales, log } = deps;
 
   let englishDescriptionUpdated = false;
   let spanishDescription: string | null = null;
+
+  // Get Spanish name FIRST - needed for Spanish description generation
+  const spanishName = getSpanishThemeName(theme.name);
 
   // Generate AI descriptions if configured
   if (isAIConfigured()) {
     try {
       log.info(`[ThemeDescription] Generating AI descriptions for theme: ${theme.name}`);
 
-      // Build context for AI
-      const context: ThemeDescriptionContext = {
+      // Generate EN description with English name
+      const enContext: ThemeDescriptionContext = {
         name: theme.name,
       };
+      const enDescription = await generateThemeDescription(enContext, 'en');
+      log.info(`[ThemeDescription] Generated EN description (length: ${enDescription.length})`);
 
-      // Generate descriptions for both locales
-      const descriptions = await generateThemeDescriptions(context);
-
-      log.info(`[ThemeDescription] Generated EN description (length: ${descriptions.en.length})`);
-      log.info(`[ThemeDescription] Generated ES description (length: ${descriptions.es.length})`);
+      // Generate ES description with SPANISH name (translated)
+      // This ensures the AI writes "El tema **Fantasía**..." not "El tema **Fantasy**..."
+      const esContext: ThemeDescriptionContext = {
+        name: spanishName,
+      };
+      const esDescription = await generateThemeDescription(esContext, 'es');
+      log.info(`[ThemeDescription] Generated ES description (length: ${esDescription.length}) using name: ${spanishName}`);
 
       // Update English entry using Strapi's document service
       const themeService = strapi.documents('api::theme.theme');
       await themeService.update({
         documentId: theme.documentId,
         locale: 'en',
-        data: { description: descriptions.en },
+        data: { description: enDescription },
       } as any);
 
       // Publish to sync draft changes to published version
@@ -141,7 +159,7 @@ export async function generateThemeDescriptionsAndSync(
 
       log.info(`[ThemeDescription] Updated and published English description for: ${theme.name}`);
       englishDescriptionUpdated = true;
-      spanishDescription = descriptions.es;
+      spanishDescription = esDescription;
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
       log.error(`[ThemeDescription] AI description error for "${theme.name}": ${errorMessage}`);
@@ -154,8 +172,6 @@ export async function generateThemeDescriptionsAndSync(
   // ALWAYS sync locales (create Spanish entry) regardless of AI configuration
   // This ensures bidirectional relationships work correctly
   try {
-    // Get Spanish translation of the theme name
-    const spanishName = getSpanishThemeName(theme.name);
 
     const localeData: ThemeLocaleData = {
       documentId: theme.documentId,

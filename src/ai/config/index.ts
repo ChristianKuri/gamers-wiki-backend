@@ -28,6 +28,7 @@ export { franchiseDescriptionsConfig } from './franchise-descriptions';
 export { collectionDescriptionsConfig } from './collection-descriptions';
 export { genreDescriptionsConfig } from './genre-descriptions';
 export { themeDescriptionsConfig } from './theme-descriptions';
+export { gameModeDescriptionsConfig } from './game-mode-descriptions';
 
 // Future configurations (uncomment when implemented):
 // export { tagGenerationConfig } from './tag-generation';
@@ -46,6 +47,7 @@ export const allConfigs = {
   'collection-descriptions': () => import('./collection-descriptions').then(m => m.collectionDescriptionsConfig),
   'genre-descriptions': () => import('./genre-descriptions').then(m => m.genreDescriptionsConfig),
   'theme-descriptions': () => import('./theme-descriptions').then(m => m.themeDescriptionsConfig),
+  'game-mode-descriptions': () => import('./game-mode-descriptions').then(m => m.gameModeDescriptionsConfig),
   // 'tag-generation': () => import('./tag-generation').then(m => m.tagGenerationConfig),
   // 'seo-meta': () => import('./seo-meta').then(m => m.seoMetaConfig),
 } as const;

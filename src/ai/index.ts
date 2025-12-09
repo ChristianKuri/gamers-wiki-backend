@@ -54,6 +54,8 @@ export {
   generateGenreDescriptions,
   generateThemeDescription,
   generateThemeDescriptions,
+  generateGameModeDescription,
+  generateGameModeDescriptions,
   getAIStatus,
 } from './service';
 
@@ -67,6 +69,7 @@ export type {
   CollectionDescriptionContext,
   GenreDescriptionContext,
   ThemeDescriptionContext,
+  GameModeDescriptionContext,
   AITaskConfig,
   TagGenerationContext,
   SEOMetaContext,
@@ -82,6 +85,7 @@ export {
   collectionDescriptionsConfig,
   genreDescriptionsConfig,
   themeDescriptionsConfig,
+  gameModeDescriptionsConfig,
   getModel,
   getModelFromEnv,
   AI_ENV_KEYS,

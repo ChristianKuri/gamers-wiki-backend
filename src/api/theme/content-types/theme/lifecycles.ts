@@ -14,7 +14,7 @@
 import type { Core } from '@strapi/strapi';
 import { 
   isAIConfigured, 
-  generateThemeDescriptions,
+  generateThemeDescription,
 } from '../../../../ai';
 import { syncThemeLocales } from '../../locale-sync';
 import {
@@ -99,7 +99,7 @@ export default {
         themeData,
         {
           isAIConfigured,
-          generateThemeDescriptions,
+          generateThemeDescription,
           syncThemeLocales,
           log: strapi.log,
         }

@@ -19,10 +19,9 @@
     "name": {
       "type": "string",
       "required": true,
-      "unique": true,
       "pluginOptions": {
         "i18n": {
-          "localized": false
+          "localized": true
         }
       }
     },
@@ -32,7 +31,15 @@
       "required": true,
       "pluginOptions": {
         "i18n": {
-          "localized": false
+          "localized": true
+        }
+      }
+    },
+    "description": {
+      "type": "richtext",
+      "pluginOptions": {
+        "i18n": {
+          "localized": true
         }
       }
     },

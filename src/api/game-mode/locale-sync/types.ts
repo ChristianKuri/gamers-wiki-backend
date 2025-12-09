@@ -8,13 +8,17 @@ export interface GameModeLocaleData {
   documentId: string;
   /** The database row ID of the source (English) entry */
   sourceId: number;
-  /** Game mode name (not localized - same across all locales) */
+  /** Game mode name (can be localized for translation) */
   name: string;
   /** Game mode data from the English entry */
   gameModeData: {
     slug: string;
     igdbId: number | null;
   };
+  /** AI-generated description for this locale */
+  aiDescription?: string | null;
+  /** Localized game mode name for this locale */
+  localizedName?: string;
 }
 
 /**

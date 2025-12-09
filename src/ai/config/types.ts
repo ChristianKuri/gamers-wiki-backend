@@ -118,6 +118,14 @@ export interface ThemeDescriptionContext {
 }
 
 /**
+ * Context for game mode description generation
+ */
+export interface GameModeDescriptionContext {
+  name: string;
+  notableGames?: string[];
+}
+
+/**
  * Context for tag generation (future)
  */
 export interface TagGenerationContext {

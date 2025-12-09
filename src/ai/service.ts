@@ -15,6 +15,7 @@ import {
   collectionDescriptionsConfig,
   genreDescriptionsConfig,
   themeDescriptionsConfig,
+  gameModeDescriptionsConfig,
   type SupportedLocale, 
   type GameDescriptionContext,
   type PlatformDescriptionContext,
@@ -23,6 +24,7 @@ import {
   type CollectionDescriptionContext,
   type GenreDescriptionContext,
   type ThemeDescriptionContext,
+  type GameModeDescriptionContext,
   type AITaskConfig,
 } from './config';
 
@@ -313,6 +315,41 @@ export async function generateThemeDescriptions(
 }
 
 /**
+ * Generate a game mode description using AI
+ * 
+ * @param context - Game mode information for context
+ * @param locale - Target language ('en' or 'es')
+ * @returns Generated description
+ */
+export async function generateGameModeDescription(
+  context: GameModeDescriptionContext,
+  locale: SupportedLocale
+): Promise<string> {
+  return executeAITask(gameModeDescriptionsConfig, context, locale);
+}
+
+/**
+ * Generate game mode descriptions for both English and Spanish locales
+ * 
+ * @param context - Game mode information for context
+ * @returns Object with 'en' and 'es' descriptions
+ */
+export async function generateGameModeDescriptions(
+  context: GameModeDescriptionContext
+): Promise<{ en: string; es: string }> {
+  // Generate both descriptions in parallel for speed
+  const [enDescription, esDescription] = await Promise.all([
+    generateGameModeDescription(context, 'en'),
+    generateGameModeDescription(context, 'es'),
+  ]);
+
+  return {
+    en: enDescription,
+    es: esDescription,
+  };
+}
+
+/**
  * Get information about the current AI configuration
  * Shows active models (resolved from environment or defaults)
  */
@@ -361,6 +398,12 @@ export function getAIStatus() {
         model: themeDescriptionsConfig.model,
         envVar: 'AI_MODEL_THEME_DESCRIPTIONS',
         isOverridden: Boolean(process.env.AI_MODEL_THEME_DESCRIPTIONS),
+      },
+      'game-mode-descriptions': {
+        name: gameModeDescriptionsConfig.name,
+        model: gameModeDescriptionsConfig.model,
+        envVar: 'AI_MODEL_GAME_MODE_DESCRIPTIONS',
+        isOverridden: Boolean(process.env.AI_MODEL_GAME_MODE_DESCRIPTIONS),
       },
       // Add more tasks here as they're implemented
     },
