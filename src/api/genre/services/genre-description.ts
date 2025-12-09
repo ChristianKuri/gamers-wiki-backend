@@ -3,6 +3,9 @@
  * 
  * Handles generating AI descriptions for genres and syncing locales.
  * Extracted from lifecycle for testability.
+ * 
+ * IMPORTANT: Spanish descriptions are generated using the TRANSLATED name
+ * so the AI writes "El género **Acción**..." not "El género **Action**..."
  */
 
 import type { Core } from '@strapi/strapi';
@@ -47,9 +50,14 @@ const GENRE_TRANSLATIONS: Record<string, string> = {
 };
 
 /**
+ * Supported locales for description generation
+ */
+type SupportedLocale = 'en' | 'es';
+
+/**
  * Get Spanish translation for a genre name
  */
-function getSpanishGenreName(englishName: string): string {
+export function getSpanishGenreName(englishName: string): string {
   return GENRE_TRANSLATIONS[englishName] || englishName;
 }
 
@@ -71,7 +79,7 @@ export interface GenreEventData {
  */
 export interface GenreDescriptionDependencies {
   isAIConfigured: () => boolean;
-  generateGenreDescriptions: (context: GenreDescriptionContext) => Promise<{ en: string; es: string }>;
+  generateGenreDescription: (context: GenreDescriptionContext, locale: SupportedLocale) => Promise<string>;
   syncGenreLocales: (strapi: Core.Strapi, data: GenreLocaleData) => Promise<GenreLocaleSyncResult[]>;
   log: {
     info: (message: string) => void;
@@ -93,6 +101,9 @@ export interface GenreDescriptionResult {
 /**
  * Generate descriptions for a genre and sync locales
  * 
+ * IMPORTANT: Spanish description is generated using the TRANSLATED name
+ * so the AI writes "El género **Acción**..." not "El género **Action**..."
+ * 
  * @param knex - Database connection (unused but kept for consistency)
  * @param strapi - Strapi instance (for locale sync)
  * @param genre - Genre data from lifecycle event
@@ -105,33 +116,40 @@ export async function generateGenreDescriptionsAndSync(
   genre: GenreEventData,
   deps: GenreDescriptionDependencies
 ): Promise<GenreDescriptionResult> {
-  const { isAIConfigured, generateGenreDescriptions, syncGenreLocales, log } = deps;
+  const { isAIConfigured, generateGenreDescription, syncGenreLocales, log } = deps;
 
   let englishDescriptionUpdated = false;
   let spanishDescription: string | null = null;
+
+  // Get Spanish name FIRST - needed for Spanish description generation
+  const spanishName = getSpanishGenreName(genre.name);
 
   // Generate AI descriptions if configured
   if (isAIConfigured()) {
     try {
       log.info(`[GenreDescription] Generating AI descriptions for genre: ${genre.name}`);
 
-      // Build context for AI
-      const context: GenreDescriptionContext = {
+      // Generate EN description with English name
+      const enContext: GenreDescriptionContext = {
         name: genre.name,
       };
+      const enDescription = await generateGenreDescription(enContext, 'en');
+      log.info(`[GenreDescription] Generated EN description (length: ${enDescription.length})`);
 
-      // Generate descriptions for both locales
-      const descriptions = await generateGenreDescriptions(context);
-
-      log.info(`[GenreDescription] Generated EN description (length: ${descriptions.en.length})`);
-      log.info(`[GenreDescription] Generated ES description (length: ${descriptions.es.length})`);
+      // Generate ES description with SPANISH name (translated)
+      // This ensures the AI writes "El género **Acción**..." not "El género **Action**..."
+      const esContext: GenreDescriptionContext = {
+        name: spanishName,
+      };
+      const esDescription = await generateGenreDescription(esContext, 'es');
+      log.info(`[GenreDescription] Generated ES description (length: ${esDescription.length}) using name: ${spanishName}`);
 
       // Update English entry using Strapi's document service
       const genreService = strapi.documents('api::genre.genre');
       await genreService.update({
         documentId: genre.documentId,
         locale: 'en',
-        data: { description: descriptions.en },
+        data: { description: enDescription },
       } as any);
 
       // Publish to sync draft changes to published version
@@ -142,7 +160,7 @@ export async function generateGenreDescriptionsAndSync(
 
       log.info(`[GenreDescription] Updated and published English description for: ${genre.name}`);
       englishDescriptionUpdated = true;
-      spanishDescription = descriptions.es;
+      spanishDescription = esDescription;
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
       log.error(`[GenreDescription] AI description error for "${genre.name}": ${errorMessage}`);
@@ -155,8 +173,6 @@ export async function generateGenreDescriptionsAndSync(
   // ALWAYS sync locales (create Spanish entry) regardless of AI configuration
   // This ensures bidirectional relationships work correctly
   try {
-    // Get Spanish translation of the genre name
-    const spanishName = getSpanishGenreName(genre.name);
 
     const localeData: GenreLocaleData = {
       documentId: genre.documentId,

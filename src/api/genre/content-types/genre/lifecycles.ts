@@ -14,7 +14,7 @@
 import type { Core } from '@strapi/strapi';
 import { 
   isAIConfigured, 
-  generateGenreDescriptions,
+  generateGenreDescription,
 } from '../../../../ai';
 import { syncGenreLocales } from '../../locale-sync';
 import {
@@ -99,7 +99,7 @@ export default {
         genreData,
         {
           isAIConfigured,
-          generateGenreDescriptions,
+          generateGenreDescription,
           syncGenreLocales,
           log: strapi.log,
         }
