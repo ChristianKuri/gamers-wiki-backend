@@ -636,6 +636,108 @@ To run E2E tests, use: npm run test:e2e:run
     }
   });
 
+  it('should link game entries only to related entities of the same locale (all relationship types)', async ({ skip }) => {
+    if (!strapiReady || !knex) {
+      skip();
+      return;
+    }
+
+    const games = await db.getGames(knex);
+    const enGame = games.find((g: { locale: string; name: string }) => 
+      g.locale === 'en' && g.name.includes('Zelda')
+    );
+    const esGame = games.find((g: { locale: string; name: string }) => 
+      g.locale === 'es' && g.name.includes('Zelda')
+    );
+
+    expect(enGame).toBeDefined();
+    expect(esGame).toBeDefined();
+
+    // Define all relationship types to check
+    const relationshipConfigs = [
+      { linkTable: 'games_platforms_lnk', entityTable: 'platforms', fkColumn: 'platform_id', name: 'platforms' },
+      { linkTable: 'games_genres_lnk', entityTable: 'genres', fkColumn: 'genre_id', name: 'genres' },
+      { linkTable: 'games_themes_lnk', entityTable: 'themes', fkColumn: 'theme_id', name: 'themes' },
+      { linkTable: 'games_keywords_lnk', entityTable: 'keywords', fkColumn: 'keyword_id', name: 'keywords' },
+      { linkTable: 'games_developers_lnk', entityTable: 'companies', fkColumn: 'company_id', name: 'developers' },
+      { linkTable: 'games_publishers_lnk', entityTable: 'companies', fkColumn: 'company_id', name: 'publishers' },
+      { linkTable: 'games_franchises_lnk', entityTable: 'franchises', fkColumn: 'franchise_id', name: 'franchises' },
+      { linkTable: 'games_collections_lnk', entityTable: 'collections', fkColumn: 'collection_id', name: 'collections' },
+      { linkTable: 'games_game_modes_lnk', entityTable: 'game_modes', fkColumn: 'game_mode_id', name: 'gameModes' },
+      { linkTable: 'games_player_perspectives_lnk', entityTable: 'player_perspectives', fkColumn: 'player_perspective_id', name: 'playerPerspectives' },
+      { linkTable: 'games_game_engines_lnk', entityTable: 'game_engines', fkColumn: 'game_engine_id', name: 'gameEngines' },
+      { linkTable: 'games_age_ratings_lnk', entityTable: 'age_ratings', fkColumn: 'age_rating_id', name: 'ageRatings' },
+      { linkTable: 'games_languages_lnk', entityTable: 'languages', fkColumn: 'language_id', name: 'languages' },
+    ];
+
+    // Helper function to verify locale matching for a game
+    async function verifyGameRelationshipLocales(
+      gameId: number, 
+      expectedLocale: string,
+      gameName: string
+    ): Promise<{ relationName: string; mismatchedIds: number[]; mismatchedLocales: string[] }[]> {
+      const mismatches: { relationName: string; mismatchedIds: number[]; mismatchedLocales: string[] }[] = [];
+
+      for (const config of relationshipConfigs) {
+        try {
+          // Get all linked entity IDs for this game
+          const links = await knex(config.linkTable)
+            .select(config.fkColumn)
+            .where('game_id', gameId);
+
+          if (links.length === 0) continue;
+
+          // Get the locales of all linked entities
+          const linkedIds = links.map((l: Record<string, number>) => l[config.fkColumn]);
+          const entities = await knex(config.entityTable)
+            .select('id', 'locale')
+            .whereIn('id', linkedIds);
+
+          // Check for any mismatches
+          const mismatchedEntities = entities.filter((e: { locale: string }) => e.locale !== expectedLocale);
+          
+          if (mismatchedEntities.length > 0) {
+            mismatches.push({
+              relationName: config.name,
+              mismatchedIds: mismatchedEntities.map((e: { id: number }) => e.id),
+              mismatchedLocales: mismatchedEntities.map((e: { locale: string }) => e.locale),
+            });
+          }
+        } catch {
+          // Table might not exist, skip
+        }
+      }
+
+      return mismatches;
+    }
+
+    // Check English game - all linked entities should be 'en' locale
+    const enMismatches = await verifyGameRelationshipLocales(enGame!.id, 'en', enGame!.name);
+    
+    if (enMismatches.length > 0) {
+      console.log('❌ English game has locale mismatches:');
+      for (const m of enMismatches) {
+        console.log(`   ${m.relationName}: found ${m.mismatchedLocales.join(', ')} instead of 'en' (ids: ${m.mismatchedIds.join(', ')})`);
+      }
+    }
+    
+    expect(enMismatches).toHaveLength(0);
+
+    // Check Spanish game - all linked entities should be 'es' locale
+    const esMismatches = await verifyGameRelationshipLocales(esGame!.id, 'es', esGame!.name);
+    
+    if (esMismatches.length > 0) {
+      console.log('❌ Spanish game has locale mismatches:');
+      for (const m of esMismatches) {
+        console.log(`   ${m.relationName}: found ${m.mismatchedLocales.join(', ')} instead of 'es' (ids: ${m.mismatchedIds.join(', ')})`);
+      }
+    }
+    
+    expect(esMismatches).toHaveLength(0);
+
+    console.log('✅ All game relationships correctly link to entities of the same locale');
+  });
+
   it('should have same game counts for EN and ES franchise entries', async ({ skip }) => {
     if (!strapiReady || !knex) {
       skip();

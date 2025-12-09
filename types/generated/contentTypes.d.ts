@@ -1908,6 +1908,12 @@ export interface ApiThemeTheme extends Struct.CollectionTypeSchema {
     createdAt: Schema.Attribute.DateTime;
     createdBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
       Schema.Attribute.Private;
+    description: Schema.Attribute.RichText &
+      Schema.Attribute.SetPluginOptions<{
+        i18n: {
+          localized: true;
+        };
+      }>;
     games: Schema.Attribute.Relation<'manyToMany', 'api::game.game'>;
     igdbId: Schema.Attribute.Integer &
       Schema.Attribute.Unique &
@@ -1920,10 +1926,9 @@ export interface ApiThemeTheme extends Struct.CollectionTypeSchema {
     localizations: Schema.Attribute.Relation<'oneToMany', 'api::theme.theme'>;
     name: Schema.Attribute.String &
       Schema.Attribute.Required &
-      Schema.Attribute.Unique &
       Schema.Attribute.SetPluginOptions<{
         i18n: {
-          localized: false;
+          localized: true;
         };
       }>;
     publishedAt: Schema.Attribute.DateTime;
@@ -1931,7 +1936,7 @@ export interface ApiThemeTheme extends Struct.CollectionTypeSchema {
       Schema.Attribute.Required &
       Schema.Attribute.SetPluginOptions<{
         i18n: {
-          localized: false;
+          localized: true;
         };
       }>;
     updatedAt: Schema.Attribute.DateTime;

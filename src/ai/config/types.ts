@@ -108,6 +108,16 @@ export interface GenreDescriptionContext {
 }
 
 /**
+ * Context for theme description generation
+ */
+export interface ThemeDescriptionContext {
+  name: string;
+  notableGames?: string[];
+  relatedThemes?: string[];
+  relatedGenres?: string[];
+}
+
+/**
  * Context for tag generation (future)
  */
 export interface TagGenerationContext {

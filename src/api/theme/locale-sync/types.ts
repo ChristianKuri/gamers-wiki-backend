@@ -8,13 +8,17 @@ export interface ThemeLocaleData {
   documentId: string;
   /** The database row ID of the source (English) entry */
   sourceId: number;
-  /** Theme name (not localized - same across all locales) */
+  /** Theme name (can be localized for translation) */
   name: string;
   /** Theme data from the English entry */
   themeData: {
     slug: string;
     igdbId: number | null;
   };
+  /** AI-generated description for this locale */
+  aiDescription?: string | null;
+  /** Localized theme name for this locale */
+  localizedName?: string;
 }
 
 /**
