@@ -8,29 +8,76 @@ import type { LinkTableConfig } from '../types';
 
 /**
  * Get the database row IDs for related entities by their document IDs
- * Uses MIN(id) to avoid duplicates when entities have multiple locale entries
+ * 
+ * For localized entities (platforms, companies, franchises, collections):
+ * - Gets the entry matching the target locale if it exists
+ * - Falls back to any available entry if target locale doesn't exist
+ * 
+ * For non-localized entities (genres, etc.):
+ * - Uses MIN(id) to get a consistent entry
  * 
  * @param knex - Knex connection
  * @param tableName - The table to query (e.g., 'platforms', 'genres')
  * @param documentIds - Array of document IDs to look up
+ * @param targetLocale - The target locale to prefer (e.g., 'es' for Spanish game entries)
  * @returns Array of database row IDs
  */
 export async function getRelationDbIds(
   knex: Knex,
   tableName: string,
-  documentIds: string[]
+  documentIds: string[],
+  targetLocale: string = 'en'
 ): Promise<number[]> {
   if (documentIds.length === 0) return [];
   
-  // Use MIN(id) grouped by document_id to avoid duplicates
-  // (some entities may have multiple locale entries with same document_id)
-  const query = await knex(tableName)
-    .select(knex.raw('MIN(id) as id'))
-    .whereIn('document_id', documentIds)
-    .groupBy('document_id');
+  // Tables that have locale entries
+  const localizedTables = ['platforms', 'companies', 'franchises', 'collections'];
   
-  const results = query as unknown as Array<{ id: number }>;
-  return results.map(r => r.id);
+  if (localizedTables.includes(tableName)) {
+    // For localized tables: prefer PUBLISHED entries matching target locale
+    // First, get PUBLISHED entries matching the target locale
+    const localeMatches = await knex(tableName)
+      .select('id', 'document_id')
+      .whereIn('document_id', documentIds)
+      .where('locale', targetLocale)
+      .whereNotNull('published_at'); // Only published entries
+    
+    const matchedDocIds = new Set((localeMatches as Array<{ id: number; document_id: string }>).map(r => r.document_id));
+    const results: number[] = (localeMatches as Array<{ id: number; document_id: string }>).map(r => r.id);
+    
+    // For any document_ids that don't have the target locale, fall back to PUBLISHED EN entry
+    const missingDocIds = documentIds.filter(docId => !matchedDocIds.has(docId));
+    if (missingDocIds.length > 0) {
+      // Fall back to published EN entries (not MIN which gets draft)
+      const fallbackQuery = await knex(tableName)
+        .select('id', 'document_id')
+        .whereIn('document_id', missingDocIds)
+        .where('locale', 'en')
+        .whereNotNull('published_at'); // Only published entries
+      
+      const fallbackResults = fallbackQuery as unknown as Array<{ id: number; document_id: string }>;
+      results.push(...fallbackResults.map(r => r.id));
+    }
+    
+    return results;
+  }
+  
+  // For non-localized tables: get published entries, grouped by document_id
+  const query = await knex(tableName)
+    .select('id', 'document_id')
+    .whereIn('document_id', documentIds)
+    .whereNotNull('published_at'); // Only published entries
+  
+  // Deduplicate by document_id (take first/any since non-localized)
+  const seenDocIds = new Set<string>();
+  const results: number[] = [];
+  for (const row of query as unknown as Array<{ id: number; document_id: string }>) {
+    if (!seenDocIds.has(row.document_id)) {
+      seenDocIds.add(row.document_id);
+      results.push(row.id);
+    }
+  }
+  return results;
 }
 
 /**
@@ -70,6 +117,7 @@ export async function insertLinks(
  * @param knex - Knex connection
  * @param newGameId - The database row ID of the new locale entry
  * @param relationDocIds - Object containing document IDs for each relation type
+ * @param targetLocale - The target locale for the new entry (to link to correct locale versions)
  */
 export async function copyAllRelations(
   knex: Knex,
@@ -88,7 +136,8 @@ export async function copyAllRelations(
     playerPerspectives: string[];
     themes: string[];
     keywords: string[];
-  }
+  },
+  targetLocale: string = 'en'
 ): Promise<number> {
   // Link table configurations
   const linkConfigs: Array<LinkTableConfig & { docIds: string[] }> = [
@@ -112,7 +161,9 @@ export async function copyAllRelations(
   for (const config of linkConfigs) {
     if (config.docIds.length === 0) continue;
     
-    const dbIds = await getRelationDbIds(knex, config.relatedTable, config.docIds);
+    // Pass targetLocale to get locale-specific entries for localized tables
+    const dbIds = await getRelationDbIds(knex, config.relatedTable, config.docIds, targetLocale);
+    
     if (dbIds.length > 0) {
       await insertLinks(knex, config.tableName, config.gameField, config.relatedField, newGameId, dbIds);
       totalRelations += dbIds.length;

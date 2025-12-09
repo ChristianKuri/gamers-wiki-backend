@@ -238,90 +238,243 @@ export const api = {
 
 /**
  * Database query helpers
+ * 
+ * All entries are created as published (published_at is set).
+ * We filter for published entries (whereNotNull('published_at')) to query the actual data.
  */
 export const db = {
   /**
-   * Get all platforms with their descriptions
+   * Get all platforms (published entries)
    */
   async getPlatforms(knex: Knex) {
     return knex('platforms')
       .select('id', 'document_id', 'name', 'locale', 'description', 'created_at')
+      .whereNotNull('published_at')
       .orderBy(['document_id', 'locale']);
   },
 
   /**
-   * Get platforms by document ID
+   * Get platforms by document ID (published entries)
    */
   async getPlatformsByDocumentId(knex: Knex, documentId: string) {
     return knex('platforms')
       .select('id', 'document_id', 'name', 'locale', 'description')
       .where('document_id', documentId)
+      .whereNotNull('published_at')
       .orderBy('locale');
   },
 
   /**
-   * Get games with their locales
+   * Get games with their locales (published entries)
    */
   async getGames(knex: Knex) {
     return knex('games')
       .select('id', 'document_id', 'name', 'locale', 'description', 'created_at')
+      .whereNotNull('published_at')
       .orderBy(['document_id', 'locale']);
   },
 
   /**
-   * Get all companies with their descriptions
+   * Get all companies (published entries)
    */
   async getCompanies(knex: Knex) {
     return knex('companies')
       .select('id', 'document_id', 'name', 'locale', 'description', 'country', 'founded_year', 'created_at')
+      .whereNotNull('published_at')
       .orderBy(['document_id', 'locale']);
   },
 
   /**
-   * Get companies by document ID
+   * Get companies by document ID (published entries)
    */
   async getCompaniesByDocumentId(knex: Knex, documentId: string) {
     return knex('companies')
       .select('id', 'document_id', 'name', 'locale', 'description', 'country', 'founded_year')
       .where('document_id', documentId)
+      .whereNotNull('published_at')
       .orderBy('locale');
   },
 
   /**
-   * Get all franchises with their descriptions
+   * Get all franchises (published entries)
    */
   async getFranchises(knex: Knex) {
     return knex('franchises')
       .select('id', 'document_id', 'name', 'locale', 'description', 'igdb_id', 'created_at')
+      .whereNotNull('published_at')
       .orderBy(['document_id', 'locale']);
   },
 
   /**
-   * Get franchises by document ID
+   * Get franchises by document ID (published entries)
    */
   async getFranchisesByDocumentId(knex: Knex, documentId: string) {
     return knex('franchises')
       .select('id', 'document_id', 'name', 'locale', 'description', 'igdb_id')
       .where('document_id', documentId)
+      .whereNotNull('published_at')
       .orderBy('locale');
   },
 
   /**
-   * Get all collections with their descriptions
+   * Get all collections (published entries)
    */
   async getCollections(knex: Knex) {
     return knex('collections')
       .select('id', 'document_id', 'name', 'locale', 'description', 'igdb_id', 'created_at')
+      .whereNotNull('published_at')
       .orderBy(['document_id', 'locale']);
   },
 
   /**
-   * Get collections by document ID
+   * Get collections by document ID (published entries)
    */
   async getCollectionsByDocumentId(knex: Knex, documentId: string) {
     return knex('collections')
       .select('id', 'document_id', 'name', 'locale', 'description', 'igdb_id')
       .where('document_id', documentId)
+      .whereNotNull('published_at')
       .orderBy('locale');
   },
+
+  /**
+   * Get game relationship counts by game database ID
+   * Returns counts for all relationship types linked to a specific game entry
+   */
+  async getGameRelationshipCounts(knex: Knex, gameId: number): Promise<GameRelationshipCounts> {
+    const relationTables = [
+      { table: 'games_platforms_lnk', fkColumn: 'game_id', name: 'platforms' },
+      { table: 'games_genres_lnk', fkColumn: 'game_id', name: 'genres' },
+      { table: 'games_themes_lnk', fkColumn: 'game_id', name: 'themes' },
+      { table: 'games_keywords_lnk', fkColumn: 'game_id', name: 'keywords' },
+      { table: 'games_developers_lnk', fkColumn: 'game_id', name: 'developers' },
+      { table: 'games_publishers_lnk', fkColumn: 'game_id', name: 'publishers' },
+      { table: 'games_franchises_lnk', fkColumn: 'game_id', name: 'franchises' },
+      { table: 'games_collections_lnk', fkColumn: 'game_id', name: 'collections' },
+      { table: 'games_game_modes_lnk', fkColumn: 'game_id', name: 'gameModes' },
+      { table: 'games_player_perspectives_lnk', fkColumn: 'game_id', name: 'playerPerspectives' },
+      { table: 'games_game_engines_lnk', fkColumn: 'game_id', name: 'gameEngines' },
+      { table: 'games_age_ratings_lnk', fkColumn: 'game_id', name: 'ageRatings' },
+      { table: 'games_languages_lnk', fkColumn: 'game_id', name: 'languages' },
+    ];
+
+    const counts: GameRelationshipCounts = {
+      platforms: 0,
+      genres: 0,
+      themes: 0,
+      keywords: 0,
+      developers: 0,
+      publishers: 0,
+      franchises: 0,
+      collections: 0,
+      gameModes: 0,
+      playerPerspectives: 0,
+      gameEngines: 0,
+      ageRatings: 0,
+      languages: 0,
+    };
+
+    for (const { table, fkColumn, name } of relationTables) {
+      try {
+        const result = await knex(table)
+          .count('* as count')
+          .where(fkColumn, gameId)
+          .first();
+        counts[name as keyof GameRelationshipCounts] = Number(result?.count || 0);
+      } catch {
+        // Table might not exist
+        counts[name as keyof GameRelationshipCounts] = 0;
+      }
+    }
+
+    return counts;
+  },
+
+  /**
+   * Get franchise game relationship counts by franchise database ID
+   * Returns the number of games linked to a specific franchise entry
+   */
+  async getFranchiseGameCount(knex: Knex, franchiseId: number): Promise<number> {
+    try {
+      const result = await knex('games_franchises_lnk')
+        .count('* as count')
+        .where('franchise_id', franchiseId)
+        .first();
+      return Number(result?.count || 0);
+    } catch {
+      return 0;
+    }
+  },
+
+  /**
+   * Get company game relationship counts by company database ID
+   * Returns the number of games where this company is developer or publisher
+   */
+  async getCompanyGameCounts(knex: Knex, companyId: number): Promise<{ asDeveloper: number; asPublisher: number }> {
+    try {
+      const devResult = await knex('games_developers_lnk')
+        .count('* as count')
+        .where('company_id', companyId)
+        .first();
+      const pubResult = await knex('games_publishers_lnk')
+        .count('* as count')
+        .where('company_id', companyId)
+        .first();
+      return {
+        asDeveloper: Number(devResult?.count || 0),
+        asPublisher: Number(pubResult?.count || 0),
+      };
+    } catch {
+      return { asDeveloper: 0, asPublisher: 0 };
+    }
+  },
+
+  /**
+   * Get collection game relationship counts by collection database ID
+   * Returns the number of games linked to a specific collection entry
+   */
+  async getCollectionGameCount(knex: Knex, collectionId: number): Promise<number> {
+    try {
+      const result = await knex('games_collections_lnk')
+        .count('* as count')
+        .where('collection_id', collectionId)
+        .first();
+      return Number(result?.count || 0);
+    } catch {
+      return 0;
+    }
+  },
+
+  /**
+   * Get platform game relationship counts by platform database ID
+   * Returns the number of games linked to a specific platform entry
+   */
+  async getPlatformGameCount(knex: Knex, platformId: number): Promise<number> {
+    try {
+      const result = await knex('games_platforms_lnk')
+        .count('* as count')
+        .where('platform_id', platformId)
+        .first();
+      return Number(result?.count || 0);
+    } catch {
+      return 0;
+    }
+  },
 };
+
+// Type definitions
+export interface GameRelationshipCounts {
+  platforms: number;
+  genres: number;
+  themes: number;
+  keywords: number;
+  developers: number;
+  publishers: number;
+  franchises: number;
+  collections: number;
+  gameModes: number;
+  playerPerspectives: number;
+  gameEngines: number;
+  ageRatings: number;
+  languages: number;
+}

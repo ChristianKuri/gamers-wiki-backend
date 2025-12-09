@@ -66,60 +66,65 @@ export async function generateCollectionDescriptionsAndSync(
 ): Promise<CollectionDescriptionResult> {
   const { isAIConfigured, generateCollectionDescriptions, syncCollectionLocales, log } = deps;
 
-  // Check if AI is configured
-  if (!isAIConfigured()) {
-    log.info(`[CollectionDescription] AI not configured, skipping description generation`);
-    return {
-      success: true,
-      englishDescriptionUpdated: false,
-      localesSynced: [],
-    };
+  let englishDescriptionUpdated = false;
+  let spanishDescription: string | null = null;
+
+  // Generate AI descriptions if configured
+  if (isAIConfigured()) {
+    try {
+      log.info(`[CollectionDescription] Generating AI descriptions for collection: ${collection.name}`);
+
+      // Build context for AI
+      // Optionally fetch parent collection name for more context
+      let parentCollectionName: string | null = null;
+      if (collection.parentCollectionDocumentId) {
+        const parentCollection = await knex('collections')
+          .where({ document_id: collection.parentCollectionDocumentId, locale: 'en' })
+          .select('name')
+          .first();
+        parentCollectionName = parentCollection?.name || null;
+      }
+
+      const context: CollectionDescriptionContext = {
+        name: collection.name,
+        parentCollectionName,
+      };
+
+      // Generate descriptions for both locales in parallel
+      const descriptions = await generateCollectionDescriptions(context);
+
+      log.info(`[CollectionDescription] Generated EN description (length: ${descriptions.en.length})`);
+      log.info(`[CollectionDescription] Generated ES description (length: ${descriptions.es.length})`);
+
+      // Update English entry using Strapi's document service (not raw SQL)
+      const collectionService = strapi.documents('api::collection.collection');
+      await collectionService.update({
+        documentId: collection.documentId,
+        locale: 'en',
+        data: { description: descriptions.en },
+      } as any);
+
+      // Publish to sync draft changes to published version
+      await (collectionService as any).publish({
+        documentId: collection.documentId,
+        locale: 'en',
+      });
+
+      log.info(`[CollectionDescription] Updated and published English description for: ${collection.name}`);
+      englishDescriptionUpdated = true;
+      spanishDescription = descriptions.es;
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      log.error(`[CollectionDescription] AI description error for "${collection.name}": ${errorMessage}`);
+      // Continue to locale sync even if AI fails
+    }
+  } else {
+    log.info(`[CollectionDescription] AI not configured, skipping description generation for: ${collection.name}`);
   }
 
+  // ALWAYS sync locales (create Spanish entry) regardless of AI configuration
+  // This ensures bidirectional relationships work correctly
   try {
-    log.info(`[CollectionDescription] Generating AI descriptions for collection: ${collection.name}`);
-
-    // Build context for AI
-    // Optionally fetch parent collection name for more context
-    let parentCollectionName: string | null = null;
-    if (collection.parentCollectionDocumentId) {
-      const parentCollection = await knex('collections')
-        .where({ document_id: collection.parentCollectionDocumentId, locale: 'en' })
-        .select('name')
-        .first();
-      parentCollectionName = parentCollection?.name || null;
-    }
-
-    const context: CollectionDescriptionContext = {
-      name: collection.name,
-      parentCollectionName,
-      // These fields could be populated by querying the games relation
-      // if we want more context. For now, let the AI work with the name.
-    };
-
-    // Generate descriptions for both locales in parallel
-    const descriptions = await generateCollectionDescriptions(context);
-
-    log.info(`[CollectionDescription] Generated EN description (length: ${descriptions.en.length})`);
-    log.info(`[CollectionDescription] Generated ES description (length: ${descriptions.es.length})`);
-
-    // Update English entry using Strapi's document service (not raw SQL)
-    const collectionService = strapi.documents('api::collection.collection');
-    await collectionService.update({
-      documentId: collection.documentId,
-      locale: 'en',
-      data: { description: descriptions.en },
-    });
-
-    // Publish the English entry so it's not stuck in "Modified" state
-    await collectionService.publish({
-      documentId: collection.documentId,
-      locale: 'en',
-    });
-
-    log.info(`[CollectionDescription] Updated and published English description for: ${collection.name}`);
-
-    // Prepare data for locale sync
     const localeData: CollectionLocaleData = {
       documentId: collection.documentId,
       sourceId: collection.id,
@@ -130,10 +135,10 @@ export async function generateCollectionDescriptionsAndSync(
         igdbUrl: collection.igdbUrl,
         parentCollectionDocumentId: collection.parentCollectionDocumentId,
       },
-      aiDescription: descriptions.es,
+      aiDescription: spanishDescription,
     };
 
-    // Sync locales (create Spanish entry with AI description)
+    // Sync locales (create Spanish entry)
     const localeResults = await syncCollectionLocales(strapi, localeData);
 
     for (const localeResult of localeResults) {
@@ -144,20 +149,20 @@ export async function generateCollectionDescriptionsAndSync(
       }
     }
 
-    log.info(`[CollectionDescription] Completed AI description generation for: ${collection.name}`);
+    log.info(`[CollectionDescription] Completed processing for: ${collection.name}`);
 
     return {
       success: true,
-      englishDescriptionUpdated: true,
+      englishDescriptionUpdated,
       localesSynced: localeResults,
     };
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
-    log.error(`[CollectionDescription] AI description error for "${collection.name}": ${errorMessage}`);
+    log.error(`[CollectionDescription] Locale sync error for "${collection.name}": ${errorMessage}`);
     
     return {
       success: false,
-      englishDescriptionUpdated: false,
+      englishDescriptionUpdated,
       localesSynced: [],
       error: errorMessage,
     };

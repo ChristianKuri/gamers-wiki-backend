@@ -122,7 +122,7 @@ describe('Company Description Service', () => {
       };
     });
 
-    it('should skip when AI is not configured', async () => {
+    it('should still sync locales when AI is not configured', async () => {
       mockDeps.isAIConfigured = vi.fn().mockReturnValue(false);
 
       const result = await generateCompanyDescriptionsAndSync(
@@ -134,8 +134,16 @@ describe('Company Description Service', () => {
 
       expect(result.success).toBe(true);
       expect(result.englishDescriptionUpdated).toBe(false);
-      expect(result.localesSynced).toEqual([]);
+      // Locale sync should still happen even without AI
+      expect(result.localesSynced).toEqual([{ locale: 'es', success: true }]);
       expect(mockDeps.generateCompanyDescriptions).not.toHaveBeenCalled();
+      // Locale sync should be called with null description
+      expect(mockDeps.syncCompanyLocales).toHaveBeenCalledWith(
+        mockStrapiSetup.strapi,
+        expect.objectContaining({
+          aiDescription: null,
+        })
+      );
     });
 
     it('should generate descriptions and update English entry', async () => {
@@ -164,7 +172,7 @@ describe('Company Description Service', () => {
         data: { description: sampleDescriptions.en },
       });
       
-      // Verify publish is called after update
+      // Verify publish was called to sync draft to published
       expect(mockStrapiSetup.mockPublish).toHaveBeenCalledWith({
         documentId: 'test-doc-id',
         locale: 'en',
@@ -199,7 +207,7 @@ describe('Company Description Service', () => {
       );
     });
 
-    it('should handle AI generation errors gracefully', async () => {
+    it('should handle AI generation errors gracefully and still sync locales', async () => {
       mockDeps.generateCompanyDescriptions = vi.fn().mockRejectedValue(
         new Error('API rate limit exceeded')
       );
@@ -211,13 +219,15 @@ describe('Company Description Service', () => {
         mockDeps
       );
 
-      expect(result.success).toBe(false);
+      // Should succeed because locale sync still happens
+      expect(result.success).toBe(true);
       expect(result.englishDescriptionUpdated).toBe(false);
-      expect(result.error).toBe('API rate limit exceeded');
+      // Locale sync should still be called even when AI fails
+      expect(result.localesSynced).toEqual([{ locale: 'es', success: true }]);
       expect(mockDeps.log.error).toHaveBeenCalled();
     });
 
-    it('should handle document update errors gracefully', async () => {
+    it('should handle document update errors gracefully and still sync locales', async () => {
       mockStrapiSetup.mockUpdate.mockRejectedValue(new Error('Document update failed'));
 
       const result = await generateCompanyDescriptionsAndSync(
@@ -227,8 +237,10 @@ describe('Company Description Service', () => {
         mockDeps
       );
 
-      expect(result.success).toBe(false);
-      expect(result.error).toBe('Document update failed');
+      // Should succeed because locale sync still happens
+      expect(result.success).toBe(true);
+      // Locale sync should be called with null description since AI failed
+      expect(result.localesSynced).toEqual([{ locale: 'es', success: true }]);
     });
 
     it('should handle locale sync errors gracefully', async () => {

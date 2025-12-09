@@ -97,27 +97,25 @@ export default {
       igdbUrl: result.igdbUrl,
     };
     
-    // Fire-and-forget: Start AI generation asynchronously
-    // This allows multiple franchises to process their AI descriptions in parallel
-    // without blocking the main import flow
-    generateFranchiseDescriptionsAndSync(
-      strapi.db.connection,
-      strapi,
-      franchiseData,
-      {
-        isAIConfigured,
-        generateFranchiseDescriptions,
-        syncFranchiseLocales,
-        log: strapi.log,
-      }
-    ).catch((error) => {
-      // Log but don't throw - we don't want to break the import
+    // Synchronous: Wait for AI generation and locale sync to complete
+    // This ensures ES locale entries exist before game relations are created
+    try {
+      await generateFranchiseDescriptionsAndSync(
+        strapi.db.connection,
+        strapi,
+        franchiseData,
+        {
+          isAIConfigured,
+          generateFranchiseDescriptions,
+          syncFranchiseLocales,
+          log: strapi.log,
+        }
+      );
+      strapi.log.info(`[Franchise:Lifecycle] Completed AI description and locale sync for: ${result.name}`);
+    } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
-      strapi.log.error(`[Franchise:Lifecycle] Async AI generation failed for "${result.name}": ${errorMessage}`);
-    });
-    
-    // Don't await - return immediately to allow parallel processing
-    strapi.log.debug(`[Franchise:Lifecycle] Started async AI description generation for: ${result.name}`);
+      strapi.log.error(`[Franchise:Lifecycle] AI generation failed for "${result.name}": ${errorMessage}`);
+    }
   },
 
   /**

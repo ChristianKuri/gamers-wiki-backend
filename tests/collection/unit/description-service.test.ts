@@ -86,7 +86,7 @@ describe('Collection Description Service', () => {
       } as unknown as Core.Strapi;
     });
 
-    it('should skip when AI is not configured', async () => {
+    it('should still sync locales when AI is not configured', async () => {
       mockDeps.isAIConfigured = vi.fn().mockReturnValue(false);
 
       const result = await generateCollectionDescriptionsAndSync(
@@ -98,8 +98,17 @@ describe('Collection Description Service', () => {
 
       expect(result.success).toBe(true);
       expect(result.englishDescriptionUpdated).toBe(false);
-      expect(result.localesSynced).toEqual([]);
+      // Locale sync should still happen even without AI
+      expect(result.localesSynced).toHaveLength(1);
+      expect(result.localesSynced[0].success).toBe(true);
       expect(mockDeps.generateCollectionDescriptions).not.toHaveBeenCalled();
+      // Locale sync should be called with null description
+      expect(mockDeps.syncCollectionLocales).toHaveBeenCalledWith(
+        mockStrapi,
+        expect.objectContaining({
+          aiDescription: null,
+        })
+      );
     });
 
     it('should generate descriptions and update English entry', async () => {
@@ -138,7 +147,7 @@ describe('Collection Description Service', () => {
       expect(result.localesSynced[0].success).toBe(true);
     });
 
-    it('should handle AI generation errors gracefully', async () => {
+    it('should handle AI generation errors gracefully and still sync locales', async () => {
       mockDeps.generateCollectionDescriptions = vi.fn().mockRejectedValue(new Error('AI error'));
 
       const result = await generateCollectionDescriptionsAndSync(
@@ -148,13 +157,16 @@ describe('Collection Description Service', () => {
         mockDeps
       );
 
-      expect(result.success).toBe(false);
+      // Should succeed because locale sync still happens
+      expect(result.success).toBe(true);
       expect(result.englishDescriptionUpdated).toBe(false);
-      expect(result.error).toBe('AI error');
+      // Locale sync should still be called even when AI fails
+      expect(result.localesSynced).toHaveLength(1);
+      expect(result.localesSynced[0].success).toBe(true);
       expect(mockDeps.log.error).toHaveBeenCalled();
     });
 
-    it('should handle document update errors gracefully', async () => {
+    it('should handle document update errors gracefully and still sync locales', async () => {
       mockStrapi = {
         documents: vi.fn().mockReturnValue({
           update: vi.fn().mockRejectedValue(new Error('Update failed')),
@@ -169,8 +181,11 @@ describe('Collection Description Service', () => {
         mockDeps
       );
 
-      expect(result.success).toBe(false);
-      expect(result.error).toBe('Update failed');
+      // Should succeed because locale sync still happens
+      expect(result.success).toBe(true);
+      // Locale sync should be called with null description since AI failed
+      expect(result.localesSynced).toHaveLength(1);
+      expect(result.localesSynced[0].success).toBe(true);
     });
 
     it('should handle locale sync errors without failing overall', async () => {

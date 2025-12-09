@@ -22,7 +22,7 @@ export const spanishPlatformLocaleStrategy: PlatformLocaleStrategy = {
       return;
     }
 
-    // Insert Spanish locale entry with same document_id
+    // Insert Spanish locale entry with same document_id (as published)
     const [insertedRow] = await knex('platforms').insert({
       document_id: data.documentId,
       locale: 'es',
@@ -36,7 +36,7 @@ export const spanishPlatformLocaleStrategy: PlatformLocaleStrategy = {
       igdb_id: data.platformData.igdbId,
       logo_url: data.platformData.logoUrl,
       generation: data.platformData.generation,
-      published_at: null,
+      published_at: now, // Create as published (no draft)
       created_at: now,
       updated_at: now,
     }).returning('id');

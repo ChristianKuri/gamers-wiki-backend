@@ -99,18 +99,25 @@ export default {
       generation: result.generation,
     };
     
-    // Call the service with production dependencies
-    await generatePlatformDescriptionsAndSync(
-      strapi.db.connection,
-      strapi,
-      platformData,
-      {
-        isAIConfigured,
-        generatePlatformDescriptions,
-        syncPlatformLocales,
-        log: strapi.log,
-      }
-    );
+    // Synchronous: Wait for AI generation and locale sync to complete
+    // This ensures ES locale entries exist before game relations are created
+    try {
+      await generatePlatformDescriptionsAndSync(
+        strapi.db.connection,
+        strapi,
+        platformData,
+        {
+          isAIConfigured,
+          generatePlatformDescriptions,
+          syncPlatformLocales,
+          log: strapi.log,
+        }
+      );
+      strapi.log.info(`[Platform:Lifecycle] Completed AI description and locale sync for: ${result.name}`);
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      strapi.log.error(`[Platform:Lifecycle] AI generation failed for "${result.name}": ${errorMessage}`);
+    }
   },
 
   /**

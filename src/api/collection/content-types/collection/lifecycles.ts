@@ -102,27 +102,25 @@ export default {
       parentCollectionDocumentId,
     };
     
-    // Fire-and-forget: Start AI generation asynchronously
-    // This allows multiple collections to process their AI descriptions in parallel
-    // without blocking the main import flow
-    generateCollectionDescriptionsAndSync(
-      strapi.db.connection,
-      strapi,
-      collectionData,
-      {
-        isAIConfigured,
-        generateCollectionDescriptions,
-        syncCollectionLocales,
-        log: strapi.log,
-      }
-    ).catch((error) => {
-      // Log but don't throw - we don't want to break the import
+    // Synchronous: Wait for AI generation and locale sync to complete
+    // This ensures ES locale entries exist before game relations are created
+    try {
+      await generateCollectionDescriptionsAndSync(
+        strapi.db.connection,
+        strapi,
+        collectionData,
+        {
+          isAIConfigured,
+          generateCollectionDescriptions,
+          syncCollectionLocales,
+          log: strapi.log,
+        }
+      );
+      strapi.log.info(`[Collection:Lifecycle] Completed AI description and locale sync for: ${result.name}`);
+    } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
-      strapi.log.error(`[Collection:Lifecycle] Async AI generation failed for "${result.name}": ${errorMessage}`);
-    });
-    
-    // Don't await - return immediately to allow parallel processing
-    strapi.log.debug(`[Collection:Lifecycle] Started async AI description generation for: ${result.name}`);
+      strapi.log.error(`[Collection:Lifecycle] AI generation failed for "${result.name}": ${errorMessage}`);
+    }
   },
 
   /**

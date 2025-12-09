@@ -65,51 +65,54 @@ export async function generateFranchiseDescriptionsAndSync(
 ): Promise<FranchiseDescriptionResult> {
   const { isAIConfigured, generateFranchiseDescriptions, syncFranchiseLocales, log } = deps;
 
-  // Check if AI is configured
-  if (!isAIConfigured()) {
-    log.info(`[FranchiseDescription] AI not configured, skipping description generation`);
-    return {
-      success: true,
-      englishDescriptionUpdated: false,
-      localesSynced: [],
-    };
+  let englishDescriptionUpdated = false;
+  let spanishDescription: string | null = null;
+
+  // Generate AI descriptions if configured
+  if (isAIConfigured()) {
+    try {
+      log.info(`[FranchiseDescription] Generating AI descriptions for franchise: ${franchise.name}`);
+
+      // Build context for AI
+      const context: FranchiseDescriptionContext = {
+        name: franchise.name,
+      };
+
+      // Generate descriptions for both locales in parallel
+      const descriptions = await generateFranchiseDescriptions(context);
+
+      log.info(`[FranchiseDescription] Generated EN description (length: ${descriptions.en.length})`);
+      log.info(`[FranchiseDescription] Generated ES description (length: ${descriptions.es.length})`);
+
+      // Update English entry using Strapi's document service (not raw SQL)
+      const franchiseService = strapi.documents('api::franchise.franchise');
+      await franchiseService.update({
+        documentId: franchise.documentId,
+        locale: 'en',
+        data: { description: descriptions.en },
+      } as any);
+
+      // Publish to sync draft changes to published version
+      await (franchiseService as any).publish({
+        documentId: franchise.documentId,
+        locale: 'en',
+      });
+
+      log.info(`[FranchiseDescription] Updated and published English description for: ${franchise.name}`);
+      englishDescriptionUpdated = true;
+      spanishDescription = descriptions.es;
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      log.error(`[FranchiseDescription] AI description error for "${franchise.name}": ${errorMessage}`);
+      // Continue to locale sync even if AI fails
+    }
+  } else {
+    log.info(`[FranchiseDescription] AI not configured, skipping description generation for: ${franchise.name}`);
   }
 
+  // ALWAYS sync locales (create Spanish entry) regardless of AI configuration
+  // This ensures bidirectional relationships work correctly
   try {
-    log.info(`[FranchiseDescription] Generating AI descriptions for franchise: ${franchise.name}`);
-
-    // Build context for AI
-    // Note: For now, we keep it simple. In the future, we could enhance this
-    // by querying related games to get developer, publisher, genres, etc.
-    const context: FranchiseDescriptionContext = {
-      name: franchise.name,
-      // These fields could be populated by querying the games relation
-      // if we want more context. For now, let the AI work with the name.
-    };
-
-    // Generate descriptions for both locales in parallel
-    const descriptions = await generateFranchiseDescriptions(context);
-
-    log.info(`[FranchiseDescription] Generated EN description (length: ${descriptions.en.length})`);
-    log.info(`[FranchiseDescription] Generated ES description (length: ${descriptions.es.length})`);
-
-    // Update English entry using Strapi's document service (not raw SQL)
-    const franchiseService = strapi.documents('api::franchise.franchise');
-    await franchiseService.update({
-      documentId: franchise.documentId,
-      locale: 'en',
-      data: { description: descriptions.en },
-    });
-
-    // Publish the English entry so it's not stuck in "Modified" state
-    await franchiseService.publish({
-      documentId: franchise.documentId,
-      locale: 'en',
-    });
-
-    log.info(`[FranchiseDescription] Updated and published English description for: ${franchise.name}`);
-
-    // Prepare data for locale sync
     const localeData: FranchiseLocaleData = {
       documentId: franchise.documentId,
       sourceId: franchise.id,
@@ -119,10 +122,10 @@ export async function generateFranchiseDescriptionsAndSync(
         igdbId: franchise.igdbId,
         igdbUrl: franchise.igdbUrl,
       },
-      aiDescription: descriptions.es,
+      aiDescription: spanishDescription,
     };
 
-    // Sync locales (create Spanish entry with AI description)
+    // Sync locales (create Spanish entry)
     const localeResults = await syncFranchiseLocales(strapi, localeData);
 
     for (const localeResult of localeResults) {
@@ -133,20 +136,20 @@ export async function generateFranchiseDescriptionsAndSync(
       }
     }
 
-    log.info(`[FranchiseDescription] Completed AI description generation for: ${franchise.name}`);
+    log.info(`[FranchiseDescription] Completed processing for: ${franchise.name}`);
 
     return {
       success: true,
-      englishDescriptionUpdated: true,
+      englishDescriptionUpdated,
       localesSynced: localeResults,
     };
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
-    log.error(`[FranchiseDescription] AI description error for "${franchise.name}": ${errorMessage}`);
+    log.error(`[FranchiseDescription] Locale sync error for "${franchise.name}": ${errorMessage}`);
     
     return {
       success: false,
-      englishDescriptionUpdated: false,
+      englishDescriptionUpdated,
       localesSynced: [],
       error: errorMessage,
     };

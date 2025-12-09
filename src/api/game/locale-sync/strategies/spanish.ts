@@ -29,7 +29,7 @@ export const spanishLocaleStrategy: LocaleStrategy = {
       return;
     }
 
-    // Insert Spanish locale entry with same document_id
+    // Insert Spanish locale entry with same document_id (as published)
     const [insertedRow] = await knex('games').insert({
       document_id: data.documentId,
       locale: 'es',
@@ -57,7 +57,7 @@ export const spanishLocaleStrategy: LocaleStrategy = {
       discord_url: data.gameData.discordUrl,
       igdb_id: data.gameData.igdbId,
       igdb_url: data.gameData.igdbUrl,
-      published_at: null,
+      published_at: now, // Create as published (no draft)
       created_at: now,
       updated_at: now,
     }).returning('id');
@@ -66,7 +66,8 @@ export const spanishLocaleStrategy: LocaleStrategy = {
     strapi.log.info(`[LocaleSync:ES] Spanish locale entry created (id: ${spanishEntryId})`);
 
     // Copy all relations to the Spanish locale entry
-    const totalRelations = await copyAllRelations(knex, spanishEntryId, data.relationIds);
+    // Pass 'es' to link to Spanish locale versions of related entities
+    const totalRelations = await copyAllRelations(knex, spanishEntryId, data.relationIds, 'es');
 
     // Log success with details
     const englishName = data.localizedNames.en.name;

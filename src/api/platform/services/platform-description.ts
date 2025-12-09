@@ -104,10 +104,10 @@ export async function generatePlatformDescriptionsAndSync(
       documentId: platform.documentId,
       locale: 'en',
       data: { description: descriptions.en },
-    });
+    } as any);
 
-    // Publish the English entry so it's not stuck in "Modified" state
-    await platformService.publish({
+    // Publish to sync draft changes to published version
+    await (platformService as any).publish({
       documentId: platform.documentId,
       locale: 'en',
     });

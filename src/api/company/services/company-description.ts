@@ -68,53 +68,56 @@ export async function generateCompanyDescriptionsAndSync(
 ): Promise<CompanyDescriptionResult> {
   const { isAIConfigured, generateCompanyDescriptions, syncCompanyLocales, log } = deps;
 
-  // Check if AI is configured
-  if (!isAIConfigured()) {
-    log.info(`[CompanyDescription] AI not configured, skipping description generation`);
-    return {
-      success: true,
-      englishDescriptionUpdated: false,
-      localesSynced: [],
-    };
+  let englishDescriptionUpdated = false;
+  let spanishDescription: string | null = null;
+
+  // Generate AI descriptions if configured
+  if (isAIConfigured()) {
+    try {
+      log.info(`[CompanyDescription] Generating AI descriptions for company: ${company.name}`);
+
+      // Build context for AI
+      const context: CompanyDescriptionContext = {
+        name: company.name,
+        country: company.country,
+        foundedYear: company.foundedYear,
+      };
+
+      // Generate descriptions for both locales
+      const descriptions = await generateCompanyDescriptions(context);
+
+      log.info(`[CompanyDescription] Generated EN description (length: ${descriptions.en.length})`);
+      log.info(`[CompanyDescription] Generated ES description (length: ${descriptions.es.length})`);
+
+      // Update English entry using Strapi's document service (not raw SQL)
+      const companyService = strapi.documents('api::company.company');
+      await companyService.update({
+        documentId: company.documentId,
+        locale: 'en',
+        data: { description: descriptions.en },
+      } as any);
+
+      // Publish to sync draft changes to published version
+      await (companyService as any).publish({
+        documentId: company.documentId,
+        locale: 'en',
+      });
+
+      log.info(`[CompanyDescription] Updated and published English description for: ${company.name}`);
+      englishDescriptionUpdated = true;
+      spanishDescription = descriptions.es;
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      log.error(`[CompanyDescription] AI description error for "${company.name}": ${errorMessage}`);
+      // Continue to locale sync even if AI fails
+    }
+  } else {
+    log.info(`[CompanyDescription] AI not configured, skipping description generation for: ${company.name}`);
   }
 
+  // ALWAYS sync locales (create Spanish entry) regardless of AI configuration
+  // This ensures bidirectional relationships work correctly
   try {
-    log.info(`[CompanyDescription] Generating AI descriptions for company: ${company.name}`);
-
-    // Build context for AI
-    const context: CompanyDescriptionContext = {
-      name: company.name,
-      country: company.country,
-      foundedYear: company.foundedYear,
-      // Note: We could enhance this with notable games, but that would require
-      // additional queries. For now, let the AI work with what we have.
-      // isDeveloper and isPublisher could be determined by checking relations,
-      // but that adds complexity. The AI will make reasonable assumptions.
-    };
-
-    // Generate descriptions for both locales
-    const descriptions = await generateCompanyDescriptions(context);
-
-    log.info(`[CompanyDescription] Generated EN description (length: ${descriptions.en.length})`);
-    log.info(`[CompanyDescription] Generated ES description (length: ${descriptions.es.length})`);
-
-    // Update English entry using Strapi's document service (not raw SQL)
-    const companyService = strapi.documents('api::company.company');
-    await companyService.update({
-      documentId: company.documentId,
-      locale: 'en',
-      data: { description: descriptions.en },
-    });
-
-    // Publish the English entry so it's not stuck in "Modified" state
-    await companyService.publish({
-      documentId: company.documentId,
-      locale: 'en',
-    });
-
-    log.info(`[CompanyDescription] Updated and published English description for: ${company.name}`);
-
-    // Prepare data for locale sync
     const localeData: CompanyLocaleData = {
       documentId: company.documentId,
       sourceId: company.id,
@@ -127,10 +130,10 @@ export async function generateCompanyDescriptionsAndSync(
         igdbId: company.igdbId,
         igdbUrl: company.igdbUrl,
       },
-      aiDescription: descriptions.es,
+      aiDescription: spanishDescription,
     };
 
-    // Sync locales (create Spanish entry with AI description)
+    // Sync locales (create Spanish entry)
     const localeResults = await syncCompanyLocales(strapi, localeData);
 
     for (const localeResult of localeResults) {
@@ -141,20 +144,20 @@ export async function generateCompanyDescriptionsAndSync(
       }
     }
 
-    log.info(`[CompanyDescription] Completed AI description generation for: ${company.name}`);
+    log.info(`[CompanyDescription] Completed processing for: ${company.name}`);
 
     return {
       success: true,
-      englishDescriptionUpdated: true,
+      englishDescriptionUpdated,
       localesSynced: localeResults,
     };
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
-    log.error(`[CompanyDescription] AI description error for "${company.name}": ${errorMessage}`);
+    log.error(`[CompanyDescription] Locale sync error for "${company.name}": ${errorMessage}`);
     
     return {
       success: false,
-      englishDescriptionUpdated: false,
+      englishDescriptionUpdated,
       localesSynced: [],
       error: errorMessage,
     };

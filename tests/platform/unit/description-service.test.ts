@@ -168,7 +168,7 @@ describe('Platform Description Service', () => {
         data: { description: sampleDescriptions.en },
       });
       
-      // Verify publish is called after update
+      // Verify publish was called to sync draft to published
       expect(mockStrapiSetup.mockPublish).toHaveBeenCalledWith({
         documentId: 'test-doc-id',
         locale: 'en',
