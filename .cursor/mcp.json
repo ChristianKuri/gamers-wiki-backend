@@ -10,12 +10,20 @@
       "url": "http://localhost:1338/api/mcp/streamable",
       "note": "For Streamable HTTP connections, add this URL directly in your MCP Client"
     },
-    "postgres": {
+    "postgres-dev": {
       "command": "npx",
       "args": [
         "-y",
         "@modelcontextprotocol/server-postgres",
         "postgresql://strapi:strapi_dev_password@localhost:5432/strapi_dev"
+      ]
+    },
+    "postgres-test": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@modelcontextprotocol/server-postgres",
+        "postgresql://strapi:strapi_dev_password@localhost:5432/strapi_test"
       ]
     }
   }

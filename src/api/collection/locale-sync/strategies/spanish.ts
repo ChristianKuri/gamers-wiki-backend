@@ -3,58 +3,62 @@ import type { CollectionLocaleStrategy, CollectionLocaleData } from '../types';
 
 /**
  * Spanish (es) locale strategy for collections
- * Creates Spanish locale entries for collections with AI-generated descriptions
+ * Creates Spanish locale entries for collections using Strapi Document Service
  */
 export const spanishCollectionLocaleStrategy: CollectionLocaleStrategy = {
   locale: 'es',
 
   async createLocale(strapi: Core.Strapi, data: CollectionLocaleData): Promise<void> {
-    const knex = strapi.db.connection;
-    const now = new Date().toISOString();
+    const collectionService = strapi.documents('api::collection.collection');
 
     // Check if Spanish locale already exists for this document
-    const existing = await knex('collections')
-      .where({ document_id: data.documentId, locale: 'es' })
-      .first();
+    const existing = await collectionService.findOne({
+      documentId: data.documentId,
+      locale: 'es',
+    });
 
     if (existing) {
       strapi.log.info(`[CollectionLocaleSync:ES] Spanish locale already exists for document ${data.documentId}`);
       return;
     }
 
-    // Insert Spanish locale entry with same document_id (as published)
-    const [insertedRow] = await knex('collections').insert({
-      document_id: data.documentId,
+    // Create Spanish locale entry using Document Service update()
+    // In Strapi 5, update() with a new locale creates that locale version
+    // Note: update() creates the locale but may not properly set all fields
+    const created = await collectionService.update({
+      documentId: data.documentId,
       locale: 'es',
-      name: data.name, // Name is not localized
-      slug: data.collectionData.slug, // Slug is not localized
-      description: data.aiDescription, // AI-generated Spanish description
-      igdb_id: data.collectionData.igdbId,
-      igdb_url: data.collectionData.igdbUrl,
-      published_at: now, // Create as published (no draft)
-      created_at: now,
-      updated_at: now,
-    }).returning('id');
+      data: {
+        name: data.name,
+        slug: data.collectionData.slug,
+        description: data.aiDescription,
+        igdbId: data.collectionData.igdbId,
+        igdbUrl: data.collectionData.igdbUrl,
+        // Parent collection relation - Strapi handles document-level relations
+        parentCollection: data.collectionData.parentCollectionDocumentId || undefined,
+      },
+      status: 'published',
+    } as any);
 
-    const spanishEntryId = insertedRow?.id ?? insertedRow;
-    strapi.log.info(`[CollectionLocaleSync:ES] Spanish locale entry created (id: ${spanishEntryId}) for collection: ${data.name}`);
-
-    // Handle parent collection relation if exists
-    if (data.collectionData.parentCollectionDocumentId) {
-      // Find the Spanish locale entry of the parent collection
-      const parentSpanish = await knex('collections')
-        .where({ document_id: data.collectionData.parentCollectionDocumentId, locale: 'es' })
-        .first();
-
-      if (parentSpanish) {
-        // Link this Spanish entry to the Spanish parent
-        await knex('collections_parent_collection_lnk').insert({
-          collection_id: spanishEntryId,
-          inv_collection_id: parentSpanish.id,
-        }).onConflict().ignore();
-        strapi.log.info(`[CollectionLocaleSync:ES] Linked to parent collection for: ${data.name}`);
-      }
+    strapi.log.info(`[CollectionLocaleSync:ES] Spanish locale entry created (id: ${created?.id}) for collection: ${data.name}`);
+    
+    // update() when creating new locale may not set all fields properly
+    // Update the description separately if it exists
+    if (data.aiDescription) {
+      await collectionService.update({
+        documentId: data.documentId,
+        locale: 'es',
+        data: { description: data.aiDescription },
+      } as any);
     }
+
+    // Publish to sync draft to published
+    await (collectionService as any).publish({
+      documentId: data.documentId,
+      locale: 'es',
+    });
+
+    strapi.log.info(`[CollectionLocaleSync:ES] Spanish locale published for collection: ${data.name}`);
   },
 };
 

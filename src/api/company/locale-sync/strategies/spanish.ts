@@ -3,44 +3,63 @@ import type { CompanyLocaleStrategy, CompanyLocaleData } from '../types';
 
 /**
  * Spanish (es) locale strategy for companies
- * Creates Spanish locale entries for companies with AI-generated descriptions
+ * Creates Spanish locale entries for companies using Strapi Document Service
  */
 export const spanishCompanyLocaleStrategy: CompanyLocaleStrategy = {
   locale: 'es',
 
   async createLocale(strapi: Core.Strapi, data: CompanyLocaleData): Promise<void> {
-    const knex = strapi.db.connection;
-    const now = new Date().toISOString();
+    const companyService = strapi.documents('api::company.company');
 
     // Check if Spanish locale already exists for this document
-    const existing = await knex('companies')
-      .where({ document_id: data.documentId, locale: 'es' })
-      .first();
+    const existing = await companyService.findOne({
+      documentId: data.documentId,
+      locale: 'es',
+    });
 
     if (existing) {
       strapi.log.info(`[CompanyLocaleSync:ES] Spanish locale already exists for document ${data.documentId}`);
       return;
     }
 
-    // Insert Spanish locale entry with same document_id (as published)
-    const [insertedRow] = await knex('companies').insert({
-      document_id: data.documentId,
+    // Create Spanish locale entry using Document Service update()
+    // In Strapi 5, update() with a new locale creates that locale version
+    // Note: update() creates the locale but may not properly set all fields
+    const created = await companyService.update({
+      documentId: data.documentId,
       locale: 'es',
-      name: data.name, // Name is not localized
-      slug: data.companyData.slug, // Slug is not localized
-      description: data.aiDescription, // AI-generated Spanish description
-      logo_url: data.companyData.logoUrl,
-      country: data.companyData.country,
-      founded_year: data.companyData.foundedYear,
-      igdb_id: data.companyData.igdbId,
-      igdb_url: data.companyData.igdbUrl,
-      published_at: now, // Create as published (no draft)
-      created_at: now,
-      updated_at: now,
-    }).returning('id');
+      data: {
+        name: data.name,
+        slug: data.companyData.slug,
+        description: data.aiDescription,
+        logoUrl: data.companyData.logoUrl,
+        country: data.companyData.country,
+        foundedYear: data.companyData.foundedYear,
+        igdbId: data.companyData.igdbId,
+        igdbUrl: data.companyData.igdbUrl,
+      },
+      status: 'published',
+    } as any);
 
-    const spanishEntryId = insertedRow?.id ?? insertedRow;
-    strapi.log.info(`[CompanyLocaleSync:ES] Spanish locale entry created (id: ${spanishEntryId}) for company: ${data.name}`);
+    strapi.log.info(`[CompanyLocaleSync:ES] Spanish locale entry created (id: ${created?.id}) for company: ${data.name}`);
+    
+    // update() when creating new locale may not set all fields properly
+    // Update the description separately if it exists
+    if (data.aiDescription) {
+      await companyService.update({
+        documentId: data.documentId,
+        locale: 'es',
+        data: { description: data.aiDescription },
+      } as any);
+    }
+
+    // Publish to sync draft to published
+    await (companyService as any).publish({
+      documentId: data.documentId,
+      locale: 'es',
+    });
+
+    strapi.log.info(`[CompanyLocaleSync:ES] Spanish locale published for company: ${data.name}`);
   },
 };
 

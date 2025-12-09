@@ -3,41 +3,63 @@ import type { FranchiseLocaleStrategy, FranchiseLocaleData } from '../types';
 
 /**
  * Spanish (es) locale strategy for franchises
- * Creates Spanish locale entries for franchises with AI-generated descriptions
+ * Creates Spanish locale entries for franchises using Strapi Document Service
  */
 export const spanishFranchiseLocaleStrategy: FranchiseLocaleStrategy = {
   locale: 'es',
 
   async createLocale(strapi: Core.Strapi, data: FranchiseLocaleData): Promise<void> {
-    const knex = strapi.db.connection;
-    const now = new Date().toISOString();
+    const franchiseService = strapi.documents('api::franchise.franchise');
 
     // Check if Spanish locale already exists for this document
-    const existing = await knex('franchises')
-      .where({ document_id: data.documentId, locale: 'es' })
-      .first();
+    const existing = await franchiseService.findOne({
+      documentId: data.documentId,
+      locale: 'es',
+    });
 
     if (existing) {
       strapi.log.info(`[FranchiseLocaleSync:ES] Spanish locale already exists for document ${data.documentId}`);
       return;
     }
 
-    // Insert Spanish locale entry with same document_id (as published)
-    const [insertedRow] = await knex('franchises').insert({
-      document_id: data.documentId,
+    // Create Spanish locale entry using Document Service update()
+    // In Strapi 5, update() with a new locale creates that locale version
+    // Note: update() creates the locale but may not properly set all fields
+    strapi.log.info(`[FranchiseLocaleSync:ES] Creating ES locale with description length: ${data.aiDescription?.length || 0}`);
+    
+    const created = await franchiseService.update({
+      documentId: data.documentId,
       locale: 'es',
-      name: data.name, // Name is not localized
-      slug: data.franchiseData.slug, // Slug is not localized
-      description: data.aiDescription, // AI-generated Spanish description
-      igdb_id: data.franchiseData.igdbId,
-      igdb_url: data.franchiseData.igdbUrl,
-      published_at: now, // Create as published (no draft)
-      created_at: now,
-      updated_at: now,
-    }).returning('id');
+      data: {
+        name: data.name,
+        slug: data.franchiseData.slug,
+        description: data.aiDescription,
+        igdbId: data.franchiseData.igdbId,
+        igdbUrl: data.franchiseData.igdbUrl,
+      },
+      status: 'published',
+    } as any);
 
-    const spanishEntryId = insertedRow?.id ?? insertedRow;
-    strapi.log.info(`[FranchiseLocaleSync:ES] Spanish locale entry created (id: ${spanishEntryId}) for franchise: ${data.name}`);
+    strapi.log.info(`[FranchiseLocaleSync:ES] Spanish locale entry created (id: ${created?.id}) for franchise: ${data.name}`);
+    
+    // update() when creating new locale may not set all fields properly
+    // Update the description separately if it exists
+    if (data.aiDescription) {
+      await franchiseService.update({
+        documentId: data.documentId,
+        locale: 'es',
+        data: { description: data.aiDescription },
+      } as any);
+      strapi.log.info(`[FranchiseLocaleSync:ES] Updated ES description for: ${data.name}`);
+    }
+
+    // Publish to sync draft to published
+    await (franchiseService as any).publish({
+      documentId: data.documentId,
+      locale: 'es',
+    });
+
+    strapi.log.info(`[FranchiseLocaleSync:ES] Spanish locale published for franchise: ${data.name}`);
   },
 };
 
