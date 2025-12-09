@@ -8,6 +8,10 @@ export interface PlayerPerspectiveLocaleData {
     slug: string;
     igdbId: number | null;
   };
+  /** AI-generated description for this locale */
+  aiDescription?: string | null;
+  /** Translated name for this locale */
+  localizedName?: string;
 }
 
 export interface PlayerPerspectiveLocaleStrategy {

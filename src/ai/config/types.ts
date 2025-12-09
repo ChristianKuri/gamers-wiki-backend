@@ -126,6 +126,14 @@ export interface GameModeDescriptionContext {
 }
 
 /**
+ * Context for player perspective description generation
+ */
+export interface PlayerPerspectiveDescriptionContext {
+  name: string;
+  notableGames?: string[];
+}
+
+/**
  * Context for tag generation (future)
  */
 export interface TagGenerationContext {

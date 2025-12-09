@@ -16,6 +16,7 @@ import {
   genreDescriptionsConfig,
   themeDescriptionsConfig,
   gameModeDescriptionsConfig,
+  playerPerspectiveDescriptionsConfig,
   type SupportedLocale, 
   type GameDescriptionContext,
   type PlatformDescriptionContext,
@@ -25,6 +26,7 @@ import {
   type GenreDescriptionContext,
   type ThemeDescriptionContext,
   type GameModeDescriptionContext,
+  type PlayerPerspectiveDescriptionContext,
   type AITaskConfig,
 } from './config';
 
@@ -350,6 +352,41 @@ export async function generateGameModeDescriptions(
 }
 
 /**
+ * Generate a player perspective description using AI
+ * 
+ * @param context - Player perspective information for context
+ * @param locale - Target language ('en' or 'es')
+ * @returns Generated description
+ */
+export async function generatePlayerPerspectiveDescription(
+  context: PlayerPerspectiveDescriptionContext,
+  locale: SupportedLocale
+): Promise<string> {
+  return executeAITask(playerPerspectiveDescriptionsConfig, context, locale);
+}
+
+/**
+ * Generate player perspective descriptions for both English and Spanish locales
+ * 
+ * @param context - Player perspective information for context
+ * @returns Object with 'en' and 'es' descriptions
+ */
+export async function generatePlayerPerspectiveDescriptions(
+  context: PlayerPerspectiveDescriptionContext
+): Promise<{ en: string; es: string }> {
+  // Generate both descriptions in parallel for speed
+  const [enDescription, esDescription] = await Promise.all([
+    generatePlayerPerspectiveDescription(context, 'en'),
+    generatePlayerPerspectiveDescription(context, 'es'),
+  ]);
+
+  return {
+    en: enDescription,
+    es: esDescription,
+  };
+}
+
+/**
  * Get information about the current AI configuration
  * Shows active models (resolved from environment or defaults)
  */
@@ -404,6 +441,12 @@ export function getAIStatus() {
         model: gameModeDescriptionsConfig.model,
         envVar: 'AI_MODEL_GAME_MODE_DESCRIPTIONS',
         isOverridden: Boolean(process.env.AI_MODEL_GAME_MODE_DESCRIPTIONS),
+      },
+      'player-perspective-descriptions': {
+        name: playerPerspectiveDescriptionsConfig.name,
+        model: playerPerspectiveDescriptionsConfig.model,
+        envVar: 'AI_MODEL_PLAYER_PERSPECTIVE_DESCRIPTIONS',
+        isOverridden: Boolean(process.env.AI_MODEL_PLAYER_PERSPECTIVE_DESCRIPTIONS),
       },
       // Add more tasks here as they're implemented
     },
