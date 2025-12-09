@@ -26,6 +26,7 @@ export { platformDescriptionsConfig } from './platform-descriptions';
 export { companyDescriptionsConfig } from './company-descriptions';
 export { franchiseDescriptionsConfig } from './franchise-descriptions';
 export { collectionDescriptionsConfig } from './collection-descriptions';
+export { genreDescriptionsConfig } from './genre-descriptions';
 
 // Future configurations (uncomment when implemented):
 // export { tagGenerationConfig } from './tag-generation';
@@ -42,6 +43,7 @@ export const allConfigs = {
   'company-descriptions': () => import('./company-descriptions').then(m => m.companyDescriptionsConfig),
   'franchise-descriptions': () => import('./franchise-descriptions').then(m => m.franchiseDescriptionsConfig),
   'collection-descriptions': () => import('./collection-descriptions').then(m => m.collectionDescriptionsConfig),
+  'genre-descriptions': () => import('./genre-descriptions').then(m => m.genreDescriptionsConfig),
   // 'tag-generation': () => import('./tag-generation').then(m => m.tagGenerationConfig),
   // 'seo-meta': () => import('./seo-meta').then(m => m.seoMetaConfig),
 } as const;

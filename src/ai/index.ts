@@ -50,6 +50,8 @@ export {
   generateFranchiseDescriptions,
   generateCollectionDescription,
   generateCollectionDescriptions,
+  generateGenreDescription,
+  generateGenreDescriptions,
   getAIStatus,
 } from './service';
 
@@ -61,6 +63,7 @@ export type {
   CompanyDescriptionContext,
   FranchiseDescriptionContext,
   CollectionDescriptionContext,
+  GenreDescriptionContext,
   AITaskConfig,
   TagGenerationContext,
   SEOMetaContext,
@@ -74,6 +77,7 @@ export {
   companyDescriptionsConfig,
   franchiseDescriptionsConfig,
   collectionDescriptionsConfig,
+  genreDescriptionsConfig,
   getModel,
   getModelFromEnv,
   AI_ENV_KEYS,

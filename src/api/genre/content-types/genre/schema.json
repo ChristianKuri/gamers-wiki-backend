@@ -36,6 +36,23 @@
         }
       }
     },
+    "description": {
+      "type": "richtext",
+      "pluginOptions": {
+        "i18n": {
+          "localized": true
+        }
+      }
+    },
+    "igdbId": {
+      "type": "integer",
+      "unique": true,
+      "pluginOptions": {
+        "i18n": {
+          "localized": false
+        }
+      }
+    },
     "games": {
       "type": "relation",
       "relation": "manyToMany",

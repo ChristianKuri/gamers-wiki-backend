@@ -13,12 +13,14 @@ import {
   companyDescriptionsConfig,
   franchiseDescriptionsConfig,
   collectionDescriptionsConfig,
+  genreDescriptionsConfig,
   type SupportedLocale, 
   type GameDescriptionContext,
   type PlatformDescriptionContext,
   type CompanyDescriptionContext,
   type FranchiseDescriptionContext,
   type CollectionDescriptionContext,
+  type GenreDescriptionContext,
   type AITaskConfig,
 } from './config';
 
@@ -239,6 +241,41 @@ export async function generateCollectionDescriptions(
 }
 
 /**
+ * Generate a genre description using AI
+ * 
+ * @param context - Genre information for context
+ * @param locale - Target language ('en' or 'es')
+ * @returns Generated description
+ */
+export async function generateGenreDescription(
+  context: GenreDescriptionContext,
+  locale: SupportedLocale
+): Promise<string> {
+  return executeAITask(genreDescriptionsConfig, context, locale);
+}
+
+/**
+ * Generate genre descriptions for both English and Spanish locales
+ * 
+ * @param context - Genre information for context
+ * @returns Object with 'en' and 'es' descriptions
+ */
+export async function generateGenreDescriptions(
+  context: GenreDescriptionContext
+): Promise<{ en: string; es: string }> {
+  // Generate both descriptions in parallel for speed
+  const [enDescription, esDescription] = await Promise.all([
+    generateGenreDescription(context, 'en'),
+    generateGenreDescription(context, 'es'),
+  ]);
+
+  return {
+    en: enDescription,
+    es: esDescription,
+  };
+}
+
+/**
  * Get information about the current AI configuration
  * Shows active models (resolved from environment or defaults)
  */
@@ -275,6 +312,12 @@ export function getAIStatus() {
         model: collectionDescriptionsConfig.model,
         envVar: 'AI_MODEL_COLLECTION_DESCRIPTIONS',
         isOverridden: Boolean(process.env.AI_MODEL_COLLECTION_DESCRIPTIONS),
+      },
+      'genre-descriptions': {
+        name: genreDescriptionsConfig.name,
+        model: genreDescriptionsConfig.model,
+        envVar: 'AI_MODEL_GENRE_DESCRIPTIONS',
+        isOverridden: Boolean(process.env.AI_MODEL_GENRE_DESCRIPTIONS),
       },
       // Add more tasks here as they're implemented
     },

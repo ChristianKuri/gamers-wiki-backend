@@ -98,6 +98,16 @@ export interface CollectionDescriptionContext {
 }
 
 /**
+ * Context for genre description generation
+ */
+export interface GenreDescriptionContext {
+  name: string;
+  notableGames?: string[];
+  parentGenre?: string | null;
+  relatedGenres?: string[];
+}
+
+/**
  * Context for tag generation (future)
  */
 export interface TagGenerationContext {

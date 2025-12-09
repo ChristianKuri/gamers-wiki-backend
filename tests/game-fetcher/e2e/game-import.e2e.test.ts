@@ -538,6 +538,73 @@ To run E2E tests, use: npm run test:e2e:run
     expect(enRelations.platforms).toBeGreaterThan(0);
   });
 
+  it('should have same relationship counts for draft and published entries', async ({ skip }) => {
+    if (!strapiReady || !knex) {
+      skip();
+      return;
+    }
+
+    // Get all game entries (published first to find document_id)
+    const games = await db.getGames(knex);
+    const zeldaGame = games.find((g: { name: string }) => g.name.includes('Zelda'));
+    
+    expect(zeldaGame).toBeDefined();
+    
+    // Get all entries for this document (draft and published for both locales)
+    const allEntries = await db.getGameEntriesByDocument(knex, zeldaGame!.document_id);
+    
+    // Should have 4 entries: EN draft, EN published, ES draft, ES published
+    expect(allEntries.length).toBe(4);
+    
+    // Get relationship counts for each entry
+    const entryCounts = await Promise.all(
+      allEntries.map(async (entry: { id: number; locale: string; published_at: string | null }) => ({
+        locale: entry.locale,
+        status: entry.published_at ? 'published' : 'draft',
+        relations: await db.getGameRelationshipCounts(knex, entry.id),
+      }))
+    );
+    
+    console.log('Entry relationship counts:', JSON.stringify(entryCounts, null, 2));
+    
+    // Group by locale
+    const enDraft = entryCounts.find(e => e.locale === 'en' && e.status === 'draft');
+    const enPublished = entryCounts.find(e => e.locale === 'en' && e.status === 'published');
+    const esPublished = entryCounts.find(e => e.locale === 'es' && e.status === 'published');
+    
+    expect(enDraft).toBeDefined();
+    expect(enPublished).toBeDefined();
+    expect(esPublished).toBeDefined();
+    
+    // EN draft and published should have same relations (Strapi manages these at document level)
+    expect(enDraft!.relations.platforms).toBe(enPublished!.relations.platforms);
+    expect(enDraft!.relations.genres).toBe(enPublished!.relations.genres);
+    expect(enDraft!.relations.developers).toBe(enPublished!.relations.developers);
+    expect(enDraft!.relations.publishers).toBe(enPublished!.relations.publishers);
+    expect(enDraft!.relations.franchises).toBe(enPublished!.relations.franchises);
+    expect(enDraft!.relations.collections).toBe(enPublished!.relations.collections);
+    
+    // ES draft should exist and have relations
+    const esDraft = entryCounts.find(e => e.locale === 'es' && e.status === 'draft');
+    expect(esDraft).toBeDefined();
+    
+    // ES draft and published should have same relations (Document Service manages at document level)
+    expect(esDraft!.relations.platforms).toBe(esPublished!.relations.platforms);
+    expect(esDraft!.relations.genres).toBe(esPublished!.relations.genres);
+    expect(esDraft!.relations.developers).toBe(esPublished!.relations.developers);
+    expect(esDraft!.relations.publishers).toBe(esPublished!.relations.publishers);
+    expect(esDraft!.relations.franchises).toBe(esPublished!.relations.franchises);
+    expect(esDraft!.relations.collections).toBe(esPublished!.relations.collections);
+    
+    // ES published should have same relations as EN published
+    expect(esPublished!.relations.platforms).toBe(enPublished!.relations.platforms);
+    expect(esPublished!.relations.genres).toBe(enPublished!.relations.genres);
+    expect(esPublished!.relations.developers).toBe(enPublished!.relations.developers);
+    expect(esPublished!.relations.publishers).toBe(enPublished!.relations.publishers);
+    expect(esPublished!.relations.franchises).toBe(enPublished!.relations.franchises);
+    expect(esPublished!.relations.collections).toBe(enPublished!.relations.collections);
+  });
+
   it('should link Spanish game entry to Spanish locale of related entities', async ({ skip }) => {
     if (!strapiReady || !knex) {
       skip();

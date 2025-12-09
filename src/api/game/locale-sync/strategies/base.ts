@@ -97,8 +97,8 @@ export async function insertLinks(
   relatedField: string,
   gameId: number,
   relatedIds: number[]
-): Promise<void> {
-  if (relatedIds.length === 0) return;
+): Promise<number> {
+  if (relatedIds.length === 0) return 0;
   
   // Build link records with ordering
   const links = relatedIds.map((relatedId, index) => ({
@@ -108,7 +108,15 @@ export async function insertLinks(
     [relatedField.replace('_id', '_ord')]: index + 1,
   }));
   
-  await knex(tableName).insert(links);
+  // Use ON CONFLICT DO NOTHING because:
+  // 1. Strapi's publish() might have already copied some relations (localized ones)
+  // 2. We copy to both draft and published, so duplicates are possible
+  await knex(tableName)
+    .insert(links)
+    .onConflict([gameField, relatedField])
+    .ignore();
+  
+  return relatedIds.length;
 }
 
 /**

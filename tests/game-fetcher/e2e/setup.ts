@@ -446,6 +446,17 @@ export const db = {
   },
 
   /**
+   * Get all game entries (both draft and published) for a document
+   * Returns all rows with their status for testing draft/published parity
+   */
+  async getGameEntriesByDocument(knex: Knex, documentId: string) {
+    return knex('games')
+      .select('id', 'document_id', 'locale', 'name', 'published_at')
+      .where('document_id', documentId)
+      .orderBy(['locale', 'id']);
+  },
+
+  /**
    * Get platform game relationship counts by platform database ID
    * Returns the number of games linked to a specific platform entry
    */
