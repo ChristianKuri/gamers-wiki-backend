@@ -30,6 +30,7 @@ export { genreDescriptionsConfig } from './genre-descriptions';
 export { themeDescriptionsConfig } from './theme-descriptions';
 export { gameModeDescriptionsConfig } from './game-mode-descriptions';
 export { playerPerspectiveDescriptionsConfig } from './player-perspective-descriptions';
+export { languageDescriptionsConfig } from './language-descriptions';
 
 // Future configurations (uncomment when implemented):
 // export { tagGenerationConfig } from './tag-generation';
@@ -50,6 +51,7 @@ export const allConfigs = {
   'theme-descriptions': () => import('./theme-descriptions').then(m => m.themeDescriptionsConfig),
   'game-mode-descriptions': () => import('./game-mode-descriptions').then(m => m.gameModeDescriptionsConfig),
   'player-perspective-descriptions': () => import('./player-perspective-descriptions').then(m => m.playerPerspectiveDescriptionsConfig),
+  'language-descriptions': () => import('./language-descriptions').then(m => m.languageDescriptionsConfig),
   // 'tag-generation': () => import('./tag-generation').then(m => m.tagGenerationConfig),
   // 'seo-meta': () => import('./seo-meta').then(m => m.seoMetaConfig),
 } as const;

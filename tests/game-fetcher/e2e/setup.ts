@@ -206,15 +206,36 @@ interface SearchGamesResponse {
 export const api = {
   /**
    * Import a game by IGDB ID
+   * Note: This endpoint can take several minutes due to AI description generation
+   * for all related entities (Platform, Company, Franchise, Collection, Genre, Theme,
+   * GameMode, PlayerPerspective, Language, etc.)
+   * 
+   * Uses undici Agent with extended timeouts because Node.js fetch defaults
+   * to short headers timeout that causes failures for long-running requests.
    */
   async importGame(igdbId: number): Promise<ImportGameResponse> {
-    const response = await fetch(`${E2E_CONFIG.strapiUrl}/api/game-fetcher/import`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ igdbId }),
-    });
+    // Use dynamic import for undici to get Agent with custom timeouts
+    const { Agent, fetch: undiciFetch } = await import('undici');
     
-    return response.json() as Promise<ImportGameResponse>;
+    // Create custom agent with 10 minute timeouts
+    const agent = new Agent({
+      headersTimeout: 600000, // 10 minutes
+      bodyTimeout: 600000,   // 10 minutes
+      connectTimeout: 30000, // 30 seconds for initial connection
+    });
+
+    try {
+      const response = await undiciFetch(`${E2E_CONFIG.strapiUrl}/api/game-fetcher/import`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ igdbId }),
+        dispatcher: agent,
+      });
+      
+      return response.json() as Promise<ImportGameResponse>;
+    } finally {
+      await agent.close();
+    }
   },
 
   /**

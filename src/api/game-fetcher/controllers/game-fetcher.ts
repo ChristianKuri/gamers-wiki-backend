@@ -362,12 +362,20 @@ export default ({ strapi }: { strapi: Core.Strapi }) => ({
           return existing[0].documentId;
         }
 
+        // Generate slug from name
+        const slug = langData.name
+          .toLowerCase()
+          .replace(/[^a-z0-9\s-]/g, '')
+          .replace(/\s+/g, '-')
+          .trim();
+
         // Create new language as published
         const newLanguage = await languageService.create({
           data: {
             name: langData.name,
+            slug,
             nativeName: langData.nativeName,
-            locale: langData.locale,
+            isoCode: langData.isoCode,
             igdbId: langData.igdbId,
           },
           locale: 'en',

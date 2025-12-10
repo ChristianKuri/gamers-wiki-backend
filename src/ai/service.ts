@@ -17,6 +17,7 @@ import {
   themeDescriptionsConfig,
   gameModeDescriptionsConfig,
   playerPerspectiveDescriptionsConfig,
+  languageDescriptionsConfig,
   type SupportedLocale, 
   type GameDescriptionContext,
   type PlatformDescriptionContext,
@@ -27,6 +28,7 @@ import {
   type ThemeDescriptionContext,
   type GameModeDescriptionContext,
   type PlayerPerspectiveDescriptionContext,
+  type LanguageDescriptionContext,
   type AITaskConfig,
 } from './config';
 
@@ -387,6 +389,41 @@ export async function generatePlayerPerspectiveDescriptions(
 }
 
 /**
+ * Generate a language description using AI
+ * 
+ * @param context - Language information for context
+ * @param locale - Target language ('en' or 'es')
+ * @returns Generated description
+ */
+export async function generateLanguageDescription(
+  context: LanguageDescriptionContext,
+  locale: SupportedLocale
+): Promise<string> {
+  return executeAITask(languageDescriptionsConfig, context, locale);
+}
+
+/**
+ * Generate language descriptions for both English and Spanish locales
+ * 
+ * @param context - Language information for context
+ * @returns Object with 'en' and 'es' descriptions
+ */
+export async function generateLanguageDescriptions(
+  context: LanguageDescriptionContext
+): Promise<{ en: string; es: string }> {
+  // Generate both descriptions in parallel for speed
+  const [enDescription, esDescription] = await Promise.all([
+    generateLanguageDescription(context, 'en'),
+    generateLanguageDescription(context, 'es'),
+  ]);
+
+  return {
+    en: enDescription,
+    es: esDescription,
+  };
+}
+
+/**
  * Get information about the current AI configuration
  * Shows active models (resolved from environment or defaults)
  */
@@ -447,6 +484,12 @@ export function getAIStatus() {
         model: playerPerspectiveDescriptionsConfig.model,
         envVar: 'AI_MODEL_PLAYER_PERSPECTIVE_DESCRIPTIONS',
         isOverridden: Boolean(process.env.AI_MODEL_PLAYER_PERSPECTIVE_DESCRIPTIONS),
+      },
+      'language-descriptions': {
+        name: languageDescriptionsConfig.name,
+        model: languageDescriptionsConfig.model,
+        envVar: 'AI_MODEL_LANGUAGE_DESCRIPTIONS',
+        isOverridden: Boolean(process.env.AI_MODEL_LANGUAGE_DESCRIPTIONS),
       },
       // Add more tasks here as they're implemented
     },

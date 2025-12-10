@@ -120,7 +120,7 @@ export interface LanguageData {
   igdbId: number;
   name: string;
   nativeName: string | null;
-  locale: string | null;
+  isoCode: string | null;
 }
 
 export interface GameModeData {
@@ -653,7 +653,7 @@ export default ({ strapi }: { strapi: Core.Strapi }) => ({
           igdbId: lang.id,
           name: lang.name,
           nativeName: lang.native_name || null,
-          locale: lang.locale || null,
+          isoCode: lang.locale || null,
         });
       }
     });

@@ -5,10 +5,15 @@ export interface LanguageLocaleData {
   sourceId: number;
   name: string;
   languageData: {
+    slug: string;
     nativeName: string | null;
-    locale: string | null;
+    isoCode: string | null;
     igdbId: number | null;
   };
+  /** AI-generated description for this locale */
+  aiDescription?: string | null;
+  /** Translated name for this locale */
+  localizedName?: string;
 }
 
 export interface LanguageLocaleStrategy {

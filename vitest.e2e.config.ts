@@ -14,8 +14,11 @@ export default defineConfig({
     // Test environment
     environment: 'node',
     
-    // Long timeout for E2E tests (2 minutes)
-    testTimeout: 120000,
+    // Long timeout for E2E tests (5 minutes for individual tests)
+    testTimeout: 300000,
+    
+    // Hook timeout for beforeAll/afterAll (10 minutes for setup with many AI calls)
+    hookTimeout: 600000,
     
     // No setup file - E2E tests handle their own setup
     setupFiles: [],

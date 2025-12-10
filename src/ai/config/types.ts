@@ -134,6 +134,15 @@ export interface PlayerPerspectiveDescriptionContext {
 }
 
 /**
+ * Context for language description generation
+ */
+export interface LanguageDescriptionContext {
+  name: string;
+  nativeName?: string | null;
+  isoCode?: string | null;
+}
+
+/**
  * Context for tag generation (future)
  */
 export interface TagGenerationContext {

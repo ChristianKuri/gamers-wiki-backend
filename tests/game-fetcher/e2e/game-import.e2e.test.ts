@@ -38,6 +38,7 @@ describeE2E('Game Import E2E', () => {
   const TEST_IGDB_ID = 119388; // The Legend of Zelda: Tears of the Kingdom
   let importResult: Awaited<ReturnType<typeof api.importGame>>;
 
+  // Increased timeout for beforeAll due to many AI description generations
   beforeAll(async () => {
     // Check if Strapi is running
     strapiReady = await isStrapiRunning();
@@ -61,7 +62,7 @@ To run E2E tests, use: npm run test:e2e:run
     // Lifecycle hooks are now synchronous, so AI generation happens during the import
     // and all ES locale entries are created before the import returns.
     importResult = await api.importGame(TEST_IGDB_ID);
-  }, 300000); // 5 minute timeout for import (includes synchronous AI generation for all entities)
+  }, 600000); // 10 minute timeout for import (includes synchronous AI generation for all entities: Platform, Company, Franchise, Collection, Genre, Theme, GameMode, PlayerPerspective, Language)
 
   afterAll(async () => {
     if (knex) {
