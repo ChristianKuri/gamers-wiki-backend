@@ -38,15 +38,128 @@ Tanto los veteranos de *Breath of the Wild* como los recién llegados encontrar�
   },
 };
 
+const MOCK_TAVILY_RESULTS = {
+  answer:
+    'Brief factual overview for the requested query. This is a mocked Tavily answer.',
+  results: [
+    {
+      title: 'Official game website',
+      url: 'https://example.com/official',
+      content: 'Official overview, platforms, and latest announcements.',
+      score: 0.92,
+    },
+    {
+      title: 'Patch notes',
+      url: 'https://example.com/patch-notes',
+      content: 'Recent patch notes and balance updates.',
+      score: 0.81,
+    },
+    {
+      title: 'Developer interview',
+      url: 'https://example.com/interview',
+      content: 'Interview discussing design goals and player feedback.',
+      score: 0.74,
+    },
+  ],
+};
+
 /**
  * Detect if the prompt is for a platform or game description
  */
 function detectContentType(messages: Array<{ role: string; content: string }>): 'platform' | 'game' {
   const userMessage = messages.find(m => m.role === 'user')?.content || '';
-  if (userMessage.includes('Platform:') || userMessage.toLowerCase().includes('platform')) {
+  // Keep this intentionally narrow. Other prompts (like article generation)
+  // may contain the word "platforms" but are not platform-description tasks.
+  if (userMessage.includes('Platform:')) {
     return 'platform';
   }
   return 'game';
+}
+
+function getUserText(messages: Array<{ role: string; content: string }>): string {
+  return messages.find(m => m.role === 'user')?.content || '';
+}
+
+function isArticlePlanPrompt(userText: string): boolean {
+  return (
+    userText.includes('Plan an article about the game') ||
+    userText.includes('Return ONLY valid JSON') ||
+    userText.includes('categorySlug must be one of')
+  );
+}
+
+function isArticleSectionPrompt(userText: string): boolean {
+  return userText.includes('Write the next section of a game article');
+}
+
+function isScoutBriefingPrompt(userText: string): boolean {
+  return userText.toLowerCase().includes('briefing document');
+}
+
+function buildMockArticlePlan(locale: 'en' | 'es') {
+  if (locale === 'es') {
+    return {
+      title: 'Guía para principiantes: primeras 5 horas',
+      categorySlug: 'guide',
+      excerpt:
+        'Empieza fuerte con rutas seguras, mejoras clave y los errores más comunes durante tus primeras horas, para progresar más rápido y evitar frustraciones.',
+      tags: ['principiantes', 'primeras horas', 'consejos'],
+      sections: [
+        {
+          headline: 'Qué hacer primero',
+          goal: 'Dar una ruta inicial segura y prioridades claras.',
+          researchQueries: ['mejor ruta inicio primeras horas guia'],
+        },
+        {
+          headline: 'Clase inicial y recuerdo',
+          goal: 'Explicar elecciones iniciales y su impacto.',
+          researchQueries: ['mejor clase inicial recomendación'],
+        },
+        {
+          headline: 'Subir de nivel y prioridades',
+          goal: 'Enseñar prioridades de estadísticas y objetivos tempranos.',
+          researchQueries: ['recomendación vigor temprano'],
+        },
+        {
+          headline: 'Errores a evitar',
+          goal: 'Listar errores típicos y cómo corregirlos.',
+          researchQueries: ['errores comunes principiantes'],
+        },
+      ],
+      safety: { noPrices: true, noScoresUnlessReview: true },
+    };
+  }
+
+  return {
+    title: 'Beginner Guide: Your First 5 Hours',
+    categorySlug: 'guide',
+    excerpt:
+      'Start strong with safe routes, key upgrades, and the most common mistakes to avoid in your first hours—so you level faster, stay alive, and enjoy the opening.',
+    tags: ['beginner tips', 'early game', 'progression'],
+    sections: [
+      {
+        headline: 'What to Do First',
+        goal: 'Give a safe opening path and immediate priorities.',
+        researchQueries: ['best early game route first hours guide'],
+      },
+      {
+        headline: 'Starter Class and Keepsake',
+        goal: 'Explain starter choices and why they matter.',
+        researchQueries: ['best starting class recommendation'],
+      },
+      {
+        headline: 'Leveling and Stat Priorities',
+        goal: 'Teach core stats and early targets.',
+        researchQueries: ['early game vigor recommendation'],
+      },
+      {
+        headline: 'Common Mistakes to Avoid',
+        goal: 'List typical beginner mistakes and fixes.',
+        researchQueries: ['common beginner mistakes'],
+      },
+    ],
+    safety: { noPrices: true, noScoresUnlessReview: true },
+  };
 }
 
 /**
@@ -62,6 +175,17 @@ function detectLocale(messages: Array<{ role: string; content: string }>): 'en' 
 
 export const handlers = [
   /**
+   * Mock Tavily search API
+   */
+  http.post('https://api.tavily.com/search', async ({ request }) => {
+    const body = (await request.json()) as { query?: string };
+    const query = body?.query || '';
+    return HttpResponse.json({
+      query,
+      ...MOCK_TAVILY_RESULTS,
+    });
+  }),
+  /**
    * Mock OpenRouter API (chat completions - legacy format)
    */
   http.post('https://openrouter.ai/api/v1/chat/completions', async ({ request }) => {
@@ -69,10 +193,79 @@ export const handlers = [
       messages: Array<{ role: string; content: string }>;
       model: string;
     };
-    
-    const contentType = detectContentType(body.messages);
     const locale = detectLocale(body.messages);
-    
+    const userText = getUserText(body.messages);
+
+    // Article generator planner (generateObject) expects raw JSON string
+    if (isArticlePlanPrompt(userText)) {
+      return HttpResponse.json({
+        id: 'mock-completion-id',
+        object: 'chat.completion',
+        created: Date.now(),
+        model: body.model,
+        choices: [
+          {
+            index: 0,
+            message: {
+              role: 'assistant',
+              content: JSON.stringify(buildMockArticlePlan(locale)),
+            },
+            finish_reason: 'stop',
+          },
+        ],
+        usage: { prompt_tokens: 100, completion_tokens: 200, total_tokens: 300 },
+      });
+    }
+
+    // Article generator section writer
+    if (isArticleSectionPrompt(userText)) {
+      return HttpResponse.json({
+        id: 'mock-completion-id',
+        object: 'chat.completion',
+        created: Date.now(),
+        model: body.model,
+        choices: [
+          {
+            index: 0,
+            message: {
+              role: 'assistant',
+              content:
+                locale === 'es'
+                  ? 'Este es un párrafo de ejemplo con **énfasis** y continuidad.\\n\\nOtro párrafo con detalles prudentes basados en investigación simulada.'
+                  : 'This is a sample paragraph with **emphasis** and continuity.\\n\\nAnother paragraph with careful details based on mocked research.',
+            },
+            finish_reason: 'stop',
+          },
+        ],
+        usage: { prompt_tokens: 100, completion_tokens: 200, total_tokens: 300 },
+      });
+    }
+
+    // Scout briefing
+    if (isScoutBriefingPrompt(userText)) {
+      return HttpResponse.json({
+        id: 'mock-completion-id',
+        object: 'chat.completion',
+        created: Date.now(),
+        model: body.model,
+        choices: [
+          {
+            index: 0,
+            message: {
+              role: 'assistant',
+              content:
+                locale === 'es'
+                  ? '- Género/vibe: acción y aventura\\n- Estado: lanzamiento reciente\\n- Lo que importa: exploración, progresión, rendimiento'
+                  : '- Genre/vibe: action-adventure\\n- Status: recent release\\n- What players care about: exploration, progression, performance',
+            },
+            finish_reason: 'stop',
+          },
+        ],
+        usage: { prompt_tokens: 100, completion_tokens: 200, total_tokens: 300 },
+      });
+    }
+
+    const contentType = detectContentType(body.messages);
     const description = MOCK_DESCRIPTIONS[contentType][locale];
     
     return HttpResponse.json({
@@ -115,9 +308,81 @@ export const handlers = [
       return { role: msg.role, content };
     });
     
-    const contentType = detectContentType(messages);
     const locale = detectLocale(messages);
-    
+    const userText = getUserText(messages);
+
+    if (isArticlePlanPrompt(userText)) {
+      const planJson = JSON.stringify(buildMockArticlePlan(locale));
+      return HttpResponse.json({
+        id: 'mock-response-id',
+        object: 'response',
+        created_at: Date.now(),
+        model: body.model,
+        status: 'completed',
+        output: [
+          {
+            id: 'mock-output-id',
+            type: 'message',
+            role: 'assistant',
+            status: 'completed',
+            content: [{ type: 'output_text', text: planJson, annotations: [] }],
+          },
+        ],
+        usage: { input_tokens: 100, output_tokens: 200, total_tokens: 300 },
+      });
+    }
+
+    if (isArticleSectionPrompt(userText)) {
+      const sectionText =
+        locale === 'es'
+          ? 'Este es un párrafo de ejemplo con **énfasis** y continuidad.\\n\\nOtro párrafo con detalles prudentes basados en investigación simulada.'
+          : 'This is a sample paragraph with **emphasis** and continuity.\\n\\nAnother paragraph with careful details based on mocked research.';
+
+      return HttpResponse.json({
+        id: 'mock-response-id',
+        object: 'response',
+        created_at: Date.now(),
+        model: body.model,
+        status: 'completed',
+        output: [
+          {
+            id: 'mock-output-id',
+            type: 'message',
+            role: 'assistant',
+            status: 'completed',
+            content: [{ type: 'output_text', text: sectionText, annotations: [] }],
+          },
+        ],
+        usage: { input_tokens: 100, output_tokens: 200, total_tokens: 300 },
+      });
+    }
+
+    if (isScoutBriefingPrompt(userText)) {
+      const briefing =
+        locale === 'es'
+          ? '- Género/vibe: acción y aventura\\n- Estado: lanzamiento reciente\\n- Lo que importa: exploración, progresión, rendimiento'
+          : '- Genre/vibe: action-adventure\\n- Status: recent release\\n- What players care about: exploration, progression, performance';
+
+      return HttpResponse.json({
+        id: 'mock-response-id',
+        object: 'response',
+        created_at: Date.now(),
+        model: body.model,
+        status: 'completed',
+        output: [
+          {
+            id: 'mock-output-id',
+            type: 'message',
+            role: 'assistant',
+            status: 'completed',
+            content: [{ type: 'output_text', text: briefing, annotations: [] }],
+          },
+        ],
+        usage: { input_tokens: 100, output_tokens: 200, total_tokens: 300 },
+      });
+    }
+
+    const contentType = detectContentType(messages);
     const description = MOCK_DESCRIPTIONS[contentType][locale];
     
     return HttpResponse.json({
@@ -272,6 +537,12 @@ export const handlers = [
  * Handler that simulates an AI error
  */
 export const errorHandlers = {
+  tavilyError: http.post('https://api.tavily.com/search', () => {
+    return HttpResponse.json(
+      { error: { message: 'Tavily rate limit exceeded' } },
+      { status: 429 }
+    );
+  }),
   aiError: http.post('https://openrouter.ai/api/v1/responses', () => {
     return HttpResponse.json(
       { error: { message: 'Rate limit exceeded' } },

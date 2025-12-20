@@ -107,6 +107,12 @@
       "target": "api::genre.genre",
       "inversedBy": "games"
     },
+    "posts": {
+      "type": "relation",
+      "relation": "manyToMany",
+      "target": "api::post.post",
+      "mappedBy": "games"
+    },
     "languages": {
       "type": "relation",
       "relation": "manyToMany",

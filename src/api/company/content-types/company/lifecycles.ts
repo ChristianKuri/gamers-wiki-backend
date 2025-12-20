@@ -10,9 +10,8 @@
  * 3. Generate AI description for Spanish locale
  * 4. Create Spanish locale entry with the description
  * 
- * IMPORTANT: AI description generation runs asynchronously (fire-and-forget).
- * This allows multiple companies to be created in parallel during game imports
- * without blocking on each AI generation completing.
+ * IMPORTANT: Lifecycle processing is treated as synchronous for reliability.
+ * This ensures ES locale entries exist before game locale sync links relations.
  */
 
 import type { Core } from '@strapi/strapi';
@@ -55,8 +54,7 @@ export default {
    * Called after a company entry is created
    * Generates AI description and creates locale entries
    * 
-   * Runs asynchronously (fire-and-forget) to allow parallel processing
-   * of multiple companies during game imports.
+   * Runs synchronously to avoid race conditions during imports.
    */
   async afterCreate(event: CompanyLifecycleEvent) {
     const { result, params } = event;

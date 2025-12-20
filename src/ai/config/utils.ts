@@ -20,6 +20,11 @@ export const AI_ENV_KEYS = {
   GAME_MODE_DESCRIPTIONS: 'AI_MODEL_GAME_MODE_DESCRIPTIONS',
   PLAYER_PERSPECTIVE_DESCRIPTIONS: 'AI_MODEL_PLAYER_PERSPECTIVE_DESCRIPTIONS',
   LANGUAGE_DESCRIPTIONS: 'AI_MODEL_LANGUAGE_DESCRIPTIONS',
+  ARTICLE_SCOUT: 'AI_MODEL_ARTICLE_SCOUT',
+  ARTICLE_EDITOR: 'AI_MODEL_ARTICLE_EDITOR',
+  ARTICLE_SPECIALIST: 'AI_MODEL_ARTICLE_SPECIALIST',
+  GAME_MATCHER: 'AI_MODEL_GAME_MATCHER',
+  POST_TRANSLATION: 'AI_MODEL_POST_TRANSLATION',
   TAG_GENERATION: 'AI_MODEL_TAG_GENERATION',
   SEO_META: 'AI_MODEL_SEO_META',
   ARTICLE_SUMMARY: 'AI_MODEL_ARTICLE_SUMMARY',
@@ -32,11 +37,12 @@ export const AI_ENV_KEYS = {
  * Environment variables (AI_ENV_KEYS) take precedence over these defaults.
  * 
  * Available models (OpenRouter):
- * - 'deepseek/deepseek-v3.2' - Fast, cost-effective, good quality
- * - 'anthropic/claude-sonnet-4' - Best quality for creative content
- * - 'anthropic/claude-3-haiku' - Faster, cheaper
- * - 'openai/gpt-4o' - High quality
- * - 'openai/gpt-4o-mini' - Good balance of speed/cost
+ * - google/gemini-3-pro-preview ($4.50/1M tokens)
+ * - google/gemini-3-flash-preview ($1.13/1M tokens)
+ * - moonshotai/kimi-k2-thinking ($1.07/1M tokens)
+ * - deepseek/deepseek-v3.2 ($0.32/1M tokens)
+ * - openai/gpt-5-mini ($0.69/1M tokens)
+ * - minimax/minimax-m2 ($0.53/1M tokens)
  */
 export const AI_DEFAULT_MODELS = {
   GAME_DESCRIPTIONS: 'deepseek/deepseek-v3.2',
@@ -49,9 +55,14 @@ export const AI_DEFAULT_MODELS = {
   GAME_MODE_DESCRIPTIONS: 'deepseek/deepseek-v3.2',
   PLAYER_PERSPECTIVE_DESCRIPTIONS: 'deepseek/deepseek-v3.2',
   LANGUAGE_DESCRIPTIONS: 'deepseek/deepseek-v3.2',
+  ARTICLE_SCOUT: 'google/gemini-3-flash-preview',
+  ARTICLE_EDITOR: 'google/gemini-3-flash-preview',
+  ARTICLE_SPECIALIST: 'google/gemini-3-flash-preview',
+  GAME_MATCHER: 'google/gemini-3-flash-preview',
+  POST_TRANSLATION: 'google/gemini-3-flash-preview',
   TAG_GENERATION: 'deepseek/deepseek-v3.2',
   SEO_META: 'deepseek/deepseek-v3.2',
-  ARTICLE_SUMMARY: 'deepseek/deepseek-v3.2',
+  ARTICLE_SUMMARY: 'google/gemini-3-flash-preview',
 } as const;
 
 export type AITaskKey = keyof typeof AI_ENV_KEYS;

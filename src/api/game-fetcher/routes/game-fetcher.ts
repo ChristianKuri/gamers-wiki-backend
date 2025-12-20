@@ -26,6 +26,15 @@ export default {
     },
     {
       method: 'GET',
+      path: '/game-fetcher/resolve',
+      handler: 'game-fetcher.resolve',
+      config: {
+        auth: false,
+        policies: [],
+      },
+    },
+    {
+      method: 'GET',
       path: '/game-fetcher/game/:igdbId',
       handler: 'game-fetcher.getGame',
       config: {

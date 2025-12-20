@@ -14,23 +14,52 @@ TEST_DB=${TEST_DB_NAME:-strapi_test}
 STRAPI_URL="http://localhost:$TEST_PORT"
 MAX_WAIT=120  # seconds
 
+# Prefer Node 22 (project .nvmrc) when available.
+NODE_VERSION=${NODE_VERSION:-22}
+if [ -s "$HOME/.nvm/nvm.sh" ]; then
+  # shellcheck disable=SC1090
+  . "$HOME/.nvm/nvm.sh"
+fi
+
+kill_port_if_in_use() {
+  if command -v lsof >/dev/null 2>&1; then
+    if lsof -i :"$TEST_PORT" > /dev/null 2>&1; then
+      echo "⚠️  Port $TEST_PORT is in use. Stopping existing process..."
+      lsof -ti :"$TEST_PORT" | xargs -r kill -9 2>/dev/null || true
+      sleep 1
+      echo "✅ Cleared port $TEST_PORT"
+    fi
+    return 0
+  fi
+
+  if command -v fuser >/dev/null 2>&1; then
+    if fuser -n tcp "$TEST_PORT" > /dev/null 2>&1; then
+      echo "⚠️  Port $TEST_PORT is in use. Stopping existing process..."
+      fuser -k -n tcp "$TEST_PORT" > /dev/null 2>&1 || true
+      sleep 1
+      echo "✅ Cleared port $TEST_PORT"
+    fi
+  fi
+}
+
 echo "🧪 Starting E2E test suite..."
 echo "   Port: $TEST_PORT"
 echo "   Database: $TEST_DB"
+echo "   Node: ${NODE_VERSION} (via nvm if available)"
 echo ""
 
 # Kill any process using the test port
-if lsof -i :$TEST_PORT > /dev/null 2>&1; then
-  echo "⚠️  Port $TEST_PORT is in use. Stopping existing process..."
-  # Get the PID(s) of processes using the port and kill them
-  lsof -ti :$TEST_PORT | xargs -r kill -9 2>/dev/null || true
-  sleep 1
-  echo "✅ Cleared port $TEST_PORT"
-fi
+kill_port_if_in_use
 
 # Start Strapi in background with test database
 # Note: Strapi uses DATABASE_NAME env var (see config/database.ts)
 echo "🚀 Starting Strapi with test database..."
+if command -v nvm >/dev/null 2>&1; then
+  # IMPORTANT: don't use `nvm exec ... &` because killing that PID may not kill
+  # the spawned Node process. Instead, switch Node in this shell and start Strapi
+  # normally so STRAPI_PID tracks the real process.
+  nvm use "$NODE_VERSION" >/dev/null
+fi
 PORT=$TEST_PORT DATABASE_NAME=$TEST_DB npm run develop &
 STRAPI_PID=$!
 
@@ -42,6 +71,8 @@ cleanup() {
     kill $STRAPI_PID 2>/dev/null || true
     wait $STRAPI_PID 2>/dev/null || true
   fi
+  # Ensure the port is free even if the process spawned children.
+  kill_port_if_in_use
   echo "✅ Test Strapi instance stopped"
 }
 trap cleanup EXIT

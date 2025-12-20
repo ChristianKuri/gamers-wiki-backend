@@ -22,7 +22,8 @@
     "test:e2e:env": "lsof -ti :1338 | xargs -r kill -9 2>/dev/null; PORT=1338 DATABASE_NAME=strapi_test npm run develop",
     "test:e2e:run": "bash scripts/run-e2e.sh",
     "test:all": "vitest run && bash scripts/run-e2e.sh",
-    "test:ai:game-descriptions": "npx tsx scripts/test-ai-game-descriptions.ts"
+    "test:ai:game-descriptions": "npx tsx scripts/test-ai-game-descriptions.ts",
+    "test:ai:game-resolver": "npx tsx scripts/test-ai-game-resolver.ts"
   },
   "dependencies": {
     "@ai-sdk/openai": "^2.0.76",
@@ -37,7 +38,8 @@
     "react": "^18.0.0",
     "react-dom": "^18.0.0",
     "react-router-dom": "^6.0.0",
-    "styled-components": "^6.0.0"
+    "styled-components": "^6.0.0",
+    "zod": "^4.1.13"
   },
   "devDependencies": {
     "@types/node": "^20",
