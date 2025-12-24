@@ -6,6 +6,9 @@
 
 import type { ArticleCategorySlug, ArticlePlan } from './article-plan';
 
+// Re-export SupportedLocale from config as the single source of truth
+export type { SupportedLocale } from '../config/types';
+
 // ============================================================================
 // Error Types
 // ============================================================================
@@ -136,6 +139,27 @@ export interface CategoryHint {
 // ============================================================================
 
 /**
+ * Metadata about the article generation process.
+ */
+export interface ArticleGenerationMetadata {
+  /** ISO timestamp when generation completed */
+  readonly generatedAt: string;
+  /** Total generation time in milliseconds */
+  readonly totalDurationMs: number;
+  /** Duration of each phase in milliseconds */
+  readonly phaseDurations: {
+    readonly scout: number;
+    readonly editor: number;
+    readonly specialist: number;
+    readonly validation: number;
+  };
+  /** Number of search queries executed */
+  readonly queriesExecuted: number;
+  /** Number of unique sources collected */
+  readonly sourcesCollected: number;
+}
+
+/**
  * A generated article draft ready for review/publishing.
  */
 export interface GameArticleDraft {
@@ -151,7 +175,29 @@ export interface GameArticleDraft {
     readonly editor: string;
     readonly specialist: string;
   };
+  /** Generation metadata for debugging and analytics */
+  readonly metadata: ArticleGenerationMetadata;
 }
+
+// ============================================================================
+// Progress Callback Types
+// ============================================================================
+
+/** Phases of article generation */
+export type ArticleGenerationPhase = 'scout' | 'editor' | 'specialist' | 'validation';
+
+/**
+ * Progress callback for monitoring article generation.
+ *
+ * @param phase - Current phase of generation
+ * @param progress - Progress percentage (0-100) within the phase
+ * @param message - Optional status message
+ */
+export type ArticleProgressCallback = (
+  phase: ArticleGenerationPhase,
+  progress: number,
+  message?: string
+) => void;
 
 // ============================================================================
 // Validation Types
@@ -190,14 +236,4 @@ export type SearchFunction = (
   answer: string | null;
   results: readonly { title: string; url: string; content?: string; score?: number }[];
 }>;
-
-/**
- * Dependencies for article generation, enabling testability.
- */
-export interface ArticleGeneratorDeps {
-  readonly search: SearchFunction;
-  readonly generateText: typeof import('ai').generateText;
-  readonly generateObject: typeof import('ai').generateObject;
-  readonly openrouterModel: (model: string) => import('ai').LanguageModel;
-}
 

@@ -29,6 +29,7 @@ import type {
   ResearchPool,
   ScoutOutput,
   SearchFunction,
+  SupportedLocale,
 } from '../types';
 
 // ============================================================================
@@ -65,8 +66,6 @@ export interface ScoutDeps {
   readonly model: LanguageModel;
   readonly logger?: Logger;
 }
-
-export type SupportedLocale = 'en' | 'es';
 
 // ============================================================================
 // Helper Functions

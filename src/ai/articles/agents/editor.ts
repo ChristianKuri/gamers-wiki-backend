@@ -8,12 +8,7 @@
 import type { LanguageModel } from 'ai';
 
 import { createPrefixedLogger, type Logger } from '../../../utils/logger';
-import {
-  ArticlePlanSchema,
-  normalizeArticleCategorySlug,
-  type ArticlePlan,
-  type ArticlePlanInput,
-} from '../article-plan';
+import { ArticlePlanSchema, type ArticlePlan } from '../article-plan';
 import {
   buildCategoryHintsSection,
   buildExistingResearchSummary,
@@ -21,7 +16,7 @@ import {
   getEditorUserPrompt,
   type EditorPromptContext,
 } from '../prompts';
-import type { CategoryHint, GameArticleContext, ScoutOutput } from '../types';
+import type { CategoryHint, GameArticleContext, ScoutOutput, SupportedLocale } from '../types';
 
 // ============================================================================
 // Configuration
@@ -41,8 +36,6 @@ export interface EditorDeps {
   readonly model: LanguageModel;
   readonly logger?: Logger;
 }
-
-export type SupportedLocale = 'en' | 'es';
 
 // ============================================================================
 // Main Editor Function
@@ -89,7 +82,7 @@ export async function runEditor(
 
   log.debug('Generating article plan...');
 
-  const { object } = await deps.generateObject({
+  const { object: plan } = await deps.generateObject({
     model: deps.model,
     temperature: EDITOR_CONFIG.TEMPERATURE,
     schema: ArticlePlanSchema,
@@ -97,15 +90,11 @@ export async function runEditor(
     prompt: getEditorUserPrompt(promptContext),
   });
 
-  const plan: ArticlePlanInput = object;
-
   log.debug(
     `Plan generated: ${plan.categorySlug} article with ${plan.sections.length} sections`
   );
 
-  return {
-    ...plan,
-    categorySlug: normalizeArticleCategorySlug(plan.categorySlug),
-  };
+  // Schema auto-normalizes categorySlug via transform
+  return plan;
 }
 

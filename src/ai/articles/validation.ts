@@ -7,7 +7,7 @@
 
 import { z } from 'zod';
 
-import type { ArticlePlan } from './article-plan';
+import { ARTICLE_PLAN_CONSTRAINTS, type ArticlePlan } from './article-plan';
 import { countContentH2Sections, getContentH2Sections, stripSourcesSection } from './markdown-utils';
 import type { ValidationIssue, ValidationSeverity } from './types';
 
@@ -71,26 +71,37 @@ export const ALLOWED_SENTENCE_START_REPEATS = new Set([
 ]);
 
 // ============================================================================
+// Validation Constants
+// ============================================================================
+
+/**
+ * Currency symbols to detect in content (policy violation).
+ * Supports USD, EUR, GBP, JPY.
+ */
+const CURRENCY_PATTERN = /[$€£¥]\s*\d+/;
+
+// ============================================================================
 // Zod Schemas
 // ============================================================================
 
 /**
  * Schema for validating article draft structure.
+ * Uses shared constraints from article-plan.ts.
  */
 export const GameArticleDraftSchema = z.object({
   title: z
     .string()
     .min(10, 'Title is too short (minimum 10 characters)')
-    .max(100, 'Title is too long (maximum 100 characters)'),
+    .max(ARTICLE_PLAN_CONSTRAINTS.TITLE_MAX_LENGTH, `Title is too long (maximum ${ARTICLE_PLAN_CONSTRAINTS.TITLE_MAX_LENGTH} characters)`),
   categorySlug: z.enum(['news', 'reviews', 'guides', 'lists']),
   excerpt: z
     .string()
-    .min(120, 'Excerpt too short (minimum 120 characters)')
-    .max(160, 'Excerpt too long (maximum 160 characters)'),
+    .min(ARTICLE_PLAN_CONSTRAINTS.EXCERPT_MIN_LENGTH, `Excerpt too short (minimum ${ARTICLE_PLAN_CONSTRAINTS.EXCERPT_MIN_LENGTH} characters)`)
+    .max(ARTICLE_PLAN_CONSTRAINTS.EXCERPT_MAX_LENGTH, `Excerpt too long (maximum ${ARTICLE_PLAN_CONSTRAINTS.EXCERPT_MAX_LENGTH} characters)`),
   tags: z
     .array(z.string().min(1))
     .min(1, 'At least one tag is required')
-    .max(10, 'Too many tags (maximum 10)'),
+    .max(ARTICLE_PLAN_CONSTRAINTS.MAX_TAGS, `Too many tags (maximum ${ARTICLE_PLAN_CONSTRAINTS.MAX_TAGS})`),
   markdown: z.string().min(500, 'Article content too short'),
   sources: z.array(z.string().url('Invalid source URL')),
 });
@@ -191,8 +202,8 @@ function validateContentQuality(markdown: string, locale: 'en' | 'es' = 'en'): V
     issues.push(issue('warning', 'Article contains code fences (usually undesirable for prose)'));
   }
 
-  // Pricing information
-  if (contentMarkdown.match(/\$\d+/)) {
+  // Pricing information (supports USD, EUR, GBP, JPY)
+  if (CURRENCY_PATTERN.test(contentMarkdown)) {
     issues.push(issue('warning', 'Article contains pricing information or currency figures (verify policy compliance)'));
   }
 

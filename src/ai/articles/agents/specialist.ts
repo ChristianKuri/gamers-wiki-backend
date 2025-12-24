@@ -28,6 +28,7 @@ import type {
   ResearchPool,
   ScoutOutput,
   SearchFunction,
+  SupportedLocale,
 } from '../types';
 
 // ============================================================================
@@ -48,6 +49,7 @@ export const SPECIALIST_CONFIG = {
   MAX_OUTPUT_TOKENS_PER_SECTION: 1500,
   SEARCH_DEPTH: 'advanced' as const,
   MAX_SEARCH_RESULTS: 5,
+  MAX_SOURCES: 25,
   RATE_LIMIT_DELAY_MS: 300,
 };
 
@@ -61,8 +63,6 @@ export interface SpecialistDeps {
   readonly model: LanguageModel;
   readonly logger?: Logger;
 }
-
-export type SupportedLocale = 'en' | 'es';
 
 export interface SpecialistOutput {
   readonly markdown: string;
@@ -271,7 +271,7 @@ export async function runSpecialist(
 
   // Collect all sources from research pool
   const allSources = Array.from(enrichedPool.allUrls);
-  const finalUrls = ensureUniqueStrings(allSources, 25); // MAX_SOURCES
+  const finalUrls = ensureUniqueStrings(allSources, SPECIALIST_CONFIG.MAX_SOURCES);
   markdown += formatSources(finalUrls);
 
   return {

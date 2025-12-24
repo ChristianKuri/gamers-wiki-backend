@@ -16,6 +16,7 @@
 export {
   generateGameArticleDraft,
   type ArticleGeneratorDeps,
+  type ArticleGeneratorOptions,
 } from './generate-game-article';
 
 // Types
@@ -28,6 +29,10 @@ export type {
   SearchResultItem,
   ValidationIssue,
   CategoryHint,
+  SupportedLocale,
+  ArticleGenerationMetadata,
+  ArticleProgressCallback,
+  ArticleGenerationPhase,
 } from './types';
 
 // Article plan types and utilities
@@ -35,9 +40,10 @@ export {
   ArticlePlanSchema,
   ArticleCategorySlugSchema,
   normalizeArticleCategorySlug,
+  ARTICLE_PLAN_CONSTRAINTS,
   type ArticlePlan,
-  type ArticlePlanInput,
   type ArticleCategorySlug,
+  type ArticleCategorySlugInput,
   type ArticleSectionPlan,
 } from './article-plan';
 

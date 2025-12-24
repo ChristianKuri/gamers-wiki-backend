@@ -17,23 +17,43 @@
  *   genres: ['Action RPG', 'Soulslike'],
  *   instruction: 'Write a beginner guide',
  * }, 'en');
+ *
+ * @example
+ * // With progress callback
+ * const draft = await generateGameArticleDraft(context, 'en', undefined, {
+ *   onProgress: (phase, progress, message) => {
+ *     console.log(`[${phase}] ${progress}%: ${message}`);
+ *   },
+ * });
  */
 
 import { createOpenAI } from '@ai-sdk/openai';
 import { generateObject, generateText } from 'ai';
 
-import type { SupportedLocale } from '../config';
 import { getModel } from '../config';
 import { tavilySearch } from '../tools/tavily';
 import { createPrefixedLogger } from '../../utils/logger';
 import { runScout, runEditor, runSpecialist } from './agents';
 import { countContentH2Sections } from './markdown-utils';
-import type { GameArticleContext, GameArticleDraft } from './types';
+import type {
+  ArticleGenerationMetadata,
+  ArticleProgressCallback,
+  GameArticleContext,
+  GameArticleDraft,
+  SupportedLocale,
+} from './types';
+import { createErrorWithCause } from './types';
 import { validateArticleDraft, validateGameArticleContext, getErrors, getWarnings } from './validation';
 
 // Re-export types for consumers
-export type { GameArticleContext, GameArticleDraft } from './types';
-export type { ArticlePlan, ArticleCategorySlug } from './article-plan';
+export type { GameArticleContext, GameArticleDraft, SupportedLocale, ArticleProgressCallback } from './types';
+export type { ArticlePlan, ArticleCategorySlug, ARTICLE_PLAN_CONSTRAINTS } from './article-plan';
+
+// ============================================================================
+// Configuration
+// ============================================================================
+
+const DEFAULT_OPENROUTER_BASE_URL = 'https://openrouter.ai/api/v1';
 
 // ============================================================================
 // Dependencies Interface
@@ -49,6 +69,17 @@ export interface ArticleGeneratorDeps {
   readonly generateObject: typeof generateObject;
 }
 
+/**
+ * Options for article generation.
+ */
+export interface ArticleGeneratorOptions {
+  /**
+   * Optional callback for monitoring generation progress.
+   * Called at the start and end of each phase.
+   */
+  readonly onProgress?: ArticleProgressCallback;
+}
+
 // ============================================================================
 // Default Dependencies
 // ============================================================================
@@ -58,9 +89,12 @@ function createDefaultDeps(): ArticleGeneratorDeps {
     throw new Error('OPENROUTER_API_KEY is not configured');
   }
 
+  // Support configurable base URL for proxies or alternative endpoints
+  const baseURL = process.env.OPENROUTER_BASE_URL ?? DEFAULT_OPENROUTER_BASE_URL;
+
   return {
     openrouter: createOpenAI({
-      baseURL: 'https://openrouter.ai/api/v1',
+      baseURL,
       apiKey: process.env.OPENROUTER_API_KEY,
     }),
     search: tavilySearch,
@@ -79,11 +113,13 @@ function createDefaultDeps(): ArticleGeneratorDeps {
  * @param context - Game context including name, metadata, and optional instruction
  * @param locale - Target locale ('en' or 'es')
  * @param deps - Optional dependencies for testing (defaults to production deps)
+ * @param options - Optional configuration (progress callback, etc.)
  * @returns Complete article draft with markdown, sources, and metadata
  *
  * @throws Error if OPENROUTER_API_KEY is not configured (when using default deps)
  * @throws Error if context validation fails
  * @throws Error if article validation fails (errors, not warnings)
+ * @throws Error with context if any agent phase fails
  *
  * @example
  * // Production usage
@@ -104,11 +140,20 @@ function createDefaultDeps(): ArticleGeneratorDeps {
  *   generateText: mockGenerateText,
  *   generateObject: mockGenerateObject,
  * });
+ *
+ * @example
+ * // With progress callback
+ * const draft = await generateGameArticleDraft(context, 'en', undefined, {
+ *   onProgress: (phase, progress, message) => {
+ *     console.log(`[${phase}] ${progress}%: ${message}`);
+ *   },
+ * });
  */
 export async function generateGameArticleDraft(
   context: GameArticleContext,
   locale: SupportedLocale,
-  deps?: ArticleGeneratorDeps
+  deps?: ArticleGeneratorDeps,
+  options?: ArticleGeneratorOptions
 ): Promise<GameArticleDraft> {
   // Use provided deps or create default production deps
   const { openrouter, search, generateText: genText, generateObject: genObject } =
@@ -122,66 +167,109 @@ export async function generateGameArticleDraft(
   const specialistModel = getModel('ARTICLE_SPECIALIST');
 
   const log = createPrefixedLogger('[ArticleGen]');
+  const onProgress = options?.onProgress;
   const totalStartTime = Date.now();
+
+  // Track phase durations for metadata
+  const phaseDurations = {
+    scout: 0,
+    editor: 0,
+    specialist: 0,
+    validation: 0,
+  };
 
   log.info(`=== Starting Multi-Agent Article Generation for "${context.gameName}" ===`);
 
   // ===== PHASE 1: SCOUT =====
   const scoutStartTime = Date.now();
   log.info('Phase 1: Scout - Deep multi-query research...');
+  onProgress?.('scout', 0, 'Starting research phase');
 
-  const scoutOutput = await runScout(context, locale, {
-    search,
-    generateText: genText,
-    model: openrouter(scoutModel),
-    logger: createPrefixedLogger('[Scout]'),
-  });
+  let scoutOutput;
+  try {
+    scoutOutput = await runScout(context, locale, {
+      search,
+      generateText: genText,
+      model: openrouter(scoutModel),
+      logger: createPrefixedLogger('[Scout]'),
+    });
+  } catch (error) {
+    throw createErrorWithCause(
+      `Article generation failed during Scout phase for "${context.gameName}": ${error instanceof Error ? error.message : String(error)}`,
+      error instanceof Error ? error : undefined
+    );
+  }
 
+  phaseDurations.scout = Date.now() - scoutStartTime;
   log.info(
-    `Scout complete in ${Date.now() - scoutStartTime}ms: ` +
+    `Scout complete in ${phaseDurations.scout}ms: ` +
       `${scoutOutput.researchPool.allUrls.size} sources, ` +
       `${scoutOutput.researchPool.queryCache.size} unique queries`
   );
+  onProgress?.('scout', 100, `Found ${scoutOutput.researchPool.allUrls.size} sources`);
 
   // ===== PHASE 2: EDITOR =====
   const editorStartTime = Date.now();
   log.info('Phase 2: Editor - Planning article with full research context...');
+  onProgress?.('editor', 0, 'Planning article structure');
 
-  const plan = await runEditor(context, locale, scoutOutput, {
-    generateObject: genObject,
-    model: openrouter(editorModel),
-    logger: createPrefixedLogger('[Editor]'),
-  });
+  let plan;
+  try {
+    plan = await runEditor(context, locale, scoutOutput, {
+      generateObject: genObject,
+      model: openrouter(editorModel),
+      logger: createPrefixedLogger('[Editor]'),
+    });
+  } catch (error) {
+    throw createErrorWithCause(
+      `Article generation failed during Editor phase for "${context.gameName}": ${error instanceof Error ? error.message : String(error)}`,
+      error instanceof Error ? error : undefined
+    );
+  }
 
+  phaseDurations.editor = Date.now() - editorStartTime;
   log.info(
-    `Editor complete in ${Date.now() - editorStartTime}ms: ` +
+    `Editor complete in ${phaseDurations.editor}ms: ` +
       `${plan.categorySlug} article with ${plan.sections.length} sections`
   );
+  onProgress?.('editor', 100, `Planned ${plan.sections.length} sections`);
 
   // ===== PHASE 3: SPECIALIST =====
   const specialistStartTime = Date.now();
   log.info('Phase 3: Specialist - Batch research + section writing...');
+  onProgress?.('specialist', 0, 'Writing article sections');
 
-  const { markdown, sources, researchPool: finalResearchPool } = await runSpecialist(
-    context,
-    locale,
-    scoutOutput,
-    plan,
-    {
+  let markdown: string;
+  let sources: readonly string[];
+  let finalResearchPool;
+  try {
+    const specialistResult = await runSpecialist(context, locale, scoutOutput, plan, {
       search,
       generateText: genText,
       model: openrouter(specialistModel),
       logger: createPrefixedLogger('[Specialist]'),
-    }
-  );
+    });
+    markdown = specialistResult.markdown;
+    sources = specialistResult.sources;
+    finalResearchPool = specialistResult.researchPool;
+  } catch (error) {
+    throw createErrorWithCause(
+      `Article generation failed during Specialist phase for "${context.gameName}": ${error instanceof Error ? error.message : String(error)}`,
+      error instanceof Error ? error : undefined
+    );
+  }
 
+  phaseDurations.specialist = Date.now() - specialistStartTime;
   log.info(
-    `Specialist complete in ${Date.now() - specialistStartTime}ms: ` +
+    `Specialist complete in ${phaseDurations.specialist}ms: ` +
       `${countContentH2Sections(markdown)} sections written, ${sources.length} total sources`
   );
+  onProgress?.('specialist', 100, `Wrote ${countContentH2Sections(markdown)} sections`);
 
   // ===== PHASE 4: VALIDATION =====
+  const validationStartTime = Date.now();
   log.info('Phase 4: Validating generated content...');
+  onProgress?.('validation', 0, 'Validating article quality');
 
   const draft = {
     title: plan.title,
@@ -197,6 +285,8 @@ export async function generateGameArticleDraft(
   const errors = getErrors(validationIssues);
   const warnings = getWarnings(validationIssues);
 
+  phaseDurations.validation = Date.now() - validationStartTime;
+
   if (warnings.length > 0) {
     log.warn(`Article validation warnings: ${warnings.map((w) => w.message).join('; ')}`);
   }
@@ -206,11 +296,22 @@ export async function generateGameArticleDraft(
     throw new Error(`Article validation failed: ${errors.map((e) => e.message).join('; ')}`);
   }
 
-  log.info(`=== Article Generation Complete in ${Date.now() - totalStartTime}ms ===`);
+  const totalDurationMs = Date.now() - totalStartTime;
+  log.info(`=== Article Generation Complete in ${totalDurationMs}ms ===`);
   log.info(
     `Final research pool: ${finalResearchPool.queryCache.size} total queries, ` +
       `${finalResearchPool.allUrls.size} unique sources`
   );
+  onProgress?.('validation', 100, 'Article validated successfully');
+
+  // Build metadata for debugging and analytics
+  const metadata: ArticleGenerationMetadata = {
+    generatedAt: new Date().toISOString(),
+    totalDurationMs,
+    phaseDurations,
+    queriesExecuted: finalResearchPool.queryCache.size,
+    sourcesCollected: finalResearchPool.allUrls.size,
+  };
 
   return {
     ...draft,
@@ -219,5 +320,6 @@ export async function generateGameArticleDraft(
       editor: editorModel,
       specialist: specialistModel,
     },
+    metadata,
   };
 }
