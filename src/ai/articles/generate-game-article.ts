@@ -113,122 +113,100 @@ export interface ArticleGeneratorOptions {
 }
 
 // ============================================================================
-// Default Dependencies
-// ============================================================================
-
-// ============================================================================
 // Timeout and Cancellation Helpers
 // ============================================================================
 
 /**
- * Checks if the operation should be cancelled due to timeout or AbortSignal.
- * @throws ArticleGenerationError if cancelled or timed out
+ * Wraps a promise with timeout and cancellation support using Promise.race.
+ *
+ * Uses a cleaner Promise.race approach with proper cleanup via finally block.
+ * Handles both user-provided AbortSignal and timeout-based cancellation.
+ *
+ * @param promise - The promise to wrap
+ * @param userSignal - Optional user-provided AbortSignal for cancellation
+ * @param startTime - Start time of the overall operation (for calculating remaining timeout)
+ * @param timeoutMs - Total timeout in ms (0 = no timeout)
+ * @param gameName - Game name for error messages
+ * @param phaseName - Phase name for error messages
+ * @returns The resolved value or throws ArticleGenerationError
  */
-function checkCancellation(
-  signal: AbortSignal | undefined,
+async function withTimeoutAndCancellation<T>(
+  promise: Promise<T>,
+  userSignal: AbortSignal | undefined,
   startTime: number,
   timeoutMs: number,
-  gameName: string
-): void {
-  if (signal?.aborted) {
+  gameName: string,
+  phaseName: string
+): Promise<T> {
+  // Pre-check: already cancelled?
+  if (userSignal?.aborted) {
     throw new ArticleGenerationError(
       'CANCELLED',
       `Article generation for "${gameName}" was cancelled`
     );
   }
 
+  // Pre-check: already timed out?
   if (timeoutMs > 0 && Date.now() - startTime > timeoutMs) {
     throw new ArticleGenerationError(
       'TIMEOUT',
       `Article generation for "${gameName}" timed out after ${timeoutMs}ms`
     );
   }
-}
 
-/**
- * Wraps a promise with timeout and cancellation support.
- */
-async function withTimeoutAndCancellation<T>(
-  promise: Promise<T>,
-  signal: AbortSignal | undefined,
-  startTime: number,
-  timeoutMs: number,
-  gameName: string,
-  phaseName: string
-): Promise<T> {
-  // Check before starting
-  checkCancellation(signal, startTime, timeoutMs, gameName);
-
-  if (!signal && timeoutMs <= 0) {
-    // No timeout or cancellation needed
+  // No timeout or cancellation needed - return promise directly
+  if (!userSignal && timeoutMs <= 0) {
     return promise;
   }
 
-  return new Promise<T>((resolve, reject) => {
-    let timeoutId: ReturnType<typeof setTimeout> | undefined;
-    let settled = false;
+  // Set up cancellation machinery
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
+  let abortHandler: (() => void) | undefined;
 
-    const cleanup = () => {
-      settled = true;
-      if (timeoutId) clearTimeout(timeoutId);
-      signal?.removeEventListener('abort', onAbort);
-    };
+  const cleanup = () => {
+    if (timeoutId) clearTimeout(timeoutId);
+    if (abortHandler && userSignal) {
+      userSignal.removeEventListener('abort', abortHandler);
+    }
+  };
 
-    const onAbort = () => {
-      if (settled) return;
-      cleanup();
-      reject(
-        new ArticleGenerationError(
-          'CANCELLED',
-          `Article generation for "${gameName}" was cancelled during ${phaseName} phase`
-        )
-      );
-    };
-
-    if (signal) {
-      signal.addEventListener('abort', onAbort, { once: true });
+  // Create a promise that rejects on cancellation (user signal or timeout)
+  const cancellationPromise = new Promise<T>((_, reject) => {
+    // Handle user abort signal
+    if (userSignal) {
+      abortHandler = () =>
+        reject(
+          new ArticleGenerationError(
+            'CANCELLED',
+            `Article generation for "${gameName}" was cancelled during ${phaseName} phase`
+          )
+        );
+      userSignal.addEventListener('abort', abortHandler, { once: true });
     }
 
-    // Calculate remaining time for timeout
+    // Handle timeout
     if (timeoutMs > 0) {
-      const elapsed = Date.now() - startTime;
-      const remaining = Math.max(0, timeoutMs - elapsed);
-
-      if (remaining <= 0) {
-        cleanup();
-        reject(
-          new ArticleGenerationError(
-            'TIMEOUT',
-            `Article generation for "${gameName}" timed out during ${phaseName} phase`
-          )
-        );
-        return;
-      }
-
-      timeoutId = setTimeout(() => {
-        if (settled) return;
-        cleanup();
-        reject(
-          new ArticleGenerationError(
-            'TIMEOUT',
-            `Article generation for "${gameName}" timed out during ${phaseName} phase after ${timeoutMs}ms`
-          )
-        );
-      }, remaining);
+      const remaining = Math.max(0, timeoutMs - (Date.now() - startTime));
+      timeoutId = setTimeout(
+        () =>
+          reject(
+            new ArticleGenerationError(
+              'TIMEOUT',
+              `Article generation for "${gameName}" timed out during ${phaseName} phase after ${timeoutMs}ms`
+            )
+          ),
+        remaining
+      );
     }
-
-    promise
-      .then((result) => {
-        if (settled) return;
-        cleanup();
-        resolve(result);
-      })
-      .catch((error) => {
-        if (settled) return;
-        cleanup();
-        reject(error);
-      });
   });
+
+  try {
+    // Race the original promise against the cancellation promise
+    return await Promise.race([promise, cancellationPromise]);
+  } finally {
+    // Always clean up event listeners and timeouts
+    cleanup();
+  }
 }
 
 // ============================================================================
@@ -244,6 +222,11 @@ interface RunPhaseOptions {
   readonly timeoutMs: number;
   readonly gameName: string;
   readonly modelName: string;
+  /**
+   * If true, skip top-level retry wrapper.
+   * Use for long-running phases where retry is applied internally to individual operations.
+   */
+  readonly skipRetry?: boolean;
 }
 
 /**
@@ -260,7 +243,7 @@ interface PhaseResult<T> {
  * @param phaseName - Human-readable phase name (e.g., "Scout", "Editor")
  * @param errorCode - Error code to use if the phase fails
  * @param fn - Async function to execute
- * @param options - Timeout, signal, and context options
+ * @param options - Timeout, signal, context, and retry options
  * @returns Phase result with output and duration
  *
  * @throws ArticleGenerationError with 'TIMEOUT' if timeout exceeded
@@ -275,55 +258,14 @@ async function runPhase<T>(
 ): Promise<PhaseResult<T>> {
   const phaseStartTime = Date.now();
 
-  try {
-    const output = await withTimeoutAndCancellation(
-      withRetry(fn, { context: `${phaseName} phase (model: ${options.modelName})` }),
-      options.signal,
-      options.startTime,
-      options.timeoutMs,
-      options.gameName,
-      phaseName
-    );
-
-    return {
-      output,
-      durationMs: Date.now() - phaseStartTime,
-    };
-  } catch (error) {
-    // Re-throw timeout/cancellation errors directly
-    if (
-      error instanceof ArticleGenerationError &&
-      (error.code === 'TIMEOUT' || error.code === 'CANCELLED')
-    ) {
-      throw error;
-    }
-
-    throw new ArticleGenerationError(
-      errorCode,
-      `Article generation failed during ${phaseName} phase for "${options.gameName}" (model: ${options.modelName}): ${error instanceof Error ? error.message : String(error)}`,
-      error instanceof Error ? error : undefined
-    );
-  }
-}
-
-/**
- * Runs a phase WITHOUT top-level retry (for long operations with internal retry).
- * Otherwise identical to runPhase.
- *
- * Use this for phases like Specialist where retry is applied internally
- * to individual operations rather than the entire phase.
- */
-async function runPhaseWithoutRetry<T>(
-  phaseName: string,
-  errorCode: ArticleGenerationErrorCode,
-  fn: () => Promise<T>,
-  options: RunPhaseOptions
-): Promise<PhaseResult<T>> {
-  const phaseStartTime = Date.now();
+  // Optionally wrap with retry logic (skip for long-running phases with internal retry)
+  const wrappedFn = options.skipRetry
+    ? fn()
+    : withRetry(fn, { context: `${phaseName} phase (model: ${options.modelName})` });
 
   try {
     const output = await withTimeoutAndCancellation(
-      fn(),
+      wrappedFn,
       options.signal,
       options.startTime,
       options.timeoutMs,
@@ -434,8 +376,15 @@ export async function generateGameArticleDraft(
   const { openrouter, search, generateText: genText, generateObject: genObject } =
     deps ?? createDefaultDeps();
 
-  // Validate input
-  validateGameArticleContext(context);
+  // Validate input context
+  const contextIssues = validateGameArticleContext(context);
+  const contextErrors = getErrors(contextIssues);
+  if (contextErrors.length > 0) {
+    throw new ArticleGenerationError(
+      'CONTEXT_INVALID',
+      `Invalid article context: ${contextErrors.map((e) => e.message).join('; ')}`
+    );
+  }
 
   const scoutModel = getModel('ARTICLE_SCOUT');
   const editorModel = getModel('ARTICLE_EDITOR');
@@ -521,7 +470,7 @@ export async function generateGameArticleDraft(
 
   // Note: Specialist doesn't use top-level retry because it's a long operation.
   // Retry logic is applied to individual search/generateText calls inside the agent.
-  const specialistResult = await runPhaseWithoutRetry(
+  const specialistResult = await runPhase(
     'Specialist',
     'SPECIALIST_FAILED',
     () =>
@@ -538,7 +487,7 @@ export async function generateGameArticleDraft(
           onProgress?.('specialist', sectionProgress, `Writing section ${current}/${total}: ${headline}`);
         },
       }),
-    { ...phaseOptions, modelName: specialistModel }
+    { ...phaseOptions, modelName: specialistModel, skipRetry: true }
   );
 
   const { markdown, sources, researchPool: finalResearchPool } = specialistResult.output;

@@ -27,6 +27,7 @@ export const ARTICLE_PLAN_CONSTRAINTS = {
   // Tags constraints
   MIN_TAGS: 1,
   MAX_TAGS: 10,
+  TAG_MAX_LENGTH: 50,
 
   // Research query constraints
   MIN_RESEARCH_QUERIES_PER_SECTION: 1,
@@ -115,7 +116,11 @@ export const ArticlePlanSchema = z.object({
     .min(ARTICLE_PLAN_CONSTRAINTS.EXCERPT_MIN_LENGTH)
     .max(ARTICLE_PLAN_CONSTRAINTS.EXCERPT_MAX_LENGTH),
   tags: z
-    .array(z.string().min(1))
+    .array(
+      z.string()
+        .min(1)
+        .max(ARTICLE_PLAN_CONSTRAINTS.TAG_MAX_LENGTH, `Tag too long (maximum ${ARTICLE_PLAN_CONSTRAINTS.TAG_MAX_LENGTH} characters)`)
+    )
     .min(ARTICLE_PLAN_CONSTRAINTS.MIN_TAGS, `At least ${ARTICLE_PLAN_CONSTRAINTS.MIN_TAGS} tag is required`)
     .max(ARTICLE_PLAN_CONSTRAINTS.MAX_TAGS, `Maximum ${ARTICLE_PLAN_CONSTRAINTS.MAX_TAGS} tags allowed`),
   sections: z

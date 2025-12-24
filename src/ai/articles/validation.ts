@@ -78,7 +78,11 @@ export const GameArticleDraftSchema = z.object({
     .min(ARTICLE_PLAN_CONSTRAINTS.EXCERPT_MIN_LENGTH, `Excerpt too short (minimum ${ARTICLE_PLAN_CONSTRAINTS.EXCERPT_MIN_LENGTH} characters)`)
     .max(ARTICLE_PLAN_CONSTRAINTS.EXCERPT_MAX_LENGTH, `Excerpt too long (maximum ${ARTICLE_PLAN_CONSTRAINTS.EXCERPT_MAX_LENGTH} characters)`),
   tags: z
-    .array(z.string().min(1))
+    .array(
+      z.string()
+        .min(1)
+        .max(ARTICLE_PLAN_CONSTRAINTS.TAG_MAX_LENGTH, `Tag too long (maximum ${ARTICLE_PLAN_CONSTRAINTS.TAG_MAX_LENGTH} characters)`)
+    )
     .min(ARTICLE_PLAN_CONSTRAINTS.MIN_TAGS, `At least ${ARTICLE_PLAN_CONSTRAINTS.MIN_TAGS} tag required`)
     .max(ARTICLE_PLAN_CONSTRAINTS.MAX_TAGS, `Too many tags (maximum ${ARTICLE_PLAN_CONSTRAINTS.MAX_TAGS})`),
   markdown: z.string().min(ARTICLE_PLAN_CONSTRAINTS.MIN_MARKDOWN_LENGTH, `Article content too short (minimum ${ARTICLE_PLAN_CONSTRAINTS.MIN_MARKDOWN_LENGTH} characters)`),
@@ -155,6 +159,13 @@ function validateStructure(draft: {
   if (draft.tags.length > C.MAX_TAGS) {
     issues.push(issue('error', `Too many tags: ${draft.tags.length} (maximum ${C.MAX_TAGS})`));
   }
+
+  // Validate individual tag lengths
+  draft.tags.forEach((tag, idx) => {
+    if (tag.length > C.TAG_MAX_LENGTH) {
+      issues.push(issue('error', `Tag ${idx + 1} too long: ${tag.length} characters (maximum ${C.TAG_MAX_LENGTH})`));
+    }
+  });
 
   // Sources
   if (draft.sources.length === 0) {
@@ -280,37 +291,52 @@ export function validateArticleDraft(draft: {
 
 /**
  * Validates GameArticleContext input.
+ * Returns validation issues instead of throwing for consistency with validateArticleDraft.
  *
- * @throws Error if context is invalid
+ * @param context - The context to validate
+ * @returns Array of validation issues (empty if valid)
+ *
+ * @example
+ * const issues = validateGameArticleContext(context);
+ * const errors = getErrors(issues);
+ * if (errors.length > 0) {
+ *   throw new ArticleGenerationError('CONTEXT_INVALID', errors.map(e => e.message).join('; '));
+ * }
  */
 export function validateGameArticleContext(context: {
   gameName?: string | null;
   genres?: unknown;
   platforms?: unknown;
   categoryHints?: unknown;
-}): void {
+}): ValidationIssue[] {
+  const issues: ValidationIssue[] = [];
+
   if (!context.gameName?.trim()) {
-    throw new Error('GameArticleContext.gameName is required and cannot be empty');
+    issues.push(issue('error', 'gameName is required and cannot be empty'));
   }
 
   if (context.genres !== undefined && !Array.isArray(context.genres)) {
-    throw new Error('GameArticleContext.genres must be an array');
+    issues.push(issue('error', 'genres must be an array'));
   }
 
   if (context.platforms !== undefined && !Array.isArray(context.platforms)) {
-    throw new Error('GameArticleContext.platforms must be an array');
+    issues.push(issue('error', 'platforms must be an array'));
   }
 
   if (context.categoryHints !== undefined) {
     if (!Array.isArray(context.categoryHints)) {
-      throw new Error('GameArticleContext.categoryHints must be an array');
-    }
-    for (const hint of context.categoryHints) {
-      if (!hint || typeof hint !== 'object' || !('slug' in hint) || !hint.slug) {
-        throw new Error('Each categoryHint must have a slug');
+      issues.push(issue('error', 'categoryHints must be an array'));
+    } else {
+      for (let i = 0; i < context.categoryHints.length; i++) {
+        const hint = context.categoryHints[i];
+        if (!hint || typeof hint !== 'object' || !('slug' in hint) || !hint.slug) {
+          issues.push(issue('error', `categoryHints[${i}] must have a slug`));
+        }
       }
     }
   }
+
+  return issues;
 }
 
 /**

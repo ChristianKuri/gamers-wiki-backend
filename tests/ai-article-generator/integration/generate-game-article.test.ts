@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll, afterEach } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, afterEach, vi } from 'vitest';
 
 // Tests run in Node, but this repo's TS project config excludes test files from the
 // main compilation, so we declare a minimal `process.env` shape for type-checking.
@@ -9,7 +9,7 @@ import { errorHandlers } from '../../mocks/handlers';
 import { http, HttpResponse } from 'msw';
 
 import { generateGameArticleDraft } from '../../../src/ai/articles/generate-game-article';
-import { ArticleGenerationError } from '../../../src/ai/articles/types';
+import { ArticleGenerationError, ArticleProgressCallback } from '../../../src/ai/articles/types';
 
 describe('generateGameArticleDraft (integration-ish)', () => {
   const envBackup = { ...process.env };
@@ -441,5 +441,131 @@ describe('generateGameArticleDraft (integration-ish)', () => {
     // Verify query/source counts
     expect(typeof draft.metadata.queriesExecuted).toBe('number');
     expect(typeof draft.metadata.sourcesCollected).toBe('number');
+  });
+
+  describe('progress callbacks', () => {
+    it('calls onProgress callback during generation', async () => {
+      const progressCalls: Array<{ phase: string; percent: number; detail?: string }> = [];
+      const onProgress: ArticleProgressCallback = (phase, percent, detail) => {
+        progressCalls.push({ phase, percent, detail });
+      };
+
+      await generateGameArticleDraft(
+        {
+          gameName: 'The Legend of Zelda: Tears of the Kingdom',
+          instruction: 'Write a beginner guide',
+        },
+        undefined,
+        { onProgress }
+      );
+
+      // Should have multiple progress calls
+      expect(progressCalls.length).toBeGreaterThan(0);
+
+      // Should include calls for multiple phases
+      const phases = new Set(progressCalls.map((c) => c.phase));
+      expect(phases.has('scout')).toBe(true);
+      expect(phases.has('editor')).toBe(true);
+      expect(phases.has('specialist')).toBe(true);
+      expect(phases.has('validation')).toBe(true);
+
+      // Progress percentages should be in valid range
+      for (const call of progressCalls) {
+        expect(call.percent).toBeGreaterThanOrEqual(0);
+        expect(call.percent).toBeLessThanOrEqual(100);
+      }
+    });
+
+    it('includes detail messages in progress callbacks', async () => {
+      const progressCalls: Array<{ phase: string; percent: number; detail?: string }> = [];
+      const onProgress: ArticleProgressCallback = (phase, percent, detail) => {
+        progressCalls.push({ phase, percent, detail });
+      };
+
+      await generateGameArticleDraft(
+        {
+          gameName: 'Test Game',
+          instruction: 'Write a beginner guide',
+        },
+        undefined,
+        { onProgress }
+      );
+
+      // At least some calls should have detail messages
+      const callsWithDetails = progressCalls.filter((c) => c.detail);
+      expect(callsWithDetails.length).toBeGreaterThan(0);
+    });
+  });
+
+  describe('context validation', () => {
+    it('throws ArticleGenerationError for missing gameName', async () => {
+      await expect(
+        generateGameArticleDraft({
+          gameName: '',
+          instruction: 'Write a guide',
+        })
+      ).rejects.toThrow(ArticleGenerationError);
+
+      try {
+        await generateGameArticleDraft({
+          gameName: '',
+          instruction: 'Write a guide',
+        });
+      } catch (error) {
+        expect(error).toBeInstanceOf(ArticleGenerationError);
+        expect((error as ArticleGenerationError).code).toBe('CONTEXT_INVALID');
+        expect((error as ArticleGenerationError).message).toContain('gameName');
+      }
+    });
+
+    it('throws ArticleGenerationError for invalid genres type', async () => {
+      try {
+        await generateGameArticleDraft({
+          gameName: 'Test Game',
+          instruction: 'Write a guide',
+          genres: 'Action' as unknown as string[], // Invalid type
+        });
+        expect.fail('Should have thrown');
+      } catch (error) {
+        expect(error).toBeInstanceOf(ArticleGenerationError);
+        expect((error as ArticleGenerationError).code).toBe('CONTEXT_INVALID');
+        expect((error as ArticleGenerationError).message).toContain('genres');
+      }
+    });
+
+    it('throws ArticleGenerationError for invalid platforms type', async () => {
+      try {
+        await generateGameArticleDraft({
+          gameName: 'Test Game',
+          instruction: 'Write a guide',
+          platforms: 'PC' as unknown as string[], // Invalid type
+        });
+        expect.fail('Should have thrown');
+      } catch (error) {
+        expect(error).toBeInstanceOf(ArticleGenerationError);
+        expect((error as ArticleGenerationError).code).toBe('CONTEXT_INVALID');
+        expect((error as ArticleGenerationError).message).toContain('platforms');
+      }
+    });
+
+    it('throws with all validation errors combined in message', async () => {
+      try {
+        await generateGameArticleDraft({
+          gameName: '',
+          instruction: 'Write a guide',
+          genres: 'Action' as unknown as string[],
+          platforms: 'PC' as unknown as string[],
+        });
+        expect.fail('Should have thrown');
+      } catch (error) {
+        expect(error).toBeInstanceOf(ArticleGenerationError);
+        expect((error as ArticleGenerationError).code).toBe('CONTEXT_INVALID');
+        // Should contain all three validation errors
+        const message = (error as ArticleGenerationError).message;
+        expect(message).toContain('gameName');
+        expect(message).toContain('genres');
+        expect(message).toContain('platforms');
+      }
+    });
   });
 });

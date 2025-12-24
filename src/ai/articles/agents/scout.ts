@@ -40,6 +40,19 @@ export { SCOUT_CONFIG } from '../config';
 // Types
 // ============================================================================
 
+/**
+ * Callback for monitoring Scout agent progress.
+ *
+ * @param step - Current step type ('search' or 'briefing')
+ * @param current - Number of completed items in this step
+ * @param total - Total number of items in this step
+ */
+export type ScoutProgressCallback = (
+  step: 'search' | 'briefing',
+  current: number,
+  total: number
+) => void;
+
 export interface ScoutDeps {
   readonly search: SearchFunction;
   readonly generateText: typeof import('ai').generateText;
@@ -47,6 +60,8 @@ export interface ScoutDeps {
   readonly logger?: Logger;
   /** Optional AbortSignal for cancellation support */
   readonly signal?: AbortSignal;
+  /** Optional callback for reporting granular progress */
+  readonly onProgress?: ScoutProgressCallback;
 }
 
 // ============================================================================
@@ -177,27 +192,48 @@ export async function runScout(
   const queries = buildScoutQueries(context);
   const dedupedCategoryQueries = deduplicateQueries(queries.category);
 
-  log.debug(`Executing parallel searches: overview + ${dedupedCategoryQueries.length} category + recent`);
+  const categoryQueriesToExecute = dedupedCategoryQueries.slice(0, SCOUT_CONFIG.MAX_CATEGORY_SEARCHES);
+  const totalSearches = 1 + categoryQueriesToExecute.length + 1; // overview + category + recent
+
+  log.debug(`Executing ${totalSearches} parallel searches: overview + ${categoryQueriesToExecute.length} category + recent`);
+
+  // Track search completions for progress reporting
+  let completedSearches = 0;
+  const trackSearchProgress = <T>(promise: Promise<T>): Promise<T> =>
+    promise.then((result) => {
+      completedSearches++;
+      deps.onProgress?.('search', completedSearches, totalSearches);
+      return result;
+    });
+
+  // Report initial progress
+  deps.onProgress?.('search', 0, totalSearches);
 
   // ===== PARALLEL SEARCH PHASE =====
   const searchPromises = [
-    executeSearch(deps.search, queries.overview, 'overview', {
-      searchDepth: SCOUT_CONFIG.OVERVIEW_SEARCH_DEPTH,
-      maxResults: SCOUT_CONFIG.OVERVIEW_SEARCH_RESULTS,
-      signal,
-    }),
-    ...dedupedCategoryQueries.slice(0, SCOUT_CONFIG.MAX_CATEGORY_SEARCHES).map((query) =>
-      executeSearch(deps.search, query, 'category-specific', {
-        searchDepth: SCOUT_CONFIG.CATEGORY_SEARCH_DEPTH,
-        maxResults: SCOUT_CONFIG.CATEGORY_SEARCH_RESULTS,
+    trackSearchProgress(
+      executeSearch(deps.search, queries.overview, 'overview', {
+        searchDepth: SCOUT_CONFIG.OVERVIEW_SEARCH_DEPTH,
+        maxResults: SCOUT_CONFIG.OVERVIEW_SEARCH_RESULTS,
         signal,
       })
     ),
-    executeSearch(deps.search, queries.recent, 'recent', {
-      searchDepth: SCOUT_CONFIG.RECENT_SEARCH_DEPTH,
-      maxResults: SCOUT_CONFIG.RECENT_SEARCH_RESULTS,
-      signal,
-    }),
+    ...categoryQueriesToExecute.map((query) =>
+      trackSearchProgress(
+        executeSearch(deps.search, query, 'category-specific', {
+          searchDepth: SCOUT_CONFIG.CATEGORY_SEARCH_DEPTH,
+          maxResults: SCOUT_CONFIG.CATEGORY_SEARCH_RESULTS,
+          signal,
+        })
+      )
+    ),
+    trackSearchProgress(
+      executeSearch(deps.search, queries.recent, 'recent', {
+        searchDepth: SCOUT_CONFIG.RECENT_SEARCH_DEPTH,
+        maxResults: SCOUT_CONFIG.RECENT_SEARCH_RESULTS,
+        signal,
+      })
+    ),
   ];
 
   const searchResults = await Promise.all(searchPromises);
@@ -243,37 +279,56 @@ export async function runScout(
 
   log.debug('Generating briefings in parallel...');
 
+  // Track briefing completions for progress reporting
+  const totalBriefings = 3;
+  let completedBriefings = 0;
+  const trackBriefingProgress = <T>(promise: Promise<T>): Promise<T> =>
+    promise.then((result) => {
+      completedBriefings++;
+      deps.onProgress?.('briefing', completedBriefings, totalBriefings);
+      return result;
+    });
+
+  // Report initial progress
+  deps.onProgress?.('briefing', 0, totalBriefings);
+
   // Run all briefing generations in parallel with retry logic
   const [overviewResult, categoryResult, recentResult] = await Promise.all([
-    withRetry(
-      () =>
-        deps.generateText({
-          model: deps.model,
-          temperature: SCOUT_CONFIG.TEMPERATURE,
-          system: getScoutOverviewSystemPrompt(localeInstruction),
-          prompt: getScoutOverviewUserPrompt(promptContext),
-        }),
-      { context: 'Scout overview briefing', signal }
+    trackBriefingProgress(
+      withRetry(
+        () =>
+          deps.generateText({
+            model: deps.model,
+            temperature: SCOUT_CONFIG.TEMPERATURE,
+            system: getScoutOverviewSystemPrompt(localeInstruction),
+            prompt: getScoutOverviewUserPrompt(promptContext),
+          }),
+        { context: 'Scout overview briefing', signal }
+      )
     ),
-    withRetry(
-      () =>
-        deps.generateText({
-          model: deps.model,
-          temperature: SCOUT_CONFIG.TEMPERATURE,
-          system: getScoutCategorySystemPrompt(localeInstruction),
-          prompt: getScoutCategoryUserPrompt(context.gameName, context.instruction, categoryContext),
-        }),
-      { context: 'Scout category briefing', signal }
+    trackBriefingProgress(
+      withRetry(
+        () =>
+          deps.generateText({
+            model: deps.model,
+            temperature: SCOUT_CONFIG.TEMPERATURE,
+            system: getScoutCategorySystemPrompt(localeInstruction),
+            prompt: getScoutCategoryUserPrompt(context.gameName, context.instruction, categoryContext),
+          }),
+        { context: 'Scout category briefing', signal }
+      )
     ),
-    withRetry(
-      () =>
-        deps.generateText({
-          model: deps.model,
-          temperature: SCOUT_CONFIG.TEMPERATURE,
-          system: getScoutRecentSystemPrompt(localeInstruction),
-          prompt: getScoutRecentUserPrompt(context.gameName, recentContext),
-        }),
-      { context: 'Scout recent briefing', signal }
+    trackBriefingProgress(
+      withRetry(
+        () =>
+          deps.generateText({
+            model: deps.model,
+            temperature: SCOUT_CONFIG.TEMPERATURE,
+            system: getScoutRecentSystemPrompt(localeInstruction),
+            prompt: getScoutRecentUserPrompt(context.gameName, recentContext),
+          }),
+        { context: 'Scout recent briefing', signal }
+      )
     ),
   ]);
 
