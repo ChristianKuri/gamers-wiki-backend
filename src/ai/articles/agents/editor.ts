@@ -24,7 +24,7 @@ import {
   getEditorUserPrompt,
   type EditorPromptContext,
 } from '../prompts';
-import type { GameArticleContext, ScoutOutput } from '../types';
+import { createEmptyTokenUsage, type GameArticleContext, type ScoutOutput, type TokenUsage } from '../types';
 
 // Re-export config for backwards compatibility
 export { EDITOR_CONFIG } from '../config';
@@ -43,6 +43,14 @@ export interface EditorDeps {
   readonly temperature?: number;
 }
 
+/**
+ * Output from the Editor agent containing the article plan and token usage.
+ */
+export interface EditorOutput {
+  readonly plan: ArticlePlan;
+  readonly tokenUsage: TokenUsage;
+}
+
 // ============================================================================
 // Main Editor Function
 // ============================================================================
@@ -54,13 +62,13 @@ export interface EditorDeps {
  * @param context - Game context for the article
  * @param scoutOutput - Research from Scout agent
  * @param deps - Dependencies (generateObject, model)
- * @returns Article plan with sections and metadata
+ * @returns Editor output with article plan and token usage
  */
 export async function runEditor(
   context: GameArticleContext,
   scoutOutput: ScoutOutput,
   deps: EditorDeps
-): Promise<ArticlePlan> {
+): Promise<EditorOutput> {
   const log = deps.logger ?? createPrefixedLogger('[Editor]');
   const temperature = deps.temperature ?? EDITOR_CONFIG.TEMPERATURE;
   const localeInstruction = 'Write all strings in English.';
@@ -87,7 +95,7 @@ export async function runEditor(
 
   log.debug('Generating article plan...');
 
-  const { object: rawPlan } = await withRetry(
+  const { object: rawPlan, usage } = await withRetry(
     () =>
       deps.generateObject({
         model: deps.model,
@@ -104,18 +112,28 @@ export async function runEditor(
     rawPlan.categorySlug as ArticleCategorySlugInput
   );
 
-  // Apply default safety settings if AI omitted them
+  // Build final plan with:
+  // - Game context (gameName, gameSlug) from input
+  // - Normalized categorySlug
+  // - Default safety settings if AI omitted them
   // (Zod .default() doesn't work with AI SDK's JSON Schema conversion)
   const plan: ArticlePlan = {
+    gameName: context.gameName,
+    gameSlug: context.gameSlug ?? undefined,
     ...rawPlan,
     categorySlug: normalizedCategorySlug,
     safety: rawPlan.safety ?? DEFAULT_ARTICLE_SAFETY,
   };
 
+  // Track token usage
+  const tokenUsage: TokenUsage = usage
+    ? { input: usage.promptTokens ?? 0, output: usage.completionTokens ?? 0 }
+    : createEmptyTokenUsage();
+
   log.debug(
     `Plan generated: ${plan.categorySlug} article with ${plan.sections.length} sections`
   );
 
-  return plan;
+  return { plan, tokenUsage };
 }
 

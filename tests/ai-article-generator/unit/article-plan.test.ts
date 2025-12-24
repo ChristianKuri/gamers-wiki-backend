@@ -2,10 +2,10 @@ import { describe, it, expect } from 'vitest';
 
 import {
   ArticlePlanSchema,
-  ARTICLE_PLAN_CONSTRAINTS,
   DEFAULT_ARTICLE_SAFETY,
   normalizeArticleCategorySlug,
 } from '../../../src/ai/articles/article-plan';
+import { ARTICLE_PLAN_CONSTRAINTS } from '../../../src/ai/articles/config';
 
 describe('ArticlePlanSchema', () => {
   it('accepts a valid plan shape', () => {

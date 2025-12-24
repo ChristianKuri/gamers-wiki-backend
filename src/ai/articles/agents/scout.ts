@@ -26,12 +26,15 @@ import {
   ResearchPoolBuilder,
 } from '../research-pool';
 import {
+  addTokenUsage,
   ArticleGenerationError,
+  createEmptyTokenUsage,
   type CategorizedSearchResult,
   type GameArticleContext,
   type ResearchPool,
   type ScoutOutput,
   type SearchFunction,
+  type TokenUsage,
 } from '../types';
 
 // Re-export config for backwards compatibility
@@ -287,6 +290,7 @@ export function validateScoutOutput(
  * @param recentBriefing - Recent developments text
  * @param fullContext - Full context document
  * @param researchPool - Built research pool
+ * @param tokenUsage - Aggregated token usage from LLM calls
  * @returns Complete ScoutOutput
  */
 export function assembleScoutOutput(
@@ -294,7 +298,8 @@ export function assembleScoutOutput(
   categoryBriefing: string,
   recentBriefing: string,
   fullContext: string,
-  researchPool: ResearchPool
+  researchPool: ResearchPool,
+  tokenUsage: TokenUsage
 ): ScoutOutput {
   return {
     briefing: {
@@ -305,6 +310,7 @@ export function assembleScoutOutput(
     },
     researchPool,
     sourceUrls: Array.from(researchPool.allUrls),
+    tokenUsage,
   };
 }
 
@@ -477,11 +483,22 @@ export async function runScout(
   const categoryBriefing = categoryResult.text.trim();
   const recentBriefing = recentResult.text.trim();
 
+  // ===== AGGREGATE TOKEN USAGE =====
+  let tokenUsage = createEmptyTokenUsage();
+  for (const result of [overviewResult, categoryResult, recentResult]) {
+    if (result.usage) {
+      tokenUsage = addTokenUsage(tokenUsage, {
+        input: result.usage.promptTokens ?? 0,
+        output: result.usage.completionTokens ?? 0,
+      });
+    }
+  }
+
   // ===== VALIDATION =====
   validateScoutOutput(overviewBriefing, poolBuilder, researchPool, context.gameName, log);
 
   // ===== ASSEMBLE OUTPUT =====
   const fullContext = buildFullContext(context, overviewBriefing, categoryBriefing, recentBriefing);
-  return assembleScoutOutput(overviewBriefing, categoryBriefing, recentBriefing, fullContext, researchPool);
+  return assembleScoutOutput(overviewBriefing, categoryBriefing, recentBriefing, fullContext, researchPool, tokenUsage);
 }
 

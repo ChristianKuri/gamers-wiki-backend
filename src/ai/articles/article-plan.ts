@@ -1,41 +1,6 @@
 import { z } from 'zod';
 
-// ============================================================================
-// Constraints (shared with validation and prompts)
-// ============================================================================
-
-/**
- * Constraints for article plan validation.
- * Used by Zod schema, validation.ts, and prompts for consistency.
- * ALL validation constants should live here - no magic numbers elsewhere.
- */
-export const ARTICLE_PLAN_CONSTRAINTS = {
-  // Title constraints
-  TITLE_MIN_LENGTH: 10,
-  TITLE_MAX_LENGTH: 100,
-  TITLE_RECOMMENDED_MAX_LENGTH: 70,
-
-  // Excerpt constraints (for SEO meta description)
-  EXCERPT_MIN_LENGTH: 120,
-  EXCERPT_MAX_LENGTH: 160,
-
-  // Section constraints
-  MIN_SECTIONS: 3,
-  MAX_SECTIONS: 12,
-  MIN_SECTION_LENGTH: 100,
-
-  // Tags constraints
-  MIN_TAGS: 1,
-  MAX_TAGS: 10,
-  TAG_MAX_LENGTH: 50,
-
-  // Research query constraints
-  MIN_RESEARCH_QUERIES_PER_SECTION: 1,
-  MAX_RESEARCH_QUERIES_PER_SECTION: 6,
-
-  // Markdown constraints
-  MIN_MARKDOWN_LENGTH: 500,
-} as const;
+import { ARTICLE_PLAN_CONSTRAINTS } from './config';
 
 // ============================================================================
 // Category Slug Schema
@@ -102,6 +67,12 @@ export type ArticleSectionPlan = z.infer<typeof ArticleSectionPlanSchema>;
 /**
  * Default safety settings for article plans.
  * Applied by Editor agent when AI omits the safety field.
+ *
+ * NOTE: This is intentionally an object (not a single boolean) to allow future
+ * extensibility. Planned additions include:
+ * - noSpoilers: Avoid plot spoilers without warning
+ * - noPriceGuesses: Avoid speculating on current prices (historical prices are fine)
+ * - noUnverifiedClaims: Flag statements that can't be backed by sources
  */
 export const DEFAULT_ARTICLE_SAFETY = {
   noScoresUnlessReview: true,
@@ -115,6 +86,9 @@ export const DEFAULT_ARTICLE_SAFETY = {
  *
  * NOTE: safety is optional because Zod's .default() doesn't translate to JSON Schema
  * for AI SDK's generateObject. The Editor agent applies DEFAULT_ARTICLE_SAFETY if omitted.
+ *
+ * NOTE: gameName and gameSlug are NOT part of this schema because they come from context,
+ * not from AI output. The Editor agent adds these after parsing.
  */
 export const ArticlePlanSchema = z.object({
   title: z
@@ -151,11 +125,19 @@ export const ArticlePlanSchema = z.object({
  * This is the type used throughout the system after Editor normalizes the plan.
  */
 export interface ArticlePlan {
+  /** The game this article is about (from context, not AI output) */
+  readonly gameName: string;
+  /** URL-friendly slug for the game (from context, optional) */
+  readonly gameSlug?: string;
   readonly title: string;
   readonly categorySlug: ArticleCategorySlug;
   readonly excerpt: string;
   readonly tags: readonly string[];
   readonly sections: readonly ArticleSectionPlan[];
+  /**
+   * Safety constraints for article generation.
+   * Structured as an object for future extensibility (see DEFAULT_ARTICLE_SAFETY).
+   */
   readonly safety: {
     /** If true, avoid numerical scores/ratings unless this is a review article */
     readonly noScoresUnlessReview: boolean;

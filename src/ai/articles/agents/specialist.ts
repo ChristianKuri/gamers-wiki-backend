@@ -24,13 +24,16 @@ import {
   processSearchResults,
   ResearchPoolBuilder,
 } from '../research-pool';
-import type {
-  CategorizedSearchResult,
-  GameArticleContext,
-  ResearchPool,
-  ScoutOutput,
-  SearchFunction,
-  SectionProgressCallback,
+import {
+  addTokenUsage,
+  createEmptyTokenUsage,
+  type CategorizedSearchResult,
+  type GameArticleContext,
+  type ResearchPool,
+  type ScoutOutput,
+  type SearchFunction,
+  type SectionProgressCallback,
+  type TokenUsage,
 } from '../types';
 
 // Re-export config for backwards compatibility
@@ -64,6 +67,8 @@ export interface SpecialistOutput {
   readonly markdown: string;
   readonly sources: readonly string[];
   readonly researchPool: ResearchPool;
+  /** Token usage for Specialist phase LLM calls */
+  readonly tokenUsage: TokenUsage;
 }
 
 // ============================================================================
@@ -216,6 +221,14 @@ function ensureUniqueStrings(values: readonly string[], max: number): string[] {
 }
 
 /**
+ * Result from writing a single section.
+ */
+interface WriteSectionResult {
+  readonly text: string;
+  readonly tokenUsage: TokenUsage;
+}
+
+/**
  * Writes a single section using the Specialist agent.
  * Extracted to enable parallel section writing.
  */
@@ -228,7 +241,7 @@ async function writeSection(
   enrichedPool: ResearchPool,
   deps: Pick<SpecialistDeps, 'generateText' | 'model' | 'logger' | 'signal' | 'temperature'>,
   previousContext: string
-): Promise<string> {
+): Promise<WriteSectionResult> {
   const log = deps.logger ?? createPrefixedLogger('[Specialist]');
   const temperature = deps.temperature ?? SPECIALIST_CONFIG.TEMPERATURE;
   const localeInstruction = 'Write in English.';
@@ -274,7 +287,7 @@ async function writeSection(
 
   log.debug(`Writing section ${sectionIndex + 1}/${plan.sections.length}: ${section.headline}`);
 
-  const { text } = await withRetry(
+  const { text, usage } = await withRetry(
     () =>
       deps.generateText({
         model: deps.model,
@@ -293,7 +306,11 @@ async function writeSection(
     { context: `Specialist section "${section.headline}"`, signal: deps.signal }
   );
 
-  return text.trim();
+  const tokenUsage: TokenUsage = usage
+    ? { input: usage.promptTokens ?? 0, output: usage.completionTokens ?? 0 }
+    : createEmptyTokenUsage();
+
+  return { text: text.trim(), tokenUsage };
 }
 
 // ============================================================================
@@ -338,6 +355,7 @@ export async function runSpecialist(
 
   // ===== SECTION WRITING PHASE =====
   let sectionTexts: string[];
+  let totalTokenUsage = createEmptyTokenUsage();
 
   // Shared deps for writeSection calls
   const writeDeps = {
@@ -365,14 +383,20 @@ export async function runSpecialist(
         enrichedPool,
         writeDeps,
         '' // No previous context in parallel mode
-      ).then((text) => {
+      ).then((result) => {
         // Report progress as each section completes
         deps.onSectionProgress?.(i + 1, plan.sections.length, section.headline);
-        return text;
+        return result;
       })
     );
 
-    sectionTexts = await Promise.all(sectionPromises);
+    const sectionResults = await Promise.all(sectionPromises);
+    sectionTexts = sectionResults.map((r) => r.text);
+
+    // Aggregate token usage from all sections
+    for (const result of sectionResults) {
+      totalTokenUsage = addTokenUsage(totalTokenUsage, result.tokenUsage);
+    }
   } else {
     // Sequential mode: Write sections in order with context flow
     log.info(`Writing ${plan.sections.length} sections in SEQUENTIAL mode...`);
@@ -385,7 +409,7 @@ export async function runSpecialist(
       // Report progress before writing each section
       deps.onSectionProgress?.(i + 1, plan.sections.length, section.headline);
 
-      const sectionText = await writeSection(
+      const result = await writeSection(
         context,
         scoutOutput,
         plan,
@@ -396,8 +420,9 @@ export async function runSpecialist(
         previousContext
       );
 
-      sectionTexts.push(sectionText);
-      previousContext = sectionText.slice(-SPECIALIST_CONFIG.CONTEXT_TAIL_LENGTH);
+      sectionTexts.push(result.text);
+      totalTokenUsage = addTokenUsage(totalTokenUsage, result.tokenUsage);
+      previousContext = result.text.slice(-SPECIALIST_CONFIG.CONTEXT_TAIL_LENGTH);
     }
   }
 
@@ -417,6 +442,7 @@ export async function runSpecialist(
     markdown: markdown.trim() + '\n',
     sources: finalUrls,
     researchPool: enrichedPool,
+    tokenUsage: totalTokenUsage,
   };
 }
 

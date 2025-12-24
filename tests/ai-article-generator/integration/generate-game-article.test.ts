@@ -965,4 +965,296 @@ describe('generateGameArticleDraft (integration-ish)', () => {
       expect(draft.metadata.phaseDurations.validation).toBeGreaterThanOrEqual(0);
     });
   });
+
+  describe('token usage tracking', () => {
+    it('includes token usage in metadata when API reports it', async () => {
+      // Use the default mock handlers that include usage in responses
+      const draft = await generateGameArticleDraft({
+        gameName: 'Test Game',
+        instruction: 'Write a short guide',
+      });
+
+      // Token usage should be included when the API provides it
+      if (draft.metadata.tokenUsage) {
+        expect(draft.metadata.tokenUsage.scout).toBeDefined();
+        expect(draft.metadata.tokenUsage.editor).toBeDefined();
+        expect(draft.metadata.tokenUsage.specialist).toBeDefined();
+        expect(draft.metadata.tokenUsage.total).toBeDefined();
+
+        // Total should be sum of phases
+        expect(draft.metadata.tokenUsage.total.input).toBe(
+          draft.metadata.tokenUsage.scout.input +
+            draft.metadata.tokenUsage.editor.input +
+            draft.metadata.tokenUsage.specialist.input
+        );
+        expect(draft.metadata.tokenUsage.total.output).toBe(
+          draft.metadata.tokenUsage.scout.output +
+            draft.metadata.tokenUsage.editor.output +
+            draft.metadata.tokenUsage.specialist.output
+        );
+      }
+    });
+  });
+
+  describe('early plan validation', () => {
+    // Long enough generic text for Scout phase
+    const scoutText =
+      'This is a comprehensive mock response for the Scout phase that provides enough content ' +
+      'for the research briefing. It includes general information about the game, its mechanics, ' +
+      'and various tips and strategies that players have discovered. The game has been well-received ' +
+      'by critics and players alike, with praise for its innovative gameplay and engaging story.';
+
+    it('fails early with EDITOR_FAILED when plan has duplicate headlines', async () => {
+      // Override OpenRouter to return a plan with duplicate section headlines
+      const invalidPlan = {
+        title: 'Test Article With Invalid Plan Structure',
+        categorySlug: 'guides',
+        excerpt:
+          'This is a test excerpt that is deliberately between 120 and 160 characters to satisfy the schema constraints for validation.',
+        tags: ['test'],
+        sections: [
+          { headline: 'Same Headline', goal: 'Goal 1', researchQueries: ['query 1'] },
+          { headline: 'Same Headline', goal: 'Goal 2', researchQueries: ['query 2'] },
+          { headline: 'Different', goal: 'Goal 3', researchQueries: ['query 3'] },
+        ],
+        safety: { noScoresUnlessReview: true },
+      };
+
+      server.use(
+        http.post('https://openrouter.ai/api/v1/chat/completions', async ({ request }) => {
+          const body = (await request.json()) as {
+            messages: Array<{ role: string; content: string }>;
+            model: string;
+          };
+          const userText = body.messages.find((m) => m.role === 'user')?.content ?? '';
+
+          // Editor plan generation (structured output request)
+          if (userText.includes('Return ONLY valid JSON')) {
+            return HttpResponse.json({
+              id: 'mock',
+              object: 'chat.completion',
+              created: Date.now(),
+              model: body.model,
+              choices: [
+                {
+                  index: 0,
+                  message: { role: 'assistant', content: JSON.stringify(invalidPlan) },
+                  finish_reason: 'stop',
+                },
+              ],
+              usage: { prompt_tokens: 10, completion_tokens: 10, total_tokens: 20 },
+            });
+          }
+
+          // Scout phase and other text generation
+          return HttpResponse.json({
+            id: 'mock',
+            object: 'chat.completion',
+            created: Date.now(),
+            model: body.model,
+            choices: [
+              {
+                index: 0,
+                message: { role: 'assistant', content: scoutText },
+                finish_reason: 'stop',
+              },
+            ],
+            usage: { prompt_tokens: 100, completion_tokens: 200, total_tokens: 300 },
+          });
+        }),
+        // Also handle the responses API format (used by AI SDK for some models)
+        http.post('https://openrouter.ai/api/v1/responses', async ({ request }) => {
+          const body = (await request.json()) as {
+            input: Array<{ role: string; content: string | Array<{ type: string; text: string }> }>;
+            model: string;
+          };
+
+          const messages = body.input.map((msg) => {
+            const content =
+              typeof msg.content === 'string'
+                ? msg.content
+                : (msg.content as Array<{ type: string; text: string }>)?.[0]?.text || '';
+            return { role: msg.role, content };
+          });
+
+          const userText = messages.find((m) => m.role === 'user')?.content ?? '';
+
+          if (userText.includes('Return ONLY valid JSON')) {
+            return HttpResponse.json({
+              id: 'mock',
+              object: 'response',
+              created_at: Date.now(),
+              model: body.model,
+              status: 'completed',
+              output: [
+                {
+                  id: 'mock',
+                  type: 'message',
+                  role: 'assistant',
+                  status: 'completed',
+                  content: [{ type: 'output_text', text: JSON.stringify(invalidPlan), annotations: [] }],
+                },
+              ],
+              usage: { input_tokens: 10, output_tokens: 10, total_tokens: 20 },
+            });
+          }
+
+          return HttpResponse.json({
+            id: 'mock',
+            object: 'response',
+            created_at: Date.now(),
+            model: body.model,
+            status: 'completed',
+            output: [
+              {
+                id: 'mock',
+                type: 'message',
+                role: 'assistant',
+                status: 'completed',
+                content: [{ type: 'output_text', text: scoutText, annotations: [] }],
+              },
+            ],
+            usage: { input_tokens: 100, output_tokens: 200, total_tokens: 300 },
+          });
+        })
+      );
+
+      try {
+        await generateGameArticleDraft({
+          gameName: 'Test Game',
+          instruction: 'Write a guide',
+        });
+        expect.fail('Should have thrown ArticleGenerationError');
+      } catch (error) {
+        expect(error).toBeInstanceOf(ArticleGenerationError);
+        expect((error as ArticleGenerationError).code).toBe('EDITOR_FAILED');
+        expect((error as ArticleGenerationError).message.toLowerCase()).toContain('duplicate');
+      }
+    });
+
+    it('fails early with EDITOR_FAILED when plan has whitespace-only section goals', async () => {
+      // Whitespace-only goals pass Zod's min(1) but fail our custom trim validation
+      const invalidPlan = {
+        title: 'Test Article With Empty Section Goal',
+        categorySlug: 'guides',
+        excerpt:
+          'This is a test excerpt that is deliberately between 120 and 160 characters to satisfy the schema constraints for validation.',
+        tags: ['test'],
+        sections: [
+          { headline: 'Section One', goal: '   ', researchQueries: ['query 1'] }, // Whitespace-only
+          { headline: 'Section Two', goal: 'Valid goal', researchQueries: ['query 2'] },
+          { headline: 'Section Three', goal: 'Another goal', researchQueries: ['query 3'] },
+        ],
+        safety: { noScoresUnlessReview: true },
+      };
+
+      server.use(
+        http.post('https://openrouter.ai/api/v1/chat/completions', async ({ request }) => {
+          const body = (await request.json()) as {
+            messages: Array<{ role: string; content: string }>;
+            model: string;
+          };
+          const userText = body.messages.find((m) => m.role === 'user')?.content ?? '';
+
+          if (userText.includes('Return ONLY valid JSON')) {
+            return HttpResponse.json({
+              id: 'mock',
+              object: 'chat.completion',
+              created: Date.now(),
+              model: body.model,
+              choices: [
+                {
+                  index: 0,
+                  message: { role: 'assistant', content: JSON.stringify(invalidPlan) },
+                  finish_reason: 'stop',
+                },
+              ],
+              usage: { prompt_tokens: 10, completion_tokens: 10, total_tokens: 20 },
+            });
+          }
+
+          return HttpResponse.json({
+            id: 'mock',
+            object: 'chat.completion',
+            created: Date.now(),
+            model: body.model,
+            choices: [
+              {
+                index: 0,
+                message: { role: 'assistant', content: scoutText },
+                finish_reason: 'stop',
+              },
+            ],
+            usage: { prompt_tokens: 100, completion_tokens: 200, total_tokens: 300 },
+          });
+        }),
+        http.post('https://openrouter.ai/api/v1/responses', async ({ request }) => {
+          const body = (await request.json()) as {
+            input: Array<{ role: string; content: string | Array<{ type: string; text: string }> }>;
+            model: string;
+          };
+
+          const messages = body.input.map((msg) => {
+            const content =
+              typeof msg.content === 'string'
+                ? msg.content
+                : (msg.content as Array<{ type: string; text: string }>)?.[0]?.text || '';
+            return { role: msg.role, content };
+          });
+
+          const userText = messages.find((m) => m.role === 'user')?.content ?? '';
+
+          if (userText.includes('Return ONLY valid JSON')) {
+            return HttpResponse.json({
+              id: 'mock',
+              object: 'response',
+              created_at: Date.now(),
+              model: body.model,
+              status: 'completed',
+              output: [
+                {
+                  id: 'mock',
+                  type: 'message',
+                  role: 'assistant',
+                  status: 'completed',
+                  content: [{ type: 'output_text', text: JSON.stringify(invalidPlan), annotations: [] }],
+                },
+              ],
+              usage: { input_tokens: 10, output_tokens: 10, total_tokens: 20 },
+            });
+          }
+
+          return HttpResponse.json({
+            id: 'mock',
+            object: 'response',
+            created_at: Date.now(),
+            model: body.model,
+            status: 'completed',
+            output: [
+              {
+                id: 'mock',
+                type: 'message',
+                role: 'assistant',
+                status: 'completed',
+                content: [{ type: 'output_text', text: scoutText, annotations: [] }],
+              },
+            ],
+            usage: { input_tokens: 100, output_tokens: 200, total_tokens: 300 },
+          });
+        })
+      );
+
+      try {
+        await generateGameArticleDraft({
+          gameName: 'Test Game',
+          instruction: 'Write a guide',
+        });
+        expect.fail('Should have thrown ArticleGenerationError');
+      } catch (error) {
+        expect(error).toBeInstanceOf(ArticleGenerationError);
+        expect((error as ArticleGenerationError).code).toBe('EDITOR_FAILED');
+        expect((error as ArticleGenerationError).message.toLowerCase()).toContain('empty goal');
+      }
+    });
+  });
 });

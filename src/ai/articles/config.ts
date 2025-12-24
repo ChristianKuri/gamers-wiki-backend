@@ -6,6 +6,43 @@
  */
 
 // ============================================================================
+// Article Plan Constraints
+// ============================================================================
+
+/**
+ * Constraints for article plan validation.
+ * Used by Zod schema, validation.ts, and prompts for consistency.
+ * ALL validation constants should live here - no magic numbers elsewhere.
+ */
+export const ARTICLE_PLAN_CONSTRAINTS = {
+  // Title constraints
+  TITLE_MIN_LENGTH: 10,
+  TITLE_MAX_LENGTH: 100,
+  TITLE_RECOMMENDED_MAX_LENGTH: 70,
+
+  // Excerpt constraints (for SEO meta description)
+  EXCERPT_MIN_LENGTH: 120,
+  EXCERPT_MAX_LENGTH: 160,
+
+  // Section constraints
+  MIN_SECTIONS: 3,
+  MAX_SECTIONS: 12,
+  MIN_SECTION_LENGTH: 100,
+
+  // Tags constraints
+  MIN_TAGS: 1,
+  MAX_TAGS: 10,
+  TAG_MAX_LENGTH: 50,
+
+  // Research query constraints
+  MIN_RESEARCH_QUERIES_PER_SECTION: 1,
+  MAX_RESEARCH_QUERIES_PER_SECTION: 6,
+
+  // Markdown constraints
+  MIN_MARKDOWN_LENGTH: 500,
+} as const;
+
+// ============================================================================
 // Scout Agent Configuration
 // ============================================================================
 

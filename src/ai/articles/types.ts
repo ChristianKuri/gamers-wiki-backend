@@ -141,6 +141,8 @@ export interface ScoutOutput {
   };
   readonly researchPool: ResearchPool;
   readonly sourceUrls: readonly string[];
+  /** Token usage for Scout phase LLM calls */
+  readonly tokenUsage: TokenUsage;
 }
 
 // ============================================================================
@@ -183,6 +185,47 @@ export interface CategoryHint {
 }
 
 // ============================================================================
+// Token Usage Types
+// ============================================================================
+
+/**
+ * Token usage for a single LLM call or phase.
+ */
+export interface TokenUsage {
+  /** Number of input (prompt) tokens */
+  readonly input: number;
+  /** Number of output (completion) tokens */
+  readonly output: number;
+}
+
+/**
+ * Aggregated token usage across all phases.
+ */
+export interface AggregatedTokenUsage {
+  readonly scout: TokenUsage;
+  readonly editor: TokenUsage;
+  readonly specialist: TokenUsage;
+  readonly total: TokenUsage;
+}
+
+/**
+ * Creates an empty token usage object.
+ */
+export function createEmptyTokenUsage(): TokenUsage {
+  return { input: 0, output: 0 };
+}
+
+/**
+ * Adds two token usage objects together.
+ */
+export function addTokenUsage(a: TokenUsage, b: TokenUsage): TokenUsage {
+  return {
+    input: a.input + b.input,
+    output: a.output + b.output,
+  };
+}
+
+// ============================================================================
 // Draft Types
 // ============================================================================
 
@@ -205,6 +248,8 @@ export interface ArticleGenerationMetadata {
   readonly queriesExecuted: number;
   /** Number of unique sources collected */
   readonly sourcesCollected: number;
+  /** Token usage by phase (optional - may not be available if API doesn't report it) */
+  readonly tokenUsage?: AggregatedTokenUsage;
 }
 
 /**

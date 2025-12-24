@@ -50,23 +50,29 @@ import { generateObject, generateText } from 'ai';
 
 import { getModel } from '../config';
 import { tavilySearch } from '../tools/tavily';
-import { createPrefixedLogger } from '../../utils/logger';
-import { runScout, runEditor, runSpecialist } from './agents';
+import { createPrefixedLogger, type Logger } from '../../utils/logger';
+import { runScout, runEditor, runSpecialist, type EditorOutput } from './agents';
+import type { SpecialistOutput } from './agents/specialist';
+import type { ArticlePlan } from './article-plan';
+import { GENERATOR_CONFIG } from './config';
 import { countContentH2Sections } from './markdown-utils';
 import { withRetry } from './retry';
 import {
+  addTokenUsage,
   ArticleGenerationError,
   systemClock,
+  type AggregatedTokenUsage,
   type ArticleGenerationErrorCode,
   type ArticleGenerationMetadata,
   type ArticleProgressCallback,
   type Clock,
   type GameArticleContext,
   type GameArticleDraft,
+  type ScoutOutput,
+  type TokenUsage,
 } from './types';
-import { validateArticleDraft, validateGameArticleContext, getErrors, getWarnings } from './validation';
-
-import { GENERATOR_CONFIG } from './config';
+import { ProgressTracker } from './progress-tracker';
+import { validateArticleDraft, validateArticlePlan, validateGameArticleContext, getErrors, getWarnings } from './validation';
 
 // ============================================================================
 // Dependencies Interface
@@ -370,6 +376,183 @@ async function runPhase<T>(
 }
 
 // ============================================================================
+// Phase Execution Functions
+// ============================================================================
+
+/**
+ * Base phase options without model name (added by each phase).
+ */
+interface BasePhaseOptions {
+  readonly signal: AbortSignal | undefined;
+  readonly startTime: number;
+  readonly timeoutMs: number;
+  readonly gameName: string;
+  readonly clock: Clock;
+}
+
+/**
+ * Context shared across all phase executions.
+ */
+interface PhaseContext {
+  readonly context: GameArticleContext;
+  readonly deps: ArticleGeneratorDeps;
+  readonly basePhaseOptions: BasePhaseOptions;
+  readonly log: Logger;
+  readonly progressTracker: ProgressTracker;
+  readonly temperatureOverrides?: TemperatureOverrides;
+}
+
+/**
+ * Executes the Scout phase: gathers research from multiple sources.
+ */
+async function executeScoutPhase(
+  phaseContext: PhaseContext,
+  scoutModel: string
+): Promise<PhaseResult<ScoutOutput>> {
+  const { context, deps, basePhaseOptions, log, progressTracker, temperatureOverrides } = phaseContext;
+
+  log.info(`Phase 1: Scout - Deep multi-query research (model: ${scoutModel})...`);
+  progressTracker.startPhase('scout');
+
+  const result = await runPhase(
+    'Scout',
+    'SCOUT_FAILED',
+    () =>
+      runScout(context, {
+        search: deps.search,
+        generateText: deps.generateText,
+        model: deps.openrouter(scoutModel),
+        logger: createPrefixedLogger('[Scout]'),
+        signal: basePhaseOptions.signal,
+        temperature: temperatureOverrides?.scout,
+      }),
+    { ...basePhaseOptions, modelName: scoutModel }
+  );
+
+  log.info(
+    `Scout (${scoutModel}) complete in ${result.durationMs}ms: ` +
+      `${result.output.researchPool.allUrls.size} sources, ` +
+      `${result.output.researchPool.queryCache.size} unique queries`
+  );
+  progressTracker.completePhase('scout', `Found ${result.output.researchPool.allUrls.size} sources`);
+
+  return result;
+}
+
+/**
+ * Result from Editor phase including plan and token usage.
+ */
+interface EditorPhaseResult {
+  readonly result: PhaseResult<EditorOutput>;
+  readonly plan: ArticlePlan;
+  readonly tokenUsage: TokenUsage;
+}
+
+/**
+ * Executes the Editor phase: plans article structure and validates the plan.
+ * Throws if plan validation fails.
+ */
+async function executeEditorPhase(
+  phaseContext: PhaseContext,
+  scoutOutput: ScoutOutput,
+  editorModel: string
+): Promise<EditorPhaseResult> {
+  const { context, deps, basePhaseOptions, log, progressTracker, temperatureOverrides } = phaseContext;
+
+  log.info(`Phase 2: Editor - Planning article (model: ${editorModel})...`);
+  progressTracker.startPhase('editor');
+
+  const result = await runPhase(
+    'Editor',
+    'EDITOR_FAILED',
+    () =>
+      runEditor(context, scoutOutput, {
+        generateObject: deps.generateObject,
+        model: deps.openrouter(editorModel),
+        logger: createPrefixedLogger('[Editor]'),
+        signal: basePhaseOptions.signal,
+        temperature: temperatureOverrides?.editor,
+      }),
+    { ...basePhaseOptions, modelName: editorModel }
+  );
+
+  const { plan, tokenUsage } = result.output;
+  log.info(
+    `Editor (${editorModel}) complete in ${result.durationMs}ms: ` +
+      `${plan.categorySlug} article with ${plan.sections.length} sections`
+  );
+  progressTracker.completePhase('editor', `Planned ${plan.sections.length} sections`);
+
+  // Validate plan structure before expensive Specialist phase
+  const planIssues = validateArticlePlan(plan);
+  const planErrors = getErrors(planIssues);
+  const planWarnings = getWarnings(planIssues);
+
+  if (planWarnings.length > 0) {
+    log.warn(`Plan validation warnings: ${planWarnings.map((w) => w.message).join('; ')}`);
+  }
+
+  if (planErrors.length > 0) {
+    log.error(`Plan validation errors: ${planErrors.map((e) => e.message).join('; ')}`);
+    throw new ArticleGenerationError(
+      'EDITOR_FAILED',
+      `Article plan validation failed: ${planErrors.map((e) => e.message).join('; ')}`
+    );
+  }
+
+  return { result, plan, tokenUsage };
+}
+
+/**
+ * Executes the Specialist phase: writes article sections based on plan.
+ */
+async function executeSpecialistPhase(
+  phaseContext: PhaseContext,
+  scoutOutput: ScoutOutput,
+  plan: ArticlePlan,
+  specialistModel: string,
+  parallelSections: boolean
+): Promise<PhaseResult<SpecialistOutput>> {
+  const { context, deps, basePhaseOptions, log, progressTracker, temperatureOverrides } = phaseContext;
+
+  const modeLabel = parallelSections ? 'parallel' : 'sequential';
+  log.info(
+    `Phase 3: Specialist - Batch research + section writing in ${modeLabel} mode (model: ${specialistModel})...`
+  );
+  progressTracker.startPhase('specialist');
+
+  // Note: Specialist doesn't use top-level retry because it's a long operation.
+  // Retry logic is applied to individual search/generateText calls inside the agent.
+  const result = await runPhase(
+    'Specialist',
+    'SPECIALIST_FAILED',
+    () =>
+      runSpecialist(context, scoutOutput, plan, {
+        search: deps.search,
+        generateText: deps.generateText,
+        model: deps.openrouter(specialistModel),
+        logger: createPrefixedLogger('[Specialist]'),
+        parallelSections,
+        signal: basePhaseOptions.signal,
+        temperature: temperatureOverrides?.specialist,
+        onSectionProgress: (current, total, headline) => {
+          // Delegate to ProgressTracker for consistent progress calculation
+          progressTracker.reportSectionProgress(current, total, headline);
+        },
+      }),
+    { ...basePhaseOptions, modelName: specialistModel, skipRetry: true }
+  );
+
+  log.info(
+    `Specialist (${specialistModel}) complete in ${result.durationMs}ms: ` +
+      `${countContentH2Sections(result.output.markdown)} sections written, ${result.output.sources.length} total sources`
+  );
+  progressTracker.completePhase('specialist', `Wrote ${countContentH2Sections(result.output.markdown)} sections`);
+
+  return result;
+}
+
+// ============================================================================
 // Default Dependencies
 // ============================================================================
 
@@ -470,15 +653,15 @@ export async function generateGameArticleDraft(
   const specialistModel = getModel('ARTICLE_SPECIALIST');
 
   const log = createPrefixedLogger('[ArticleGen]');
-  const onProgress = options?.onProgress;
+  const progressTracker = new ProgressTracker(options?.onProgress);
   const timeoutMs = options?.timeoutMs ?? GENERATOR_CONFIG.DEFAULT_TIMEOUT_MS;
   const signal = options?.signal;
   const clock = options?.clock ?? systemClock;
   const temperatureOverrides = options?.temperatureOverrides;
   const totalStartTime = clock.now();
 
-  // Shared options for all phases
-  const phaseOptions = {
+  // Base options for all phases (modelName added by each phase function)
+  const basePhaseOptions: BasePhaseOptions = {
     signal,
     startTime: totalStartTime,
     timeoutMs,
@@ -494,104 +677,52 @@ export async function generateGameArticleDraft(
     log.info(`Temperature overrides: ${JSON.stringify(temperatureOverrides)}`);
   }
 
+  // Build shared phase context
+  const resolvedDeps: ArticleGeneratorDeps = {
+    openrouter,
+    search,
+    generateText: genText,
+    generateObject: genObject,
+  };
+
+  const phaseContext: PhaseContext = {
+    context,
+    deps: resolvedDeps,
+    basePhaseOptions,
+    log,
+    progressTracker,
+    temperatureOverrides,
+  };
+
   // ===== PHASE 1: SCOUT =====
-  log.info(`Phase 1: Scout - Deep multi-query research (model: ${scoutModel})...`);
-  onProgress?.('scout', 0, 'Starting research phase');
-
-  const scoutResult = await runPhase(
-    'Scout',
-    'SCOUT_FAILED',
-    () =>
-      runScout(context, {
-        search,
-        generateText: genText,
-        model: openrouter(scoutModel),
-        logger: createPrefixedLogger('[Scout]'),
-        signal,
-        temperature: temperatureOverrides?.scout,
-      }),
-    { ...phaseOptions, modelName: scoutModel }
-  );
-
+  const scoutResult = await executeScoutPhase(phaseContext, scoutModel);
   const scoutOutput = scoutResult.output;
-  log.info(
-    `Scout (${scoutModel}) complete in ${scoutResult.durationMs}ms: ` +
-      `${scoutOutput.researchPool.allUrls.size} sources, ` +
-      `${scoutOutput.researchPool.queryCache.size} unique queries`
-  );
-  onProgress?.('scout', 100, `Found ${scoutOutput.researchPool.allUrls.size} sources`);
 
   // ===== PHASE 2: EDITOR =====
-  log.info(`Phase 2: Editor - Planning article (model: ${editorModel})...`);
-  onProgress?.('editor', 0, 'Planning article structure');
-
-  const editorResult = await runPhase(
-    'Editor',
-    'EDITOR_FAILED',
-    () =>
-      runEditor(context, scoutOutput, {
-        generateObject: genObject,
-        model: openrouter(editorModel),
-        logger: createPrefixedLogger('[Editor]'),
-        signal,
-        temperature: temperatureOverrides?.editor,
-      }),
-    { ...phaseOptions, modelName: editorModel }
+  const { result: editorResult, plan, tokenUsage: editorTokenUsage } = await executeEditorPhase(
+    phaseContext,
+    scoutOutput,
+    editorModel
   );
-
-  const plan = editorResult.output;
-  log.info(
-    `Editor (${editorModel}) complete in ${editorResult.durationMs}ms: ` +
-      `${plan.categorySlug} article with ${plan.sections.length} sections`
-  );
-  onProgress?.('editor', 100, `Planned ${plan.sections.length} sections`);
 
   // ===== PHASE 3: SPECIALIST =====
   // Use option override if provided, otherwise auto-decide based on category
   // (parallel for 'lists' category where sections are independent)
   const useParallelSections = options?.parallelSections ?? (plan.categorySlug === 'lists');
-  const modeLabel = useParallelSections ? 'parallel' : 'sequential';
-  log.info(
-    `Phase 3: Specialist - Batch research + section writing in ${modeLabel} mode (model: ${specialistModel})...`
-  );
-  onProgress?.('specialist', 0, 'Writing article sections');
-
-  // Note: Specialist doesn't use top-level retry because it's a long operation.
-  // Retry logic is applied to individual search/generateText calls inside the agent.
-  const specialistResult = await runPhase(
-    'Specialist',
-    'SPECIALIST_FAILED',
-    () =>
-      runSpecialist(context, scoutOutput, plan, {
-        search,
-        generateText: genText,
-        model: openrouter(specialistModel),
-        logger: createPrefixedLogger('[Specialist]'),
-        parallelSections: useParallelSections,
-        signal,
-        temperature: temperatureOverrides?.specialist,
-        onSectionProgress: (current, total, headline) => {
-          // Report granular progress during section writing
-          const { SPECIALIST_PROGRESS_START, SPECIALIST_PROGRESS_END } = GENERATOR_CONFIG;
-          const progressRange = SPECIALIST_PROGRESS_END - SPECIALIST_PROGRESS_START;
-          const sectionProgress = Math.round(SPECIALIST_PROGRESS_START + (current / total) * progressRange);
-          onProgress?.('specialist', sectionProgress, `Writing section ${current}/${total}: ${headline}`);
-        },
-      }),
-    { ...phaseOptions, modelName: specialistModel, skipRetry: true }
+  const specialistResult = await executeSpecialistPhase(
+    phaseContext,
+    scoutOutput,
+    plan,
+    specialistModel,
+    useParallelSections
   );
 
-  const { markdown, sources, researchPool: finalResearchPool } = specialistResult.output;
-  log.info(
-    `Specialist (${specialistModel}) complete in ${specialistResult.durationMs}ms: ` +
-      `${countContentH2Sections(markdown)} sections written, ${sources.length} total sources`
-  );
-  onProgress?.('specialist', 100, `Wrote ${countContentH2Sections(markdown)} sections`);
+  const { markdown, sources, researchPool: finalResearchPool, tokenUsage: specialistTokenUsage } = specialistResult.output;
 
   // ===== PHASE 4: VALIDATION =====
   const validationStartTime = clock.now();
   log.info('Phase 4: Validation - Checking content quality...');
-  onProgress?.('validation', 0, 'Validating article quality');
+  progressTracker.startPhase('validation');
 
   const draft = {
     title: plan.title,
@@ -627,7 +758,26 @@ export async function generateGameArticleDraft(
     `Final research pool: ${finalResearchPool.queryCache.size} total queries, ` +
       `${finalResearchPool.allUrls.size} unique sources`
   );
-  onProgress?.('validation', 100, 'Article validated successfully');
+  progressTracker.completePhase('validation', 'Article validated successfully');
+
+  // Aggregate token usage from all phases
+  const scoutTokenUsage = scoutOutput.tokenUsage;
+  const totalTokenUsage = addTokenUsage(
+    addTokenUsage(scoutTokenUsage, editorTokenUsage),
+    specialistTokenUsage
+  );
+
+  // Check if any tokens were reported (some APIs may not report usage)
+  const hasTokenUsage = totalTokenUsage.input > 0 || totalTokenUsage.output > 0;
+
+  const tokenUsage: AggregatedTokenUsage | undefined = hasTokenUsage
+    ? {
+        scout: scoutTokenUsage,
+        editor: editorTokenUsage,
+        specialist: specialistTokenUsage,
+        total: totalTokenUsage,
+      }
+    : undefined;
 
   // Build immutable metadata for debugging and analytics
   const metadata: ArticleGenerationMetadata = {
@@ -641,6 +791,7 @@ export async function generateGameArticleDraft(
     },
     queriesExecuted: finalResearchPool.queryCache.size,
     sourcesCollected: finalResearchPool.allUrls.size,
+    tokenUsage,
   };
 
   return {

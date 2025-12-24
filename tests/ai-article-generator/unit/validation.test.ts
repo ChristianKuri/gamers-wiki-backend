@@ -3,10 +3,12 @@ import { describe, it, expect } from 'vitest';
 import {
   validateGameArticleContext,
   validateArticleDraft,
+  validateArticlePlan,
   getErrors,
   getWarnings,
 } from '../../../src/ai/articles/validation';
-import { ARTICLE_PLAN_CONSTRAINTS } from '../../../src/ai/articles/article-plan';
+import { ARTICLE_PLAN_CONSTRAINTS } from '../../../src/ai/articles/config';
+import type { ArticlePlan } from '../../../src/ai/articles/article-plan';
 
 describe('validateGameArticleContext', () => {
   describe('gameName validation', () => {
@@ -340,6 +342,298 @@ describe('getErrors and getWarnings', () => {
     const errors = getErrors(issues);
 
     expect(errors.length).toBe(0);
+  });
+});
+
+describe('validateArticlePlan', () => {
+  const createValidPlan = (): ArticlePlan => ({
+    gameName: 'Elden Ring',
+    title: 'Elden Ring: Complete Beginner Guide',
+    categorySlug: 'guides',
+    excerpt:
+      'Master the Lands Between with this comprehensive beginner guide covering early game strategies, builds, and exploration tips.',
+    tags: ['beginner', 'guide', 'tips'],
+    sections: [
+      {
+        headline: 'Getting Started',
+        goal: 'Help new players understand the basics',
+        researchQueries: ['Elden Ring beginner tips', 'Elden Ring first steps'],
+      },
+      {
+        headline: 'Character Creation',
+        goal: 'Guide players through class selection',
+        researchQueries: ['Elden Ring best starting class'],
+      },
+      {
+        headline: 'Early Game Exploration',
+        goal: 'Show safe early areas to explore',
+        researchQueries: ['Elden Ring Limgrave guide'],
+      },
+    ],
+    safety: { noScoresUnlessReview: true },
+  });
+
+  describe('section count validation', () => {
+    it('accepts plan with valid number of sections', () => {
+      const plan = createValidPlan();
+      const issues = validateArticlePlan(plan);
+      const errors = getErrors(issues);
+
+      expect(errors.filter((e) => e.message.includes('sections'))).toHaveLength(0);
+    });
+
+    it('returns error when fewer than minimum sections', () => {
+      const plan = {
+        ...createValidPlan(),
+        sections: [
+          {
+            headline: 'Only Section',
+            goal: 'The only section',
+            researchQueries: ['query'],
+          },
+        ],
+      };
+
+      const issues = validateArticlePlan(plan);
+      const errors = getErrors(issues);
+
+      expect(errors.some((e) => e.message.includes('sections') && e.message.includes('minimum'))).toBe(true);
+    });
+
+    it('returns error when more than maximum sections', () => {
+      const manySection = {
+        headline: 'Section',
+        goal: 'A goal',
+        researchQueries: ['query'],
+      };
+      const plan = {
+        ...createValidPlan(),
+        sections: Array.from({ length: ARTICLE_PLAN_CONSTRAINTS.MAX_SECTIONS + 1 }, (_, i) => ({
+          ...manySection,
+          headline: `Section ${i + 1}`,
+        })),
+      };
+
+      const issues = validateArticlePlan(plan);
+      const errors = getErrors(issues);
+
+      expect(errors.some((e) => e.message.includes('sections') && e.message.includes('maximum'))).toBe(true);
+    });
+  });
+
+  describe('duplicate headline validation', () => {
+    it('returns error for duplicate section headlines', () => {
+      const plan = {
+        ...createValidPlan(),
+        sections: [
+          { headline: 'Introduction', goal: 'Goal 1', researchQueries: ['q1'] },
+          { headline: 'Getting Started', goal: 'Goal 2', researchQueries: ['q2'] },
+          { headline: 'Introduction', goal: 'Goal 3', researchQueries: ['q3'] },
+        ],
+      };
+
+      const issues = validateArticlePlan(plan);
+      const errors = getErrors(issues);
+
+      expect(errors.some((e) => e.message.includes('Duplicate'))).toBe(true);
+    });
+
+    it('detects case-insensitive duplicate headlines', () => {
+      const plan = {
+        ...createValidPlan(),
+        sections: [
+          { headline: 'Introduction', goal: 'Goal 1', researchQueries: ['q1'] },
+          { headline: 'Getting Started', goal: 'Goal 2', researchQueries: ['q2'] },
+          { headline: 'INTRODUCTION', goal: 'Goal 3', researchQueries: ['q3'] },
+        ],
+      };
+
+      const issues = validateArticlePlan(plan);
+      const errors = getErrors(issues);
+
+      expect(errors.some((e) => e.message.includes('Duplicate'))).toBe(true);
+    });
+
+    it('accepts plan with unique headlines', () => {
+      const plan = createValidPlan();
+      const issues = validateArticlePlan(plan);
+      const errors = getErrors(issues);
+
+      expect(errors.filter((e) => e.message.includes('Duplicate'))).toHaveLength(0);
+    });
+  });
+
+  describe('section content validation', () => {
+    it('returns error for empty headline', () => {
+      const plan = {
+        ...createValidPlan(),
+        sections: [
+          { headline: '', goal: 'Goal', researchQueries: ['query'] },
+          { headline: 'Valid', goal: 'Goal', researchQueries: ['query'] },
+          { headline: 'Another', goal: 'Goal', researchQueries: ['query'] },
+        ],
+      };
+
+      const issues = validateArticlePlan(plan);
+      const errors = getErrors(issues);
+
+      expect(errors.some((e) => e.message.includes('empty headline'))).toBe(true);
+    });
+
+    it('returns error for whitespace-only headline', () => {
+      const plan = {
+        ...createValidPlan(),
+        sections: [
+          { headline: '   ', goal: 'Goal', researchQueries: ['query'] },
+          { headline: 'Valid', goal: 'Goal', researchQueries: ['query'] },
+          { headline: 'Another', goal: 'Goal', researchQueries: ['query'] },
+        ],
+      };
+
+      const issues = validateArticlePlan(plan);
+      const errors = getErrors(issues);
+
+      expect(errors.some((e) => e.message.includes('empty headline'))).toBe(true);
+    });
+
+    it('returns error for empty goal', () => {
+      const plan = {
+        ...createValidPlan(),
+        sections: [
+          { headline: 'Section 1', goal: '', researchQueries: ['query'] },
+          { headline: 'Section 2', goal: 'Valid', researchQueries: ['query'] },
+          { headline: 'Section 3', goal: 'Valid', researchQueries: ['query'] },
+        ],
+      };
+
+      const issues = validateArticlePlan(plan);
+      const errors = getErrors(issues);
+
+      expect(errors.some((e) => e.message.includes('empty goal'))).toBe(true);
+    });
+
+    it('returns error for missing research queries', () => {
+      const plan = {
+        ...createValidPlan(),
+        sections: [
+          { headline: 'Section 1', goal: 'Goal', researchQueries: [] },
+          { headline: 'Section 2', goal: 'Goal', researchQueries: ['query'] },
+          { headline: 'Section 3', goal: 'Goal', researchQueries: ['query'] },
+        ],
+      };
+
+      const issues = validateArticlePlan(plan);
+      const errors = getErrors(issues);
+
+      expect(errors.some((e) => e.message.includes('research queries') && e.message.includes('minimum'))).toBe(true);
+    });
+
+    it('returns error for empty research query strings', () => {
+      const plan = {
+        ...createValidPlan(),
+        sections: [
+          { headline: 'Section 1', goal: 'Goal', researchQueries: ['valid', '', '  '] },
+          { headline: 'Section 2', goal: 'Goal', researchQueries: ['query'] },
+          { headline: 'Section 3', goal: 'Goal', researchQueries: ['query'] },
+        ],
+      };
+
+      const issues = validateArticlePlan(plan);
+      const errors = getErrors(issues);
+
+      expect(errors.some((e) => e.message.includes('empty research query'))).toBe(true);
+    });
+  });
+
+  describe('title duplicate warning', () => {
+    it('returns warning when title matches a section headline', () => {
+      const plan = {
+        ...createValidPlan(),
+        title: 'Getting Started',
+        sections: [
+          { headline: 'Getting Started', goal: 'Goal 1', researchQueries: ['q1'] },
+          { headline: 'Section 2', goal: 'Goal 2', researchQueries: ['q2'] },
+          { headline: 'Section 3', goal: 'Goal 3', researchQueries: ['q3'] },
+        ],
+      };
+
+      const issues = validateArticlePlan(plan);
+      const warnings = getWarnings(issues);
+
+      expect(warnings.some((w) => w.message.includes('title duplicates section headline'))).toBe(true);
+    });
+
+    it('detects case-insensitive title-headline duplicates', () => {
+      const plan = {
+        ...createValidPlan(),
+        title: 'GETTING STARTED',
+        sections: [
+          { headline: 'getting started', goal: 'Goal 1', researchQueries: ['q1'] },
+          { headline: 'Section 2', goal: 'Goal 2', researchQueries: ['q2'] },
+          { headline: 'Section 3', goal: 'Goal 3', researchQueries: ['q3'] },
+        ],
+      };
+
+      const issues = validateArticlePlan(plan);
+      const warnings = getWarnings(issues);
+
+      expect(warnings.some((w) => w.message.includes('title duplicates section headline'))).toBe(true);
+    });
+  });
+
+  describe('tag validation', () => {
+    it('returns error when fewer than minimum tags', () => {
+      const plan = {
+        ...createValidPlan(),
+        tags: [],
+      };
+
+      const issues = validateArticlePlan(plan);
+      const errors = getErrors(issues);
+
+      expect(errors.some((e) => e.message.includes('tags') && e.message.includes('minimum'))).toBe(true);
+    });
+
+    it('returns error for empty tag strings', () => {
+      const plan = {
+        ...createValidPlan(),
+        tags: ['valid', '', '  '],
+      };
+
+      const issues = validateArticlePlan(plan);
+      const errors = getErrors(issues);
+
+      expect(errors.some((e) => e.message.includes('empty tag'))).toBe(true);
+    });
+
+    it('accepts valid tags', () => {
+      const plan = createValidPlan();
+      const issues = validateArticlePlan(plan);
+      const errors = getErrors(issues);
+
+      expect(errors.filter((e) => e.message.includes('tag'))).toHaveLength(0);
+    });
+  });
+
+  describe('complete valid plan', () => {
+    it('returns no errors for a valid plan', () => {
+      const plan = createValidPlan();
+      const issues = validateArticlePlan(plan);
+      const errors = getErrors(issues);
+
+      expect(errors).toHaveLength(0);
+    });
+
+    it('accepts plan with optional gameSlug', () => {
+      const plan = {
+        ...createValidPlan(),
+        gameSlug: 'elden-ring',
+      };
+      const issues = validateArticlePlan(plan);
+      const errors = getErrors(issues);
+
+      expect(errors).toHaveLength(0);
+    });
   });
 });
 

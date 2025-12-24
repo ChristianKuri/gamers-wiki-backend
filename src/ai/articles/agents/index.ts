@@ -22,6 +22,6 @@ export {
   type ScoutProgressCallback,
   type ExecuteSearchOptions,
 } from './scout';
-export { runEditor, EDITOR_CONFIG, type EditorDeps } from './editor';
+export { runEditor, EDITOR_CONFIG, type EditorDeps, type EditorOutput } from './editor';
 export { runSpecialist, SPECIALIST_CONFIG, type SpecialistDeps, type SpecialistOutput } from './specialist';
 

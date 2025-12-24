@@ -7,7 +7,8 @@
 
 import { z } from 'zod';
 
-import { ARTICLE_PLAN_CONSTRAINTS, ArticleCategorySlugSchema, type ArticlePlan } from './article-plan';
+import { ArticleCategorySlugSchema, type ArticlePlan } from './article-plan';
+import { ARTICLE_PLAN_CONSTRAINTS } from './config';
 import aiClichesData from './data/ai-cliches.json';
 import { countContentH2Sections, getContentH2Sections, stripSourcesSection } from './markdown-utils';
 import type { ValidationIssue, ValidationSeverity } from './types';
@@ -291,6 +292,97 @@ export function validateArticleDraft(draft: {
 
   // Content quality validation
   issues.push(...validateContentQuality(draft.markdown));
+
+  return issues;
+}
+
+/**
+ * Validates an article plan before passing to the Specialist agent.
+ * Catches malformed plans early to avoid wasting expensive API calls.
+ *
+ * @param plan - The article plan to validate
+ * @returns Array of validation issues (empty if valid)
+ *
+ * @example
+ * const issues = validateArticlePlan(plan);
+ * const errors = getErrors(issues);
+ * if (errors.length > 0) {
+ *   throw new ArticleGenerationError('EDITOR_FAILED', errors.map(e => e.message).join('; '));
+ * }
+ */
+export function validateArticlePlan(plan: ArticlePlan): ValidationIssue[] {
+  const issues: ValidationIssue[] = [];
+  const C = ARTICLE_PLAN_CONSTRAINTS;
+
+  // Validate section count
+  if (plan.sections.length < C.MIN_SECTIONS) {
+    issues.push(issue('error', `Plan has only ${plan.sections.length} sections (minimum ${C.MIN_SECTIONS})`));
+  }
+  if (plan.sections.length > C.MAX_SECTIONS) {
+    issues.push(issue('error', `Plan has ${plan.sections.length} sections (maximum ${C.MAX_SECTIONS})`));
+  }
+
+  // Validate section headlines are unique
+  const headlineSet = new Set<string>();
+  const duplicateHeadlines: string[] = [];
+  for (const section of plan.sections) {
+    const normalizedHeadline = section.headline.trim().toLowerCase();
+    if (headlineSet.has(normalizedHeadline)) {
+      duplicateHeadlines.push(section.headline);
+    }
+    headlineSet.add(normalizedHeadline);
+  }
+  if (duplicateHeadlines.length > 0) {
+    issues.push(issue('error', `Duplicate section headlines: ${duplicateHeadlines.join(', ')}`));
+  }
+
+  // Validate each section has non-empty content
+  plan.sections.forEach((section, idx) => {
+    // Check for empty headline
+    if (!section.headline.trim()) {
+      issues.push(issue('error', `Section ${idx + 1} has an empty headline`));
+    }
+
+    // Check for empty goal
+    if (!section.goal.trim()) {
+      issues.push(issue('error', `Section ${idx + 1} "${section.headline}" has an empty goal`));
+    }
+
+    // Check for research queries
+    if (section.researchQueries.length < C.MIN_RESEARCH_QUERIES_PER_SECTION) {
+      issues.push(
+        issue(
+          'error',
+          `Section ${idx + 1} "${section.headline}" has only ${section.researchQueries.length} research queries ` +
+            `(minimum ${C.MIN_RESEARCH_QUERIES_PER_SECTION})`
+        )
+      );
+    }
+
+    // Check for empty research queries
+    const emptyQueries = section.researchQueries.filter((q) => !q.trim());
+    if (emptyQueries.length > 0) {
+      issues.push(issue('error', `Section ${idx + 1} "${section.headline}" has ${emptyQueries.length} empty research query(ies)`));
+    }
+  });
+
+  // Validate title doesn't duplicate a section headline
+  const titleNormalized = plan.title.trim().toLowerCase();
+  for (const section of plan.sections) {
+    if (section.headline.trim().toLowerCase() === titleNormalized) {
+      issues.push(issue('warning', `Article title duplicates section headline: "${section.headline}"`));
+      break;
+    }
+  }
+
+  // Validate tags
+  if (plan.tags.length < C.MIN_TAGS) {
+    issues.push(issue('error', `Plan has only ${plan.tags.length} tags (minimum ${C.MIN_TAGS})`));
+  }
+  const emptyTags = plan.tags.filter((t) => !t.trim());
+  if (emptyTags.length > 0) {
+    issues.push(issue('error', `Plan has ${emptyTags.length} empty tag(s)`));
+  }
 
   return issues;
 }
