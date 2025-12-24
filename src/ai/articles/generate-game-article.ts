@@ -2,12 +2,15 @@
  * Game Article Generator
  *
  * Multi-agent article generation system that produces high-quality,
- * well-researched gaming articles.
+ * well-researched gaming articles in English.
  *
  * Architecture:
  * - Scout: Gathers comprehensive research from multiple sources
  * - Editor: Plans article structure based on research
  * - Specialist: Writes sections using research and plan
+ *
+ * Note: Articles are always generated in English. Translation to other
+ * languages (e.g., Spanish) is handled by a separate translation agent.
  *
  * @example
  * import { generateGameArticleDraft } from '@/ai/articles';
@@ -16,11 +19,11 @@
  *   gameName: 'Elden Ring',
  *   genres: ['Action RPG', 'Soulslike'],
  *   instruction: 'Write a beginner guide',
- * }, 'en');
+ * });
  *
  * @example
  * // With progress callback
- * const draft = await generateGameArticleDraft(context, 'en', undefined, {
+ * const draft = await generateGameArticleDraft(context, undefined, {
  *   onProgress: (phase, progress, message) => {
  *     console.log(`[${phase}] ${progress}%: ${message}`);
  *   },
@@ -40,14 +43,9 @@ import type {
   ArticleProgressCallback,
   GameArticleContext,
   GameArticleDraft,
-  SupportedLocale,
 } from './types';
 import { createErrorWithCause } from './types';
 import { validateArticleDraft, validateGameArticleContext, getErrors, getWarnings } from './validation';
-
-// Re-export types for consumers
-export type { GameArticleContext, GameArticleDraft, SupportedLocale, ArticleProgressCallback } from './types';
-export type { ArticlePlan, ArticleCategorySlug, ARTICLE_PLAN_CONSTRAINTS } from './article-plan';
 
 // ============================================================================
 // Configuration
@@ -75,7 +73,7 @@ export interface ArticleGeneratorDeps {
 export interface ArticleGeneratorOptions {
   /**
    * Optional callback for monitoring generation progress.
-   * Called at the start and end of each phase.
+   * Called at the start and end of each phase, and for each section during Specialist phase.
    */
   readonly onProgress?: ArticleProgressCallback;
 }
@@ -109,9 +107,9 @@ function createDefaultDeps(): ArticleGeneratorDeps {
 
 /**
  * Generates a complete game article draft using the multi-agent system.
+ * Articles are always generated in English.
  *
  * @param context - Game context including name, metadata, and optional instruction
- * @param locale - Target locale ('en' or 'es')
  * @param deps - Optional dependencies for testing (defaults to production deps)
  * @param options - Optional configuration (progress callback, etc.)
  * @returns Complete article draft with markdown, sources, and metadata
@@ -130,11 +128,11 @@ function createDefaultDeps(): ArticleGeneratorDeps {
  *   platforms: ['Nintendo Switch'],
  *   developer: 'Nintendo',
  *   instruction: 'Write a beginner guide for the first 5 hours.',
- * }, 'en');
+ * });
  *
  * @example
  * // Testing with mocked dependencies
- * const draft = await generateGameArticleDraft(context, 'en', {
+ * const draft = await generateGameArticleDraft(context, {
  *   openrouter: mockOpenRouter,
  *   search: mockSearch,
  *   generateText: mockGenerateText,
@@ -143,7 +141,7 @@ function createDefaultDeps(): ArticleGeneratorDeps {
  *
  * @example
  * // With progress callback
- * const draft = await generateGameArticleDraft(context, 'en', undefined, {
+ * const draft = await generateGameArticleDraft(context, undefined, {
  *   onProgress: (phase, progress, message) => {
  *     console.log(`[${phase}] ${progress}%: ${message}`);
  *   },
@@ -151,7 +149,6 @@ function createDefaultDeps(): ArticleGeneratorDeps {
  */
 export async function generateGameArticleDraft(
   context: GameArticleContext,
-  locale: SupportedLocale,
   deps?: ArticleGeneratorDeps,
   options?: ArticleGeneratorOptions
 ): Promise<GameArticleDraft> {
@@ -187,7 +184,7 @@ export async function generateGameArticleDraft(
 
   let scoutOutput;
   try {
-    scoutOutput = await runScout(context, locale, {
+    scoutOutput = await runScout(context, {
       search,
       generateText: genText,
       model: openrouter(scoutModel),
@@ -215,7 +212,7 @@ export async function generateGameArticleDraft(
 
   let plan;
   try {
-    plan = await runEditor(context, locale, scoutOutput, {
+    plan = await runEditor(context, scoutOutput, {
       generateObject: genObject,
       model: openrouter(editorModel),
       logger: createPrefixedLogger('[Editor]'),
@@ -243,11 +240,16 @@ export async function generateGameArticleDraft(
   let sources: readonly string[];
   let finalResearchPool;
   try {
-    const specialistResult = await runSpecialist(context, locale, scoutOutput, plan, {
+    const specialistResult = await runSpecialist(context, scoutOutput, plan, {
       search,
       generateText: genText,
       model: openrouter(specialistModel),
       logger: createPrefixedLogger('[Specialist]'),
+      onSectionProgress: (current, total, headline) => {
+        // Report granular progress during section writing (10-90% of specialist phase)
+        const sectionProgress = Math.round(10 + (current / total) * 80);
+        onProgress?.('specialist', sectionProgress, `Writing section ${current}/${total}: ${headline}`);
+      },
     });
     markdown = specialistResult.markdown;
     sources = specialistResult.sources;
@@ -281,7 +283,7 @@ export async function generateGameArticleDraft(
     plan,
   };
 
-  const validationIssues = validateArticleDraft(draft, locale);
+  const validationIssues = validateArticleDraft(draft);
   const errors = getErrors(validationIssues);
   const warnings = getWarnings(validationIssues);
 

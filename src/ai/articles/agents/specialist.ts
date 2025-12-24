@@ -28,7 +28,7 @@ import type {
   ResearchPool,
   ScoutOutput,
   SearchFunction,
-  SupportedLocale,
+  SectionProgressCallback,
 } from '../types';
 
 // ============================================================================
@@ -62,6 +62,8 @@ export interface SpecialistDeps {
   readonly generateText: typeof import('ai').generateText;
   readonly model: LanguageModel;
   readonly logger?: Logger;
+  /** Optional callback for reporting section writing progress */
+  readonly onSectionProgress?: SectionProgressCallback;
 }
 
 export interface SpecialistOutput {
@@ -175,23 +177,22 @@ function ensureUniqueStrings(values: readonly string[], max: number): string[] {
 
 /**
  * Runs the Specialist agent to write article sections.
+ * Articles are always written in English.
  *
  * @param context - Game context
- * @param locale - Target locale
  * @param scoutOutput - Research from Scout agent
  * @param plan - Article plan from Editor agent
- * @param deps - Dependencies (search, generateText, model)
+ * @param deps - Dependencies (search, generateText, model, onSectionProgress)
  * @returns Written markdown, sources, and final research pool
  */
 export async function runSpecialist(
   context: GameArticleContext,
-  locale: SupportedLocale,
   scoutOutput: ScoutOutput,
   plan: ArticlePlan,
   deps: SpecialistDeps
 ): Promise<SpecialistOutput> {
   const log = deps.logger ?? createPrefixedLogger('[Specialist]');
-  const localeInstruction = locale === 'es' ? 'Write in Spanish.' : 'Write in English.';
+  const localeInstruction = 'Write in English.';
   const categoryToneGuide = getCategoryToneGuide(plan.categorySlug);
 
   // ===== BATCH RESEARCH PHASE =====
@@ -248,6 +249,9 @@ export async function runSpecialist(
     };
 
     log.debug(`Writing section ${i + 1}/${plan.sections.length}: ${section.headline}`);
+
+    // Report progress before writing each section
+    deps.onSectionProgress?.(i + 1, plan.sections.length, section.headline);
 
     const { text } = await deps.generateText({
       model: deps.model,

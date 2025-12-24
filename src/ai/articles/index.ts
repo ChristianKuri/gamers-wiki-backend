@@ -1,7 +1,8 @@
 /**
  * Article Generation Module
  *
- * Multi-agent system for generating high-quality game articles.
+ * Multi-agent system for generating high-quality game articles in English.
+ * Translation to other languages is handled separately.
  *
  * @example
  * import { generateGameArticleDraft } from '@/ai/articles';
@@ -9,7 +10,7 @@
  * const draft = await generateGameArticleDraft({
  *   gameName: 'Elden Ring',
  *   instruction: 'Write a beginner guide',
- * }, 'en');
+ * });
  */
 
 // Main generator
@@ -29,10 +30,10 @@ export type {
   SearchResultItem,
   ValidationIssue,
   CategoryHint,
-  SupportedLocale,
   ArticleGenerationMetadata,
   ArticleProgressCallback,
   ArticleGenerationPhase,
+  SectionProgressCallback,
 } from './types';
 
 // Article plan types and utilities

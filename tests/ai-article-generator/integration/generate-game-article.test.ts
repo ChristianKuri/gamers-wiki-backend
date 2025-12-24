@@ -31,26 +31,24 @@ describe('generateGameArticleDraft (integration-ish)', () => {
   });
 
   it('generates a draft with markdown headings and Sources section (Tavily mocked)', async () => {
-    const draft = await generateGameArticleDraft(
-      {
-        gameName: 'The Legend of Zelda: Tears of the Kingdom',
-        gameSlug: 'the-legend-of-zelda-tears-of-the-kingdom',
-        releaseDate: '2023-05-12',
-        genres: ['Adventure', 'Action'],
-        platforms: ['Nintendo Switch'],
-        developer: 'Nintendo',
-        publisher: 'Nintendo',
-        igdbDescription: 'A sequel to Breath of the Wild.',
-        instruction: 'Write a beginner guide for the first 5 hours.',
-        categoryHints: [
-          { slug: 'news', systemPrompt: 'Time-sensitive reporting and announcements.' },
-          { slug: 'reviews', systemPrompt: 'Critical evaluation (no numeric score required).' },
-          { slug: 'guides', systemPrompt: 'Step-by-step help and actionable tips.' },
-          { slug: 'lists', systemPrompt: 'Ranked or curated lists.' },
-        ],
-      },
-      'en'
-    );
+    // Articles are always generated in English
+    const draft = await generateGameArticleDraft({
+      gameName: 'The Legend of Zelda: Tears of the Kingdom',
+      gameSlug: 'the-legend-of-zelda-tears-of-the-kingdom',
+      releaseDate: '2023-05-12',
+      genres: ['Adventure', 'Action'],
+      platforms: ['Nintendo Switch'],
+      developer: 'Nintendo',
+      publisher: 'Nintendo',
+      igdbDescription: 'A sequel to Breath of the Wild.',
+      instruction: 'Write a beginner guide for the first 5 hours.',
+      categoryHints: [
+        { slug: 'news', systemPrompt: 'Time-sensitive reporting and announcements.' },
+        { slug: 'reviews', systemPrompt: 'Critical evaluation (no numeric score required).' },
+        { slug: 'guides', systemPrompt: 'Step-by-step help and actionable tips.' },
+        { slug: 'lists', systemPrompt: 'Ranked or curated lists.' },
+      ],
+    });
 
     expect(draft.title).toBeTruthy();
     expect(['news', 'reviews', 'guides', 'lists']).toContain(draft.categorySlug);
@@ -67,13 +65,10 @@ describe('generateGameArticleDraft (integration-ish)', () => {
   it('gracefully handles Tavily errors (still returns markdown)', async () => {
     server.use(errorHandlers.tavilyError);
 
-    const draft = await generateGameArticleDraft(
-      {
-        gameName: 'Test Game',
-        instruction: 'Summarize what we know so far.',
-      },
-      'en'
-    );
+    const draft = await generateGameArticleDraft({
+      gameName: 'Test Game',
+      instruction: 'Summarize what we know so far.',
+    });
 
     expect(draft.title).toBeTruthy();
     expect(draft.markdown).toMatch(/^#\s+/m);
@@ -82,8 +77,11 @@ describe('generateGameArticleDraft (integration-ish)', () => {
   it('deduplicates duplicate section research queries to avoid redundant Tavily searches', async () => {
     const duplicateQuery = 'duplicate section query (should only run once)';
     const tavilyQueries: string[] = [];
+    // Must be long enough that 3 sections + title + sources exceeds MIN_MARKDOWN_LENGTH (500)
     const longGenericText =
-      'This is a sufficiently long generic mock response to satisfy Scout validation checks and keep the pipeline moving during tests.';
+      'This is a sufficiently long generic mock response to satisfy Scout validation checks and keep the pipeline moving during tests. ' +
+      'The content here is deliberately verbose and repetitive to ensure the generated article meets the minimum character requirements. ' +
+      'Without this padding, the validation would fail because the article would be too short.';
 
     server.use(
       http.post('https://api.tavily.com/search', async ({ request }) => {
@@ -230,13 +228,10 @@ describe('generateGameArticleDraft (integration-ish)', () => {
       })
     );
 
-    await generateGameArticleDraft(
-      {
-        gameName: 'Test Game',
-        instruction: 'Write a beginner guide for the first 5 hours.',
-      },
-      'en'
-    );
+    await generateGameArticleDraft({
+      gameName: 'Test Game',
+      instruction: 'Write a beginner guide for the first 5 hours.',
+    });
 
     // Scout searches will add additional Tavily calls; we only care that this specific
     // section-specific query is executed once.

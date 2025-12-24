@@ -2,12 +2,10 @@
  * Article Generation Types
  *
  * Shared types for the multi-agent article generation system.
+ * Articles are always generated in English; translation to other languages is a separate process.
  */
 
 import type { ArticleCategorySlug, ArticlePlan } from './article-plan';
-
-// Re-export SupportedLocale from config as the single source of truth
-export type { SupportedLocale } from '../config/types';
 
 // ============================================================================
 // Error Types
@@ -198,6 +196,15 @@ export type ArticleProgressCallback = (
   progress: number,
   message?: string
 ) => void;
+
+/**
+ * Callback for monitoring section writing progress within the Specialist phase.
+ *
+ * @param current - Current section number (1-indexed)
+ * @param total - Total number of sections
+ * @param headline - Headline of the section being written
+ */
+export type SectionProgressCallback = (current: number, total: number, headline: string) => void;
 
 // ============================================================================
 // Validation Types

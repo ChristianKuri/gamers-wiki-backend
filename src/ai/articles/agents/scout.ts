@@ -29,7 +29,6 @@ import type {
   ResearchPool,
   ScoutOutput,
   SearchFunction,
-  SupportedLocale,
 } from '../types';
 
 // ============================================================================
@@ -173,19 +172,18 @@ ${context.instruction ? `\nUser Directive: ${context.instruction}` : ''}`;
 
 /**
  * Runs the Scout agent to gather research about a game.
+ * Research and briefings are always generated in English.
  *
  * @param context - Game context for research
- * @param locale - Target locale for briefings
  * @param deps - Dependencies (search, generateText, model)
  * @returns Scout output with briefings and research pool
  */
 export async function runScout(
   context: GameArticleContext,
-  locale: SupportedLocale,
   deps: ScoutDeps
 ): Promise<ScoutOutput> {
   const log = deps.logger ?? createPrefixedLogger('[Scout]');
-  const localeInstruction = locale === 'es' ? 'Write in Spanish.' : 'Write in English.';
+  const localeInstruction = 'Write in English.';
 
   // Build search queries
   const queries = buildScoutQueries(context);

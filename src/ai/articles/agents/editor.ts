@@ -8,7 +8,12 @@
 import type { LanguageModel } from 'ai';
 
 import { createPrefixedLogger, type Logger } from '../../../utils/logger';
-import { ArticlePlanSchema, type ArticlePlan } from '../article-plan';
+import {
+  ArticlePlanSchema,
+  normalizeArticleCategorySlug,
+  type ArticlePlan,
+  type ArticleCategorySlugInput,
+} from '../article-plan';
 import {
   buildCategoryHintsSection,
   buildExistingResearchSummary,
@@ -16,7 +21,7 @@ import {
   getEditorUserPrompt,
   type EditorPromptContext,
 } from '../prompts';
-import type { CategoryHint, GameArticleContext, ScoutOutput, SupportedLocale } from '../types';
+import type { GameArticleContext, ScoutOutput } from '../types';
 
 // ============================================================================
 // Configuration
@@ -43,22 +48,20 @@ export interface EditorDeps {
 
 /**
  * Runs the Editor agent to create an article plan.
+ * Plans are always generated in English.
  *
  * @param context - Game context for the article
- * @param locale - Target locale
  * @param scoutOutput - Research from Scout agent
  * @param deps - Dependencies (generateObject, model)
  * @returns Article plan with sections and metadata
  */
 export async function runEditor(
   context: GameArticleContext,
-  locale: SupportedLocale,
   scoutOutput: ScoutOutput,
   deps: EditorDeps
 ): Promise<ArticlePlan> {
   const log = deps.logger ?? createPrefixedLogger('[Editor]');
-  const localeInstruction =
-    locale === 'es' ? 'Write all strings in Spanish.' : 'Write all strings in English.';
+  const localeInstruction = 'Write all strings in English.';
 
   const categoryHintsSection = buildCategoryHintsSection(context.categoryHints);
   const existingResearchSummary = buildExistingResearchSummary(
@@ -82,7 +85,7 @@ export async function runEditor(
 
   log.debug('Generating article plan...');
 
-  const { object: plan } = await deps.generateObject({
+  const { object: rawPlan } = await deps.generateObject({
     model: deps.model,
     temperature: EDITOR_CONFIG.TEMPERATURE,
     schema: ArticlePlanSchema,
@@ -90,11 +93,20 @@ export async function runEditor(
     prompt: getEditorUserPrompt(promptContext),
   });
 
+  // Normalize categorySlug (AI may output aliases like 'guide' instead of 'guides')
+  const normalizedCategorySlug = normalizeArticleCategorySlug(
+    rawPlan.categorySlug as ArticleCategorySlugInput
+  );
+
+  const plan: ArticlePlan = {
+    ...rawPlan,
+    categorySlug: normalizedCategorySlug,
+  };
+
   log.debug(
     `Plan generated: ${plan.categorySlug} article with ${plan.sections.length} sections`
   );
 
-  // Schema auto-normalizes categorySlug via transform
   return plan;
 }
 

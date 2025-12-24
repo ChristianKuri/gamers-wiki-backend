@@ -7,28 +7,53 @@ import { z } from 'zod';
 /**
  * Constraints for article plan validation.
  * Used by Zod schema, validation.ts, and prompts for consistency.
+ * ALL validation constants should live here - no magic numbers elsewhere.
  */
 export const ARTICLE_PLAN_CONSTRAINTS = {
-  TITLE_MIN_LENGTH: 1,
+  // Title constraints
+  TITLE_MIN_LENGTH: 10,
   TITLE_MAX_LENGTH: 100,
+  TITLE_RECOMMENDED_MAX_LENGTH: 70,
+
+  // Excerpt constraints (for SEO meta description)
   EXCERPT_MIN_LENGTH: 120,
   EXCERPT_MAX_LENGTH: 160,
+
+  // Section constraints
   MIN_SECTIONS: 3,
   MAX_SECTIONS: 12,
+  MIN_SECTION_LENGTH: 100,
+
+  // Tags constraints
+  MIN_TAGS: 1,
   MAX_TAGS: 10,
+
+  // Research query constraints
   MIN_RESEARCH_QUERIES_PER_SECTION: 1,
   MAX_RESEARCH_QUERIES_PER_SECTION: 6,
+
+  // Markdown constraints
+  MIN_MARKDOWN_LENGTH: 500,
 } as const;
 
 // ============================================================================
-// Category Slug Schema (with auto-normalization)
+// Category Slug Schema
 // ============================================================================
 
 /** Canonical category slugs (plural form) */
 export type ArticleCategorySlug = 'news' | 'reviews' | 'guides' | 'lists';
 
-/** Input accepts both canonical and alias forms */
-const ArticleCategorySlugInputSchema = z.enum([
+/** Input that also accepts alias forms for backwards compatibility */
+export type ArticleCategorySlugInput = ArticleCategorySlug | 'review' | 'guide' | 'list';
+
+/**
+ * Schema for category slugs that accepts canonical and alias forms.
+ *
+ * NOTE: This schema does NOT use .transform() because Zod transforms
+ * cannot be represented in JSON Schema (required by AI SDK's generateObject).
+ * Use normalizeArticleCategorySlug() to convert aliases after parsing.
+ */
+export const ArticleCategorySlugSchema = z.enum([
   'news',
   'reviews',
   'guides',
@@ -39,10 +64,13 @@ const ArticleCategorySlugInputSchema = z.enum([
   'list',
 ]);
 
-export type ArticleCategorySlugInput = z.infer<typeof ArticleCategorySlugInputSchema>;
-
 /**
  * Normalizes category slug aliases to canonical form.
+ * Call this AFTER parsing with ArticleCategorySlugSchema.
+ *
+ * @example
+ * const parsed = ArticleCategorySlugSchema.parse(input);
+ * const normalized = normalizeArticleCategorySlug(parsed);
  */
 export function normalizeArticleCategorySlug(value: ArticleCategorySlugInput): ArticleCategorySlug {
   if (value === 'review') return 'reviews';
@@ -50,14 +78,6 @@ export function normalizeArticleCategorySlug(value: ArticleCategorySlugInput): A
   if (value === 'list') return 'lists';
   return value;
 }
-
-/**
- * Schema that validates and auto-normalizes category slugs.
- * Accepts aliases ('guide', 'review', 'list') and outputs canonical form ('guides', 'reviews', 'lists').
- */
-export const ArticleCategorySlugSchema = ArticleCategorySlugInputSchema.transform(
-  normalizeArticleCategorySlug
-);
 
 // ============================================================================
 // Section Plan Schema
@@ -78,11 +98,17 @@ export type ArticleSectionPlan = z.infer<typeof ArticleSectionPlanSchema>;
 // Article Plan Schema
 // ============================================================================
 
+/**
+ * Article plan schema for AI SDK's generateObject.
+ *
+ * NOTE: categorySlug accepts aliases but does NOT auto-normalize.
+ * The Editor agent normalizes after parsing.
+ */
 export const ArticlePlanSchema = z.object({
   title: z
     .string()
-    .min(ARTICLE_PLAN_CONSTRAINTS.TITLE_MIN_LENGTH)
-    .max(ARTICLE_PLAN_CONSTRAINTS.TITLE_MAX_LENGTH),
+    .min(ARTICLE_PLAN_CONSTRAINTS.TITLE_MIN_LENGTH, `Title too short (minimum ${ARTICLE_PLAN_CONSTRAINTS.TITLE_MIN_LENGTH} characters)`)
+    .max(ARTICLE_PLAN_CONSTRAINTS.TITLE_MAX_LENGTH, `Title too long (maximum ${ARTICLE_PLAN_CONSTRAINTS.TITLE_MAX_LENGTH} characters)`),
   categorySlug: ArticleCategorySlugSchema,
   excerpt: z
     .string()
@@ -102,6 +128,17 @@ export const ArticlePlanSchema = z.object({
 });
 
 /**
- * Article plan type - inferred from schema with auto-normalized categorySlug.
+ * Article plan type with normalized categorySlug (canonical form).
+ * This is the type used throughout the system after Editor normalizes the plan.
  */
-export type ArticlePlan = z.infer<typeof ArticlePlanSchema>;
+export interface ArticlePlan {
+  readonly title: string;
+  readonly categorySlug: ArticleCategorySlug;
+  readonly excerpt: string;
+  readonly tags: readonly string[];
+  readonly sections: readonly ArticleSectionPlan[];
+  readonly safety: {
+    readonly noPrices: true;
+    readonly noScoresUnlessReview: boolean;
+  };
+}

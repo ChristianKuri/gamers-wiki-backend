@@ -7,7 +7,7 @@
 
 import { z } from 'zod';
 
-import { ARTICLE_PLAN_CONSTRAINTS, type ArticlePlan } from './article-plan';
+import { ARTICLE_PLAN_CONSTRAINTS, ArticleCategorySlugSchema, type ArticlePlan } from './article-plan';
 import { countContentH2Sections, getContentH2Sections, stripSourcesSection } from './markdown-utils';
 import type { ValidationIssue, ValidationSeverity } from './types';
 
@@ -17,12 +17,11 @@ import type { ValidationIssue, ValidationSeverity } from './types';
 
 /**
  * AI clichés and overused phrases to detect.
- * Configurable per locale if needed.
+ * Articles are generated in English; translation to other languages is a separate process.
  */
 export const AI_CLICHES: readonly {
   readonly phrase: string;
   readonly context: string;
-  readonly locale?: 'en' | 'es';
 }[] = [
   { phrase: 'in conclusion', context: 'conclusion cliché' },
   { phrase: "let's dive into", context: 'conversational filler' },
@@ -36,11 +35,9 @@ export const AI_CLICHES: readonly {
   { phrase: 'utilize', context: 'unnecessarily formal (use "use")' },
   { phrase: 'at the end of the day', context: 'filler phrase' },
   { phrase: 'needless to say', context: 'redundant phrase' },
-  // Spanish clichés
-  { phrase: 'en conclusión', context: 'conclusion cliché', locale: 'es' },
-  { phrase: 'sin más preámbulos', context: 'unnecessary preamble', locale: 'es' },
-  { phrase: 'cabe destacar', context: 'hedging phrase', locale: 'es' },
-  { phrase: 'revolucionario', context: 'marketing hyperbole', locale: 'es' },
+  { phrase: 'dive deep', context: 'overused metaphor' },
+  { phrase: 'a must-have', context: 'marketing cliché' },
+  { phrase: 'stands out', context: 'vague praise' },
 ];
 
 /**
@@ -76,9 +73,9 @@ export const ALLOWED_SENTENCE_START_REPEATS = new Set([
 
 /**
  * Currency symbols to detect in content (policy violation).
- * Supports USD, EUR, GBP, JPY.
+ * Supports major world currencies: USD, EUR, GBP, JPY, INR, KRW, RUB, THB/BTC.
  */
-const CURRENCY_PATTERN = /[$€£¥]\s*\d+/;
+const CURRENCY_PATTERN = /[$€£¥₹₩₽฿]\s*\d+/;
 
 // ============================================================================
 // Zod Schemas
@@ -86,23 +83,23 @@ const CURRENCY_PATTERN = /[$€£¥]\s*\d+/;
 
 /**
  * Schema for validating article draft structure.
- * Uses shared constraints from article-plan.ts.
+ * Uses shared constraints from article-plan.ts for consistency.
  */
 export const GameArticleDraftSchema = z.object({
   title: z
     .string()
-    .min(10, 'Title is too short (minimum 10 characters)')
-    .max(ARTICLE_PLAN_CONSTRAINTS.TITLE_MAX_LENGTH, `Title is too long (maximum ${ARTICLE_PLAN_CONSTRAINTS.TITLE_MAX_LENGTH} characters)`),
-  categorySlug: z.enum(['news', 'reviews', 'guides', 'lists']),
+    .min(ARTICLE_PLAN_CONSTRAINTS.TITLE_MIN_LENGTH, `Title too short (minimum ${ARTICLE_PLAN_CONSTRAINTS.TITLE_MIN_LENGTH} characters)`)
+    .max(ARTICLE_PLAN_CONSTRAINTS.TITLE_MAX_LENGTH, `Title too long (maximum ${ARTICLE_PLAN_CONSTRAINTS.TITLE_MAX_LENGTH} characters)`),
+  categorySlug: ArticleCategorySlugSchema,
   excerpt: z
     .string()
     .min(ARTICLE_PLAN_CONSTRAINTS.EXCERPT_MIN_LENGTH, `Excerpt too short (minimum ${ARTICLE_PLAN_CONSTRAINTS.EXCERPT_MIN_LENGTH} characters)`)
     .max(ARTICLE_PLAN_CONSTRAINTS.EXCERPT_MAX_LENGTH, `Excerpt too long (maximum ${ARTICLE_PLAN_CONSTRAINTS.EXCERPT_MAX_LENGTH} characters)`),
   tags: z
     .array(z.string().min(1))
-    .min(1, 'At least one tag is required')
+    .min(ARTICLE_PLAN_CONSTRAINTS.MIN_TAGS, `At least ${ARTICLE_PLAN_CONSTRAINTS.MIN_TAGS} tag required`)
     .max(ARTICLE_PLAN_CONSTRAINTS.MAX_TAGS, `Too many tags (maximum ${ARTICLE_PLAN_CONSTRAINTS.MAX_TAGS})`),
-  markdown: z.string().min(500, 'Article content too short'),
+  markdown: z.string().min(ARTICLE_PLAN_CONSTRAINTS.MIN_MARKDOWN_LENGTH, `Article content too short (minimum ${ARTICLE_PLAN_CONSTRAINTS.MIN_MARKDOWN_LENGTH} characters)`),
   sources: z.array(z.string().url('Invalid source URL')),
 });
 
@@ -120,7 +117,8 @@ function issue(severity: ValidationSeverity, message: string): ValidationIssue {
 }
 
 /**
- * Validates the basic structure of a draft using Zod.
+ * Validates the basic structure of a draft.
+ * Uses constraints from ARTICLE_PLAN_CONSTRAINTS for consistency.
  */
 function validateStructure(draft: {
   title: string;
@@ -130,44 +128,50 @@ function validateStructure(draft: {
   sources: readonly string[];
 }): ValidationIssue[] {
   const issues: ValidationIssue[] = [];
+  const C = ARTICLE_PLAN_CONSTRAINTS;
 
   // Excerpt length
-  if (draft.excerpt.length < 120) {
-    issues.push(issue('error', `Excerpt too short: ${draft.excerpt.length} characters (minimum 120)`));
+  if (draft.excerpt.length < C.EXCERPT_MIN_LENGTH) {
+    issues.push(issue('error', `Excerpt too short: ${draft.excerpt.length} characters (minimum ${C.EXCERPT_MIN_LENGTH})`));
   }
-  if (draft.excerpt.length > 160) {
-    issues.push(issue('error', `Excerpt too long: ${draft.excerpt.length} characters (maximum 160)`));
+  if (draft.excerpt.length > C.EXCERPT_MAX_LENGTH) {
+    issues.push(issue('error', `Excerpt too long: ${draft.excerpt.length} characters (maximum ${C.EXCERPT_MAX_LENGTH})`));
   }
 
   // Title
-  if (!draft.title || draft.title.length < 10) {
-    issues.push(issue('error', 'Title is too short or missing'));
+  if (!draft.title || draft.title.length < C.TITLE_MIN_LENGTH) {
+    issues.push(issue('error', `Title too short or missing (minimum ${C.TITLE_MIN_LENGTH} characters)`));
   }
-  if (draft.title.length > 100) {
-    issues.push(issue('warning', `Title is quite long: ${draft.title.length} characters (recommended: 50-70)`));
+  if (draft.title.length > C.TITLE_RECOMMENDED_MAX_LENGTH) {
+    issues.push(issue('warning', `Title is quite long: ${draft.title.length} characters (recommended: ≤${C.TITLE_RECOMMENDED_MAX_LENGTH})`));
+  }
+
+  // Markdown minimum length
+  if (draft.markdown.length < C.MIN_MARKDOWN_LENGTH) {
+    issues.push(issue('error', `Article content too short: ${draft.markdown.length} characters (minimum ${C.MIN_MARKDOWN_LENGTH})`));
   }
 
   // Sections
   const sectionCount = countContentH2Sections(draft.markdown);
-  if (sectionCount < 3) {
-    issues.push(issue('warning', `Only ${sectionCount} sections found (recommended: 4-8)`));
+  if (sectionCount < C.MIN_SECTIONS) {
+    issues.push(issue('warning', `Only ${sectionCount} sections found (minimum ${C.MIN_SECTIONS})`));
   }
 
   // Check for empty sections
   const sections = getContentH2Sections(draft.markdown);
   sections.forEach((section, idx) => {
     const content = section.content.trim();
-    if (content.length < 100) {
-      issues.push(issue('warning', `Section ${idx + 1} appears very short (${content.length} characters)`));
+    if (content.length < C.MIN_SECTION_LENGTH) {
+      issues.push(issue('warning', `Section ${idx + 1} appears very short (${content.length} characters, minimum ${C.MIN_SECTION_LENGTH})`));
     }
   });
 
   // Tags
-  if (draft.tags.length === 0) {
-    issues.push(issue('warning', 'No tags were generated'));
+  if (draft.tags.length < C.MIN_TAGS) {
+    issues.push(issue('warning', `Not enough tags: ${draft.tags.length} (minimum ${C.MIN_TAGS})`));
   }
-  if (draft.tags.length > 10) {
-    issues.push(issue('error', `Too many tags: ${draft.tags.length} (maximum 10)`));
+  if (draft.tags.length > C.MAX_TAGS) {
+    issues.push(issue('error', `Too many tags: ${draft.tags.length} (maximum ${C.MAX_TAGS})`));
   }
 
   // Sources
@@ -192,8 +196,9 @@ function validateStructure(draft: {
 
 /**
  * Validates content quality and checks for common issues.
+ * Articles are always generated in English; translation is a separate process.
  */
-function validateContentQuality(markdown: string, locale: 'en' | 'es' = 'en'): ValidationIssue[] {
+function validateContentQuality(markdown: string): ValidationIssue[] {
   const issues: ValidationIssue[] = [];
   const contentMarkdown = stripSourcesSection(markdown);
 
@@ -202,7 +207,7 @@ function validateContentQuality(markdown: string, locale: 'en' | 'es' = 'en'): V
     issues.push(issue('warning', 'Article contains code fences (usually undesirable for prose)'));
   }
 
-  // Pricing information (supports USD, EUR, GBP, JPY)
+  // Pricing information (policy violation)
   if (CURRENCY_PATTERN.test(contentMarkdown)) {
     issues.push(issue('warning', 'Article contains pricing information or currency figures (verify policy compliance)'));
   }
@@ -219,9 +224,7 @@ function validateContentQuality(markdown: string, locale: 'en' | 'es' = 'en'): V
   const lowercaseMarkdown = contentMarkdown.toLowerCase();
   const foundCliches: string[] = [];
 
-  for (const { phrase, context, locale: clicheLocale } of AI_CLICHES) {
-    // Skip locale-specific clichés that don't match
-    if (clicheLocale && clicheLocale !== locale) continue;
+  for (const { phrase, context } of AI_CLICHES) {
     if (lowercaseMarkdown.includes(phrase)) {
       foundCliches.push(`"${phrase}" (${context})`);
     }
@@ -264,35 +267,32 @@ function validateContentQuality(markdown: string, locale: 'en' | 'es' = 'en'): V
 
 /**
  * Validates an article draft comprehensively.
+ * Articles are always generated in English; translation to other languages is a separate process.
  *
  * @param draft - The draft to validate
- * @param locale - The article locale for language-specific checks
  * @returns Array of validation issues (empty if valid)
  *
  * @example
- * const issues = validateArticleDraft(draft, 'en');
- * const errors = issues.filter(i => i.severity === 'error');
+ * const issues = validateArticleDraft(draft);
+ * const errors = getErrors(issues);
  * if (errors.length > 0) throw new Error(errors.map(e => e.message).join('; '));
  */
-export function validateArticleDraft(
-  draft: {
-    title: string;
-    categorySlug: string;
-    excerpt: string;
-    tags: readonly string[];
-    markdown: string;
-    sources: readonly string[];
-    plan: ArticlePlan;
-  },
-  locale: 'en' | 'es' = 'en'
-): ValidationIssue[] {
+export function validateArticleDraft(draft: {
+  title: string;
+  categorySlug: string;
+  excerpt: string;
+  tags: readonly string[];
+  markdown: string;
+  sources: readonly string[];
+  plan: ArticlePlan;
+}): ValidationIssue[] {
   const issues: ValidationIssue[] = [];
 
   // Structure validation
   issues.push(...validateStructure(draft));
 
   // Content quality validation
-  issues.push(...validateContentQuality(draft.markdown, locale));
+  issues.push(...validateContentQuality(draft.markdown));
 
   return issues;
 }
