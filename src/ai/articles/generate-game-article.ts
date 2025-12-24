@@ -56,6 +56,7 @@ import { countContentH2Sections } from './markdown-utils';
 import { withRetry } from './retry';
 import {
   ArticleGenerationError,
+  type ArticleGenerationErrorCode,
   type ArticleGenerationMetadata,
   type ArticleProgressCallback,
   type GameArticleContext,
@@ -231,6 +232,127 @@ async function withTimeoutAndCancellation<T>(
 }
 
 // ============================================================================
+// Phase Execution Helper
+// ============================================================================
+
+/**
+ * Options for running a phase with error handling.
+ */
+interface RunPhaseOptions {
+  readonly signal: AbortSignal | undefined;
+  readonly startTime: number;
+  readonly timeoutMs: number;
+  readonly gameName: string;
+  readonly modelName: string;
+}
+
+/**
+ * Result of a phase execution including the output and duration.
+ */
+interface PhaseResult<T> {
+  readonly output: T;
+  readonly durationMs: number;
+}
+
+/**
+ * Runs a phase with timeout/cancellation support and standardized error handling.
+ *
+ * @param phaseName - Human-readable phase name (e.g., "Scout", "Editor")
+ * @param errorCode - Error code to use if the phase fails
+ * @param fn - Async function to execute
+ * @param options - Timeout, signal, and context options
+ * @returns Phase result with output and duration
+ *
+ * @throws ArticleGenerationError with 'TIMEOUT' if timeout exceeded
+ * @throws ArticleGenerationError with 'CANCELLED' if signal aborted
+ * @throws ArticleGenerationError with provided errorCode for other failures
+ */
+async function runPhase<T>(
+  phaseName: string,
+  errorCode: ArticleGenerationErrorCode,
+  fn: () => Promise<T>,
+  options: RunPhaseOptions
+): Promise<PhaseResult<T>> {
+  const phaseStartTime = Date.now();
+
+  try {
+    const output = await withTimeoutAndCancellation(
+      withRetry(fn, { context: `${phaseName} phase (model: ${options.modelName})` }),
+      options.signal,
+      options.startTime,
+      options.timeoutMs,
+      options.gameName,
+      phaseName
+    );
+
+    return {
+      output,
+      durationMs: Date.now() - phaseStartTime,
+    };
+  } catch (error) {
+    // Re-throw timeout/cancellation errors directly
+    if (
+      error instanceof ArticleGenerationError &&
+      (error.code === 'TIMEOUT' || error.code === 'CANCELLED')
+    ) {
+      throw error;
+    }
+
+    throw new ArticleGenerationError(
+      errorCode,
+      `Article generation failed during ${phaseName} phase for "${options.gameName}" (model: ${options.modelName}): ${error instanceof Error ? error.message : String(error)}`,
+      error instanceof Error ? error : undefined
+    );
+  }
+}
+
+/**
+ * Runs a phase WITHOUT top-level retry (for long operations with internal retry).
+ * Otherwise identical to runPhase.
+ *
+ * Use this for phases like Specialist where retry is applied internally
+ * to individual operations rather than the entire phase.
+ */
+async function runPhaseWithoutRetry<T>(
+  phaseName: string,
+  errorCode: ArticleGenerationErrorCode,
+  fn: () => Promise<T>,
+  options: RunPhaseOptions
+): Promise<PhaseResult<T>> {
+  const phaseStartTime = Date.now();
+
+  try {
+    const output = await withTimeoutAndCancellation(
+      fn(),
+      options.signal,
+      options.startTime,
+      options.timeoutMs,
+      options.gameName,
+      phaseName
+    );
+
+    return {
+      output,
+      durationMs: Date.now() - phaseStartTime,
+    };
+  } catch (error) {
+    // Re-throw timeout/cancellation errors directly
+    if (
+      error instanceof ArticleGenerationError &&
+      (error.code === 'TIMEOUT' || error.code === 'CANCELLED')
+    ) {
+      throw error;
+    }
+
+    throw new ArticleGenerationError(
+      errorCode,
+      `Article generation failed during ${phaseName} phase for "${options.gameName}" (model: ${options.modelName}): ${error instanceof Error ? error.message : String(error)}`,
+      error instanceof Error ? error : undefined
+    );
+  }
+}
+
+// ============================================================================
 // Default Dependencies
 // ============================================================================
 
@@ -325,11 +447,13 @@ export async function generateGameArticleDraft(
   const signal = options?.signal;
   const totalStartTime = Date.now();
 
-  // Phase durations will be collected as immutable values
-  let scoutDuration = 0;
-  let editorDuration = 0;
-  let specialistDuration = 0;
-  let validationDuration = 0;
+  // Shared options for all phases
+  const phaseOptions = {
+    signal,
+    startTime: totalStartTime,
+    timeoutMs,
+    gameName: context.gameName,
+  };
 
   log.info(`=== Starting Multi-Agent Article Generation for "${context.gameName}" ===`);
   if (timeoutMs > 0) {
@@ -337,138 +461,89 @@ export async function generateGameArticleDraft(
   }
 
   // ===== PHASE 1: SCOUT =====
-  const scoutStartTime = Date.now();
   log.info(`Phase 1: Scout - Deep multi-query research (model: ${scoutModel})...`);
   onProgress?.('scout', 0, 'Starting research phase');
 
-  let scoutOutput;
-  try {
-    scoutOutput = await withTimeoutAndCancellation(
-      withRetry(
-        () =>
-          runScout(context, {
-            search,
-            generateText: genText,
-            model: openrouter(scoutModel),
-            logger: createPrefixedLogger('[Scout]'),
-          }),
-        { context: `Scout phase (model: ${scoutModel})` }
-      ),
-      signal,
-      totalStartTime,
-      timeoutMs,
-      context.gameName,
-      'Scout'
-    );
-  } catch (error) {
-    // Re-throw timeout/cancellation errors directly
-    if (error instanceof ArticleGenerationError && (error.code === 'TIMEOUT' || error.code === 'CANCELLED')) {
-      throw error;
-    }
-    throw new ArticleGenerationError(
-      'SCOUT_FAILED',
-      `Article generation failed during Scout phase for "${context.gameName}" (model: ${scoutModel}): ${error instanceof Error ? error.message : String(error)}`,
-      error instanceof Error ? error : undefined
-    );
-  }
+  const scoutResult = await runPhase(
+    'Scout',
+    'SCOUT_FAILED',
+    () =>
+      runScout(context, {
+        search,
+        generateText: genText,
+        model: openrouter(scoutModel),
+        logger: createPrefixedLogger('[Scout]'),
+        signal,
+      }),
+    { ...phaseOptions, modelName: scoutModel }
+  );
 
-  scoutDuration = Date.now() - scoutStartTime;
+  const scoutOutput = scoutResult.output;
   log.info(
-    `Scout complete in ${scoutDuration}ms: ` +
+    `Scout complete in ${scoutResult.durationMs}ms: ` +
       `${scoutOutput.researchPool.allUrls.size} sources, ` +
       `${scoutOutput.researchPool.queryCache.size} unique queries`
   );
   onProgress?.('scout', 100, `Found ${scoutOutput.researchPool.allUrls.size} sources`);
 
   // ===== PHASE 2: EDITOR =====
-  const editorStartTime = Date.now();
   log.info(`Phase 2: Editor - Planning article (model: ${editorModel})...`);
   onProgress?.('editor', 0, 'Planning article structure');
 
-  let plan;
-  try {
-    plan = await withTimeoutAndCancellation(
-      withRetry(
-        () =>
-          runEditor(context, scoutOutput, {
-            generateObject: genObject,
-            model: openrouter(editorModel),
-            logger: createPrefixedLogger('[Editor]'),
-          }),
-        { context: `Editor phase (model: ${editorModel})` }
-      ),
-      signal,
-      totalStartTime,
-      timeoutMs,
-      context.gameName,
-      'Editor'
-    );
-  } catch (error) {
-    // Re-throw timeout/cancellation errors directly
-    if (error instanceof ArticleGenerationError && (error.code === 'TIMEOUT' || error.code === 'CANCELLED')) {
-      throw error;
-    }
-    throw new ArticleGenerationError(
-      'EDITOR_FAILED',
-      `Article generation failed during Editor phase for "${context.gameName}" (model: ${editorModel}): ${error instanceof Error ? error.message : String(error)}`,
-      error instanceof Error ? error : undefined
-    );
-  }
+  const editorResult = await runPhase(
+    'Editor',
+    'EDITOR_FAILED',
+    () =>
+      runEditor(context, scoutOutput, {
+        generateObject: genObject,
+        model: openrouter(editorModel),
+        logger: createPrefixedLogger('[Editor]'),
+        signal,
+      }),
+    { ...phaseOptions, modelName: editorModel }
+  );
 
-  editorDuration = Date.now() - editorStartTime;
+  const plan = editorResult.output;
   log.info(
-    `Editor complete in ${editorDuration}ms: ` +
+    `Editor complete in ${editorResult.durationMs}ms: ` +
       `${plan.categorySlug} article with ${plan.sections.length} sections`
   );
   onProgress?.('editor', 100, `Planned ${plan.sections.length} sections`);
 
   // ===== PHASE 3: SPECIALIST =====
-  const specialistStartTime = Date.now();
-  log.info(`Phase 3: Specialist - Batch research + section writing (model: ${specialistModel})...`);
+  // Auto-enable parallel sections for 'lists' category (sections are independent)
+  const useParallelSections = plan.categorySlug === 'lists';
+  const modeLabel = useParallelSections ? 'parallel' : 'sequential';
+  log.info(
+    `Phase 3: Specialist - Batch research + section writing in ${modeLabel} mode (model: ${specialistModel})...`
+  );
   onProgress?.('specialist', 0, 'Writing article sections');
 
-  let markdown: string;
-  let sources: readonly string[];
-  let finalResearchPool;
-  try {
-    // Note: We don't wrap the entire Specialist in retry because it's a long operation.
-    // Instead, retry logic is applied to individual search/generateText calls inside the agent.
-    const specialistResult = await withTimeoutAndCancellation(
+  // Note: Specialist doesn't use top-level retry because it's a long operation.
+  // Retry logic is applied to individual search/generateText calls inside the agent.
+  const specialistResult = await runPhaseWithoutRetry(
+    'Specialist',
+    'SPECIALIST_FAILED',
+    () =>
       runSpecialist(context, scoutOutput, plan, {
         search,
         generateText: genText,
         model: openrouter(specialistModel),
         logger: createPrefixedLogger('[Specialist]'),
+        parallelSections: useParallelSections,
+        signal,
         onSectionProgress: (current, total, headline) => {
           // Report granular progress during section writing (10-90% of specialist phase)
           const sectionProgress = Math.round(10 + (current / total) * 80);
           onProgress?.('specialist', sectionProgress, `Writing section ${current}/${total}: ${headline}`);
         },
       }),
-      signal,
-      totalStartTime,
-      timeoutMs,
-      context.gameName,
-      'Specialist'
-    );
-    markdown = specialistResult.markdown;
-    sources = specialistResult.sources;
-    finalResearchPool = specialistResult.researchPool;
-  } catch (error) {
-    // Re-throw timeout/cancellation errors directly
-    if (error instanceof ArticleGenerationError && (error.code === 'TIMEOUT' || error.code === 'CANCELLED')) {
-      throw error;
-    }
-    throw new ArticleGenerationError(
-      'SPECIALIST_FAILED',
-      `Article generation failed during Specialist phase for "${context.gameName}" (model: ${specialistModel}): ${error instanceof Error ? error.message : String(error)}`,
-      error instanceof Error ? error : undefined
-    );
-  }
+    { ...phaseOptions, modelName: specialistModel }
+  );
 
-  specialistDuration = Date.now() - specialistStartTime;
+  const { markdown, sources, researchPool: finalResearchPool } = specialistResult.output;
   log.info(
-    `Specialist complete in ${specialistDuration}ms: ` +
+    `Specialist complete in ${specialistResult.durationMs}ms: ` +
       `${countContentH2Sections(markdown)} sections written, ${sources.length} total sources`
   );
   onProgress?.('specialist', 100, `Wrote ${countContentH2Sections(markdown)} sections`);
@@ -492,7 +567,7 @@ export async function generateGameArticleDraft(
   const errors = getErrors(validationIssues);
   const warnings = getWarnings(validationIssues);
 
-  validationDuration = Date.now() - validationStartTime;
+  const validationDurationMs = Date.now() - validationStartTime;
 
   if (warnings.length > 0) {
     log.warn(`Article validation warnings: ${warnings.map((w) => w.message).join('; ')}`);
@@ -519,10 +594,10 @@ export async function generateGameArticleDraft(
     generatedAt: new Date().toISOString(),
     totalDurationMs,
     phaseDurations: {
-      scout: scoutDuration,
-      editor: editorDuration,
-      specialist: specialistDuration,
-      validation: validationDuration,
+      scout: scoutResult.durationMs,
+      editor: editorResult.durationMs,
+      specialist: specialistResult.durationMs,
+      validation: validationDurationMs,
     },
     queriesExecuted: finalResearchPool.queryCache.size,
     sourcesCollected: finalResearchPool.allUrls.size,

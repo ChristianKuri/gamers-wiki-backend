@@ -45,6 +45,8 @@ export interface ScoutDeps {
   readonly generateText: typeof import('ai').generateText;
   readonly model: LanguageModel;
   readonly logger?: Logger;
+  /** Optional AbortSignal for cancellation support */
+  readonly signal?: AbortSignal;
 }
 
 // ============================================================================
@@ -58,7 +60,7 @@ async function executeSearch(
   search: SearchFunction,
   query: string,
   category: CategorizedSearchResult['category'],
-  options: { searchDepth: 'basic' | 'advanced'; maxResults: number }
+  options: { searchDepth: 'basic' | 'advanced'; maxResults: number; signal?: AbortSignal }
 ): Promise<CategorizedSearchResult> {
   const result = await withRetry(
     () =>
@@ -68,7 +70,7 @@ async function executeSearch(
         includeAnswer: true,
         includeRawContent: false,
       }),
-    { context: `Scout search (${category}): "${query.slice(0, 40)}..."` }
+    { context: `Scout search (${category}): "${query.slice(0, 40)}..."`, signal: options.signal }
   );
 
   return processSearchResults(query, category, result);
@@ -168,6 +170,7 @@ export async function runScout(
   deps: ScoutDeps
 ): Promise<ScoutOutput> {
   const log = deps.logger ?? createPrefixedLogger('[Scout]');
+  const { signal } = deps;
   const localeInstruction = 'Write in English.';
 
   // Build search queries
@@ -181,16 +184,19 @@ export async function runScout(
     executeSearch(deps.search, queries.overview, 'overview', {
       searchDepth: SCOUT_CONFIG.OVERVIEW_SEARCH_DEPTH,
       maxResults: SCOUT_CONFIG.OVERVIEW_SEARCH_RESULTS,
+      signal,
     }),
     ...dedupedCategoryQueries.slice(0, SCOUT_CONFIG.MAX_CATEGORY_SEARCHES).map((query) =>
       executeSearch(deps.search, query, 'category-specific', {
         searchDepth: SCOUT_CONFIG.CATEGORY_SEARCH_DEPTH,
         maxResults: SCOUT_CONFIG.CATEGORY_SEARCH_RESULTS,
+        signal,
       })
     ),
     executeSearch(deps.search, queries.recent, 'recent', {
       searchDepth: SCOUT_CONFIG.RECENT_SEARCH_DEPTH,
       maxResults: SCOUT_CONFIG.RECENT_SEARCH_RESULTS,
+      signal,
     }),
   ];
 
@@ -247,7 +253,7 @@ export async function runScout(
           system: getScoutOverviewSystemPrompt(localeInstruction),
           prompt: getScoutOverviewUserPrompt(promptContext),
         }),
-      { context: 'Scout overview briefing' }
+      { context: 'Scout overview briefing', signal }
     ),
     withRetry(
       () =>
@@ -257,7 +263,7 @@ export async function runScout(
           system: getScoutCategorySystemPrompt(localeInstruction),
           prompt: getScoutCategoryUserPrompt(context.gameName, context.instruction, categoryContext),
         }),
-      { context: 'Scout category briefing' }
+      { context: 'Scout category briefing', signal }
     ),
     withRetry(
       () =>
@@ -267,7 +273,7 @@ export async function runScout(
           system: getScoutRecentSystemPrompt(localeInstruction),
           prompt: getScoutRecentUserPrompt(context.gameName, recentContext),
         }),
-      { context: 'Scout recent briefing' }
+      { context: 'Scout recent briefing', signal }
     ),
   ]);
 

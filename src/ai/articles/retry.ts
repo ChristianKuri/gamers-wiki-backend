@@ -26,6 +26,8 @@ export interface RetryOptions {
   readonly context?: string;
   /** Custom function to determine if an error is retryable (default: isRetryableError) */
   readonly shouldRetry?: (error: unknown) => boolean;
+  /** Optional AbortSignal to cancel the operation */
+  readonly signal?: AbortSignal;
 }
 
 // ============================================================================
@@ -114,8 +116,14 @@ function calculateDelay(
 
 /**
  * Sleeps for the specified duration.
+ *
+ * @param ms - Duration to sleep in milliseconds
+ * @returns Promise that resolves after the specified duration
+ *
+ * @example
+ * await sleep(1000); // Wait 1 second
  */
-function sleep(ms: number): Promise<void> {
+export function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
@@ -146,16 +154,27 @@ export async function withRetry<T>(
     maxDelayMs = RETRY_CONFIG.MAX_DELAY_MS,
     context = 'operation',
     shouldRetry = isRetryableError,
+    signal,
   } = options;
 
   const log = createPrefixedLogger('[Retry]');
   let lastError: unknown;
 
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    // Check for abort before each attempt
+    if (signal?.aborted) {
+      throw new Error(`${context} was cancelled`);
+    }
+
     try {
       return await fn();
     } catch (error) {
       lastError = error;
+
+      // Check for abort after operation failure
+      if (signal?.aborted) {
+        throw new Error(`${context} was cancelled`);
+      }
 
       // Don't retry non-transient errors
       if (!shouldRetry(error)) {

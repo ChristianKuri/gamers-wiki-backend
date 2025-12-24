@@ -192,9 +192,22 @@ export class ResearchPoolBuilder {
   }
 
   /**
-   * Builds an immutable ResearchPool from the current state.
+   * Builds a ResearchPool snapshot from the current state.
    *
-   * @returns An immutable snapshot of the research pool
+   * **Note on immutability:** This method creates a shallow copy of arrays
+   * and collections, with top-level arrays frozen via `Object.freeze()`.
+   * However, the objects inside arrays (CategorizedSearchResult) and the
+   * Set/Map collections themselves are not deep-frozen.
+   *
+   * Immutability is enforced by convention and TypeScript's `readonly` types
+   * rather than runtime guarantees. This is intentional:
+   * - Deep freezing has performance overhead
+   * - TypeScript's readonly types provide compile-time safety
+   * - All code in this module treats pools as immutable
+   *
+   * Do not mutate the returned pool or its contents.
+   *
+   * @returns A snapshot of the research pool (treat as immutable)
    */
   build(): ResearchPool {
     return {

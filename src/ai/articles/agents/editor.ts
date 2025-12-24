@@ -36,6 +36,8 @@ export interface EditorDeps {
   readonly generateObject: typeof import('ai').generateObject;
   readonly model: LanguageModel;
   readonly logger?: Logger;
+  /** Optional AbortSignal for cancellation support */
+  readonly signal?: AbortSignal;
 }
 
 // ============================================================================
@@ -90,7 +92,7 @@ export async function runEditor(
         system: getEditorSystemPrompt(localeInstruction),
         prompt: getEditorUserPrompt(promptContext),
       }),
-    { context: 'Editor article plan generation' }
+    { context: 'Editor article plan generation', signal: deps.signal }
   );
 
   // Normalize categorySlug (AI may output aliases like 'guide' instead of 'guides')

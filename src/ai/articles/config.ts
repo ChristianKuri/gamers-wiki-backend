@@ -28,7 +28,13 @@ export const SCOUT_CONFIG = {
   CATEGORY_SEARCH_DEPTH: 'advanced' as const,
   /** Search depth for recent news queries */
   RECENT_SEARCH_DEPTH: 'basic' as const,
-  /** Temperature for Scout LLM calls (low for factual) */
+  /**
+   * Temperature for Scout LLM calls.
+   *
+   * Set low (0.2) because Scout generates research briefings that must be
+   * factually accurate and consistent. High temperature would introduce
+   * hallucinations or unreliable summaries that propagate to later phases.
+   */
   TEMPERATURE: 0.2,
   /** Results to include per search in context */
   RESULTS_PER_SEARCH_CONTEXT: 5,
@@ -51,7 +57,13 @@ export const SCOUT_CONFIG = {
 // ============================================================================
 
 export const EDITOR_CONFIG = {
-  /** Temperature for Editor LLM calls (balanced) */
+  /**
+   * Temperature for Editor LLM calls.
+   *
+   * Set moderate (0.4) because Editor needs some creativity for compelling
+   * titles and section structures, but must stay grounded in the research.
+   * Too low = boring/formulaic outlines. Too high = incoherent plans.
+   */
   TEMPERATURE: 0.4,
   /** Number of overview lines to include in prompt */
   OVERVIEW_LINES_IN_PROMPT: 10,
@@ -78,7 +90,14 @@ export const SPECIALIST_CONFIG = {
   RESEARCH_CONTEXT_PER_RESULT: 600,
   /** Threshold for "thin research" warning */
   THIN_RESEARCH_THRESHOLD: 500,
-  /** Temperature for Specialist LLM calls (creative) */
+  /**
+   * Temperature for Specialist LLM calls.
+   *
+   * Set higher (0.6) because Specialist writes prose that should be engaging,
+   * varied in sentence structure, and avoid robotic repetition. The research
+   * context constrains factual content while temperature enables stylistic
+   * creativity. Lower values produce stilted, repetitive text.
+   */
   TEMPERATURE: 0.6,
   /** Results per research context */
   RESULTS_PER_RESEARCH_CONTEXT: 5,

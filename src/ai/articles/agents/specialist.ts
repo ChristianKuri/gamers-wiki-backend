@@ -10,7 +10,7 @@ import type { LanguageModel } from 'ai';
 import { createPrefixedLogger, type Logger } from '../../../utils/logger';
 import type { ArticlePlan, ArticleSectionPlan } from '../article-plan';
 import { SPECIALIST_CONFIG } from '../config';
-import { withRetry } from '../retry';
+import { sleep, withRetry } from '../retry';
 import {
   buildResearchContext,
   getCategoryToneGuide,
@@ -54,6 +54,8 @@ export interface SpecialistDeps {
    * Default: false
    */
   readonly parallelSections?: boolean;
+  /** Optional AbortSignal for cancellation support */
+  readonly signal?: AbortSignal;
 }
 
 export interface SpecialistOutput {
@@ -73,7 +75,8 @@ async function batchResearchForSections(
   plan: ArticlePlan,
   existingPool: ResearchPool,
   search: SearchFunction,
-  log: Logger
+  log: Logger,
+  signal?: AbortSignal
 ): Promise<ResearchPool> {
   // Collect ALL research queries from all sections
   const allQueries = plan.sections.flatMap((section) => section.researchQueries);
@@ -109,7 +112,7 @@ async function batchResearchForSections(
           maxResults: SPECIALIST_CONFIG.MAX_SEARCH_RESULTS,
           includeAnswer: true,
         }),
-      { context: `Specialist search: "${query.slice(0, 50)}..."` }
+      { context: `Specialist search: "${query.slice(0, 50)}..."`, signal }
     );
 
     const categorized = processSearchResults(query, 'section-specific', result);
@@ -117,7 +120,7 @@ async function batchResearchForSections(
 
     // Rate limit between queries (but not after the last one)
     if (SPECIALIST_CONFIG.RATE_LIMIT_DELAY_MS > 0 && i < newQueries.length - 1) {
-      await new Promise((resolve) => setTimeout(resolve, SPECIALIST_CONFIG.RATE_LIMIT_DELAY_MS));
+      await sleep(SPECIALIST_CONFIG.RATE_LIMIT_DELAY_MS);
     }
   }
 
@@ -176,7 +179,7 @@ async function writeSection(
   section: ArticleSectionPlan,
   sectionIndex: number,
   enrichedPool: ResearchPool,
-  deps: Pick<SpecialistDeps, 'generateText' | 'model' | 'logger'>,
+  deps: Pick<SpecialistDeps, 'generateText' | 'model' | 'logger' | 'signal'>,
   previousContext: string
 ): Promise<string> {
   const log = deps.logger ?? createPrefixedLogger('[Specialist]');
@@ -239,7 +242,7 @@ async function writeSection(
           SPECIALIST_CONFIG.MAX_PARAGRAPHS
         ),
       }),
-    { context: `Specialist section "${section.headline}"` }
+    { context: `Specialist section "${section.headline}"`, signal: deps.signal }
   );
 
   return text.trim();
@@ -273,6 +276,7 @@ export async function runSpecialist(
 ): Promise<SpecialistOutput> {
   const log = deps.logger ?? createPrefixedLogger('[Specialist]');
   const parallelSections = deps.parallelSections ?? false;
+  const { signal } = deps;
 
   // ===== BATCH RESEARCH PHASE =====
   log.info('Starting batch research for all sections...');
@@ -280,7 +284,8 @@ export async function runSpecialist(
     plan,
     scoutOutput.researchPool,
     deps.search,
-    log
+    log,
+    signal
   );
 
   // ===== SECTION WRITING PHASE =====
@@ -301,7 +306,7 @@ export async function runSpecialist(
         section,
         i,
         enrichedPool,
-        { generateText: deps.generateText, model: deps.model, logger: deps.logger },
+        { generateText: deps.generateText, model: deps.model, logger: deps.logger, signal },
         '' // No previous context in parallel mode
       ).then((text) => {
         // Report progress as each section completes
@@ -330,7 +335,7 @@ export async function runSpecialist(
         section,
         i,
         enrichedPool,
-        { generateText: deps.generateText, model: deps.model, logger: deps.logger },
+        { generateText: deps.generateText, model: deps.model, logger: deps.logger, signal },
         previousContext
       );
 

@@ -77,25 +77,6 @@ export function isArticleGenerationError(error: unknown): error is ArticleGenera
   return error instanceof ArticleGenerationError;
 }
 
-/**
- * Error with cause for proper error chaining.
- * @deprecated Use ArticleGenerationError instead for new code.
- * Compatible with ES2022+ Error cause property.
- */
-export interface ErrorWithCause extends Error {
-  cause?: unknown;
-}
-
-/**
- * Creates an error with cause for proper error chaining.
- * @deprecated Use ArticleGenerationError instead for new code.
- */
-export function createErrorWithCause(message: string, cause?: Error): ErrorWithCause {
-  const error = new Error(message) as ErrorWithCause;
-  error.cause = cause;
-  return error;
-}
-
 // ============================================================================
 // Search Result Types
 // ============================================================================
