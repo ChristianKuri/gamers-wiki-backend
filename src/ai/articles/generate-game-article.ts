@@ -822,17 +822,27 @@ async function batchResearchForSections(
   const allQueries = plan.sections.flatMap(section => section.researchQueries);
 
   // Filter out queries that already exist in pool
-  const newQueries = allQueries.filter(query => {
+  const newQueriesRaw = allQueries.filter(query => {
     const existing = findInResearchPool(researchPool, query);
     return !existing;
   });
+
+  // De-duplicate remaining queries across sections (avoid redundant API calls)
+  const newQueries = deduplicateQueries(newQueriesRaw);
 
   if (newQueries.length === 0) {
     logger.debug('All research queries already satisfied by Scout research');
     return researchPool;
   }
 
-  logger.info(`Executing ${newQueries.length} new research queries (${allQueries.length - newQueries.length} already in pool)`);
+  const alreadySatisfiedCount = allQueries.length - newQueriesRaw.length;
+  const duplicatesRemovedCount = newQueriesRaw.length - newQueries.length;
+  logger.info(
+    `Executing ${newQueries.length} new research queries ` +
+      `(${alreadySatisfiedCount} already in pool` +
+      (duplicatesRemovedCount > 0 ? `, ${duplicatesRemovedCount} duplicate(s) removed` : '') +
+      `)`
+  );
 
   // Execute new queries with rate limiting
   const newResults = await rateLimitedMap(
