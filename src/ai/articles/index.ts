@@ -18,6 +18,7 @@ export {
   generateGameArticleDraft,
   type ArticleGeneratorDeps,
   type ArticleGeneratorOptions,
+  type TemperatureOverrides,
 } from './generate-game-article';
 
 // Types and error classes
@@ -25,6 +26,8 @@ export {
   ArticleGenerationError,
   isArticleGenerationError,
   ARTICLE_GENERATION_PHASES,
+  systemClock,
+  createMockClock,
   type ArticleGenerationErrorCode,
   type GameArticleContext,
   type GameArticleDraft,
@@ -38,6 +41,7 @@ export {
   type ArticleProgressCallback,
   type ArticleGenerationPhase,
   type SectionProgressCallback,
+  type Clock,
 } from './types';
 
 // Unified configuration
@@ -56,6 +60,7 @@ export {
   ArticleCategorySlugSchema,
   normalizeArticleCategorySlug,
   ARTICLE_PLAN_CONSTRAINTS,
+  DEFAULT_ARTICLE_SAFETY,
   type ArticlePlan,
   type ArticleCategorySlug,
   type ArticleCategorySlugInput,

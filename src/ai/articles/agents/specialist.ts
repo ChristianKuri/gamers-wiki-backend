@@ -56,6 +56,8 @@ export interface SpecialistDeps {
   readonly parallelSections?: boolean;
   /** Optional AbortSignal for cancellation support */
   readonly signal?: AbortSignal;
+  /** Optional temperature override (default: SPECIALIST_CONFIG.TEMPERATURE) */
+  readonly temperature?: number;
 }
 
 export interface SpecialistOutput {
@@ -69,7 +71,40 @@ export interface SpecialistOutput {
 // ============================================================================
 
 /**
- * Executes batch research for all sections, deduplicating against existing pool.
+ * Executes a single search with retry logic.
+ * Separated for use in parallel execution.
+ */
+async function executeSingleSearch(
+  search: SearchFunction,
+  query: string,
+  signal?: AbortSignal
+): Promise<{ query: string; result: ReturnType<typeof processSearchResults> }> {
+  const result = await withRetry(
+    () =>
+      search(query, {
+        searchDepth: SPECIALIST_CONFIG.SEARCH_DEPTH,
+        maxResults: SPECIALIST_CONFIG.MAX_SEARCH_RESULTS,
+        includeAnswer: true,
+      }),
+    { context: `Specialist search: "${query.slice(0, 50)}..."`, signal }
+  );
+
+  return {
+    query,
+    result: processSearchResults(query, 'section-specific', result),
+  };
+}
+
+/**
+ * Executes batch research for all sections with controlled parallelism.
+ * Uses configurable concurrency to balance speed vs API rate limits.
+ *
+ * @param plan - Article plan with section queries
+ * @param existingPool - Research pool from Scout phase
+ * @param search - Search function
+ * @param log - Logger instance
+ * @param signal - Optional abort signal
+ * @returns Enriched research pool
  */
 async function batchResearchForSections(
   plan: ArticlePlan,
@@ -95,32 +130,44 @@ async function batchResearchForSections(
 
   const alreadySatisfiedCount = allQueries.length - newQueriesRaw.length;
   const duplicatesRemovedCount = newQueriesRaw.length - newQueries.length;
+  const concurrency = SPECIALIST_CONFIG.BATCH_CONCURRENCY;
+  const batchDelay = SPECIALIST_CONFIG.BATCH_DELAY_MS;
+
   log.info(
-    `Executing ${newQueries.length} new research queries ` +
+    `Executing ${newQueries.length} new research queries with concurrency ${concurrency} ` +
       `(${alreadySatisfiedCount} already in pool` +
       (duplicatesRemovedCount > 0 ? `, ${duplicatesRemovedCount} duplicate(s) removed` : '') +
       `)`
   );
 
-  // Execute new queries with rate limiting and retry logic
-  for (let i = 0; i < newQueries.length; i++) {
-    const query = newQueries[i];
-    const result = await withRetry(
-      () =>
-        search(query, {
-          searchDepth: SPECIALIST_CONFIG.SEARCH_DEPTH,
-          maxResults: SPECIALIST_CONFIG.MAX_SEARCH_RESULTS,
-          includeAnswer: true,
-        }),
-      { context: `Specialist search: "${query.slice(0, 50)}..."`, signal }
+  // Process queries in batches with controlled concurrency
+  for (let batchStart = 0; batchStart < newQueries.length; batchStart += concurrency) {
+    // Check for cancellation before each batch
+    if (signal?.aborted) {
+      throw new Error('Batch research cancelled');
+    }
+
+    const batchEnd = Math.min(batchStart + concurrency, newQueries.length);
+    const batch = newQueries.slice(batchStart, batchEnd);
+
+    log.debug(
+      `Processing batch ${Math.floor(batchStart / concurrency) + 1}/${Math.ceil(newQueries.length / concurrency)}: ` +
+        `queries ${batchStart + 1}-${batchEnd} of ${newQueries.length}`
     );
 
-    const categorized = processSearchResults(query, 'section-specific', result);
-    poolBuilder.add(categorized);
+    // Execute batch in parallel
+    const batchResults = await Promise.all(
+      batch.map((query) => executeSingleSearch(search, query, signal))
+    );
 
-    // Rate limit between queries (but not after the last one)
-    if (SPECIALIST_CONFIG.RATE_LIMIT_DELAY_MS > 0 && i < newQueries.length - 1) {
-      await sleep(SPECIALIST_CONFIG.RATE_LIMIT_DELAY_MS);
+    // Add results to pool
+    for (const { result } of batchResults) {
+      poolBuilder.add(result);
+    }
+
+    // Add delay between batches (but not after the last batch)
+    if (batchDelay > 0 && batchEnd < newQueries.length) {
+      await sleep(batchDelay);
     }
   }
 
@@ -179,10 +226,11 @@ async function writeSection(
   section: ArticleSectionPlan,
   sectionIndex: number,
   enrichedPool: ResearchPool,
-  deps: Pick<SpecialistDeps, 'generateText' | 'model' | 'logger' | 'signal'>,
+  deps: Pick<SpecialistDeps, 'generateText' | 'model' | 'logger' | 'signal' | 'temperature'>,
   previousContext: string
 ): Promise<string> {
   const log = deps.logger ?? createPrefixedLogger('[Specialist]');
+  const temperature = deps.temperature ?? SPECIALIST_CONFIG.TEMPERATURE;
   const localeInstruction = 'Write in English.';
   const categoryToneGuide = getCategoryToneGuide(plan.categorySlug);
 
@@ -230,7 +278,7 @@ async function writeSection(
     () =>
       deps.generateText({
         model: deps.model,
-        temperature: SPECIALIST_CONFIG.TEMPERATURE,
+        temperature,
         maxOutputTokens: SPECIALIST_CONFIG.MAX_OUTPUT_TOKENS_PER_SECTION,
         system: getSpecialistSystemPrompt(localeInstruction, categoryToneGuide),
         prompt: getSpecialistSectionUserPrompt(
@@ -291,6 +339,15 @@ export async function runSpecialist(
   // ===== SECTION WRITING PHASE =====
   let sectionTexts: string[];
 
+  // Shared deps for writeSection calls
+  const writeDeps = {
+    generateText: deps.generateText,
+    model: deps.model,
+    logger: deps.logger,
+    signal,
+    temperature: deps.temperature,
+  };
+
   if (parallelSections) {
     // Parallel mode: Write all sections simultaneously
     log.info(`Writing ${plan.sections.length} sections in PARALLEL mode...`);
@@ -306,7 +363,7 @@ export async function runSpecialist(
         section,
         i,
         enrichedPool,
-        { generateText: deps.generateText, model: deps.model, logger: deps.logger, signal },
+        writeDeps,
         '' // No previous context in parallel mode
       ).then((text) => {
         // Report progress as each section completes
@@ -335,7 +392,7 @@ export async function runSpecialist(
         section,
         i,
         enrichedPool,
-        { generateText: deps.generateText, model: deps.model, logger: deps.logger, signal },
+        writeDeps,
         previousContext
       );
 

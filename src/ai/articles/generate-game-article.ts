@@ -56,9 +56,11 @@ import { countContentH2Sections } from './markdown-utils';
 import { withRetry } from './retry';
 import {
   ArticleGenerationError,
+  systemClock,
   type ArticleGenerationErrorCode,
   type ArticleGenerationMetadata,
   type ArticleProgressCallback,
+  type Clock,
   type GameArticleContext,
   type GameArticleDraft,
 } from './types';
@@ -78,6 +80,19 @@ export interface ArticleGeneratorDeps {
   readonly search: typeof tavilySearch;
   readonly generateText: typeof generateText;
   readonly generateObject: typeof generateObject;
+}
+
+/**
+ * Temperature overrides for individual agents.
+ * Useful for experimentation or tuning specific phases.
+ */
+export interface TemperatureOverrides {
+  /** Override Scout agent temperature (default: 0.2 - factual accuracy) */
+  readonly scout?: number;
+  /** Override Editor agent temperature (default: 0.4 - balanced creativity) */
+  readonly editor?: number;
+  /** Override Specialist agent temperature (default: 0.6 - engaging prose) */
+  readonly specialist?: number;
 }
 
 /**
@@ -118,6 +133,34 @@ export interface ArticleGeneratorOptions {
    * - false: force sequential (maintains narrative flow between sections)
    */
   readonly parallelSections?: boolean;
+
+  /**
+   * Optional clock for time operations.
+   * Defaults to systemClock. Override for deterministic testing.
+   *
+   * @example
+   * // Testing with fixed time
+   * const mockClock = { now: () => 1700000000000 };
+   * const draft = await generateGameArticleDraft(context, undefined, {
+   *   clock: mockClock,
+   * });
+   */
+  readonly clock?: Clock;
+
+  /**
+   * Optional temperature overrides for individual agents.
+   * Useful for experimentation or tuning specific phases.
+   *
+   * @example
+   * // More creative specialist, more factual scout
+   * const draft = await generateGameArticleDraft(context, undefined, {
+   *   temperatureOverrides: {
+   *     scout: 0.1,      // Very factual
+   *     specialist: 0.8, // More creative prose
+   *   },
+   * });
+   */
+  readonly temperatureOverrides?: TemperatureOverrides;
 }
 
 // ============================================================================
@@ -132,6 +175,7 @@ export interface ArticleGeneratorOptions {
  * @param startTime - Start time of the overall operation
  * @param timeoutMs - Total timeout in ms (0 = no timeout)
  * @param gameName - Game name for error messages
+ * @param clock - Clock interface for time operations
  * @throws ArticleGenerationError with 'CANCELLED' if signal is aborted
  * @throws ArticleGenerationError with 'TIMEOUT' if timeout exceeded
  */
@@ -139,7 +183,8 @@ function assertCanProceed(
   userSignal: AbortSignal | undefined,
   startTime: number,
   timeoutMs: number,
-  gameName: string
+  gameName: string,
+  clock: Clock
 ): void {
   if (userSignal?.aborted) {
     throw new ArticleGenerationError(
@@ -147,7 +192,7 @@ function assertCanProceed(
       `Article generation for "${gameName}" was cancelled`
     );
   }
-  if (timeoutMs > 0 && Date.now() - startTime > timeoutMs) {
+  if (timeoutMs > 0 && clock.now() - startTime > timeoutMs) {
     throw new ArticleGenerationError(
       'TIMEOUT',
       `Article generation for "${gameName}" timed out after ${timeoutMs}ms`
@@ -167,6 +212,7 @@ function assertCanProceed(
  * @param timeoutMs - Total timeout in ms (0 = no timeout)
  * @param gameName - Game name for error messages
  * @param phaseName - Phase name for error messages
+ * @param clock - Clock interface for time operations
  * @returns The resolved value or throws ArticleGenerationError
  */
 async function withTimeoutAndCancellation<T>(
@@ -175,10 +221,11 @@ async function withTimeoutAndCancellation<T>(
   startTime: number,
   timeoutMs: number,
   gameName: string,
-  phaseName: string
+  phaseName: string,
+  clock: Clock
 ): Promise<T> {
   // Pre-check: verify we can proceed before setting up race
-  assertCanProceed(userSignal, startTime, timeoutMs, gameName);
+  assertCanProceed(userSignal, startTime, timeoutMs, gameName, clock);
 
   // No timeout or cancellation needed - return promise directly
   if (!userSignal && timeoutMs <= 0) {
@@ -212,7 +259,7 @@ async function withTimeoutAndCancellation<T>(
 
     // Handle timeout
     if (timeoutMs > 0) {
-      const remaining = Math.max(0, timeoutMs - (Date.now() - startTime));
+      const remaining = Math.max(0, timeoutMs - (clock.now() - startTime));
       timeoutId = setTimeout(
         () =>
           reject(
@@ -248,6 +295,7 @@ interface RunPhaseOptions {
   readonly timeoutMs: number;
   readonly gameName: string;
   readonly modelName: string;
+  readonly clock: Clock;
   /**
    * If true, skip top-level retry wrapper.
    * Use for long-running phases where retry is applied internally to individual operations.
@@ -282,7 +330,7 @@ async function runPhase<T>(
   fn: () => Promise<T>,
   options: RunPhaseOptions
 ): Promise<PhaseResult<T>> {
-  const phaseStartTime = Date.now();
+  const phaseStartTime = options.clock.now();
 
   // Optionally wrap with retry logic (skip for long-running phases with internal retry)
   const wrappedFn = options.skipRetry
@@ -296,12 +344,13 @@ async function runPhase<T>(
       options.startTime,
       options.timeoutMs,
       options.gameName,
-      phaseName
+      phaseName,
+      options.clock
     );
 
     return {
       output,
-      durationMs: Date.now() - phaseStartTime,
+      durationMs: options.clock.now() - phaseStartTime,
     };
   } catch (error) {
     // Re-throw timeout/cancellation errors directly
@@ -401,11 +450,8 @@ export async function generateGameArticleDraft(
   deps?: ArticleGeneratorDeps,
   options?: ArticleGeneratorOptions
 ): Promise<GameArticleDraft> {
-  // Use provided deps or create default production deps
-  const { openrouter, search, generateText: genText, generateObject: genObject } =
-    deps ?? createDefaultDeps();
-
-  // Validate input context
+  // Validate input context FIRST (before creating deps which may throw CONFIG_ERROR)
+  // This ensures user gets CONTEXT_INVALID errors before CONFIG_ERROR
   const contextIssues = validateGameArticleContext(context);
   const contextErrors = getErrors(contextIssues);
   if (contextErrors.length > 0) {
@@ -415,6 +461,10 @@ export async function generateGameArticleDraft(
     );
   }
 
+  // Use provided deps or create default production deps
+  const { openrouter, search, generateText: genText, generateObject: genObject } =
+    deps ?? createDefaultDeps();
+
   const scoutModel = getModel('ARTICLE_SCOUT');
   const editorModel = getModel('ARTICLE_EDITOR');
   const specialistModel = getModel('ARTICLE_SPECIALIST');
@@ -423,7 +473,9 @@ export async function generateGameArticleDraft(
   const onProgress = options?.onProgress;
   const timeoutMs = options?.timeoutMs ?? GENERATOR_CONFIG.DEFAULT_TIMEOUT_MS;
   const signal = options?.signal;
-  const totalStartTime = Date.now();
+  const clock = options?.clock ?? systemClock;
+  const temperatureOverrides = options?.temperatureOverrides;
+  const totalStartTime = clock.now();
 
   // Shared options for all phases
   const phaseOptions = {
@@ -431,11 +483,15 @@ export async function generateGameArticleDraft(
     startTime: totalStartTime,
     timeoutMs,
     gameName: context.gameName,
+    clock,
   };
 
   log.info(`=== Starting Multi-Agent Article Generation for "${context.gameName}" ===`);
   if (timeoutMs > 0) {
     log.info(`Timeout configured: ${timeoutMs}ms`);
+  }
+  if (temperatureOverrides) {
+    log.info(`Temperature overrides: ${JSON.stringify(temperatureOverrides)}`);
   }
 
   // ===== PHASE 1: SCOUT =====
@@ -452,6 +508,7 @@ export async function generateGameArticleDraft(
         model: openrouter(scoutModel),
         logger: createPrefixedLogger('[Scout]'),
         signal,
+        temperature: temperatureOverrides?.scout,
       }),
     { ...phaseOptions, modelName: scoutModel }
   );
@@ -477,6 +534,7 @@ export async function generateGameArticleDraft(
         model: openrouter(editorModel),
         logger: createPrefixedLogger('[Editor]'),
         signal,
+        temperature: temperatureOverrides?.editor,
       }),
     { ...phaseOptions, modelName: editorModel }
   );
@@ -511,6 +569,7 @@ export async function generateGameArticleDraft(
         logger: createPrefixedLogger('[Specialist]'),
         parallelSections: useParallelSections,
         signal,
+        temperature: temperatureOverrides?.specialist,
         onSectionProgress: (current, total, headline) => {
           // Report granular progress during section writing
           const { SPECIALIST_PROGRESS_START, SPECIALIST_PROGRESS_END } = GENERATOR_CONFIG;
@@ -530,7 +589,7 @@ export async function generateGameArticleDraft(
   onProgress?.('specialist', 100, `Wrote ${countContentH2Sections(markdown)} sections`);
 
   // ===== PHASE 4: VALIDATION =====
-  const validationStartTime = Date.now();
+  const validationStartTime = clock.now();
   log.info('Phase 4: Validation - Checking content quality...');
   onProgress?.('validation', 0, 'Validating article quality');
 
@@ -548,7 +607,7 @@ export async function generateGameArticleDraft(
   const errors = getErrors(validationIssues);
   const warnings = getWarnings(validationIssues);
 
-  const validationDurationMs = Date.now() - validationStartTime;
+  const validationDurationMs = clock.now() - validationStartTime;
 
   if (warnings.length > 0) {
     log.warn(`Article validation warnings: ${warnings.map((w) => w.message).join('; ')}`);
@@ -562,7 +621,7 @@ export async function generateGameArticleDraft(
     );
   }
 
-  const totalDurationMs = Date.now() - totalStartTime;
+  const totalDurationMs = clock.now() - totalStartTime;
   log.info(`=== Article Generation Complete in ${totalDurationMs}ms ===`);
   log.info(
     `Final research pool: ${finalResearchPool.queryCache.size} total queries, ` +

@@ -109,8 +109,17 @@ export const SPECIALIST_CONFIG = {
   MAX_SEARCH_RESULTS: 5,
   /** Maximum sources to include in article */
   MAX_SOURCES: 25,
-  /** Delay between search queries to avoid rate limits */
-  RATE_LIMIT_DELAY_MS: 300,
+  /**
+   * Number of concurrent search queries during batch research.
+   * Higher values = faster research but more API pressure.
+   * Set to 3 as a balance between speed and rate limit safety.
+   */
+  BATCH_CONCURRENCY: 3,
+  /**
+   * Delay between batches of concurrent searches (ms).
+   * Helps avoid rate limiting when making multiple requests.
+   */
+  BATCH_DELAY_MS: 200,
 } as const;
 
 // ============================================================================

@@ -3,6 +3,7 @@ import { describe, it, expect } from 'vitest';
 import {
   ArticlePlanSchema,
   ARTICLE_PLAN_CONSTRAINTS,
+  DEFAULT_ARTICLE_SAFETY,
   normalizeArticleCategorySlug,
 } from '../../../src/ai/articles/article-plan';
 
@@ -152,5 +153,75 @@ describe('normalizeArticleCategorySlug', () => {
     expect(normalizeArticleCategorySlug('reviews')).toBe('reviews');
     expect(normalizeArticleCategorySlug('guides')).toBe('guides');
     expect(normalizeArticleCategorySlug('lists')).toBe('lists');
+  });
+});
+
+describe('DEFAULT_ARTICLE_SAFETY', () => {
+  it('has noScoresUnlessReview set to true by default', () => {
+    expect(DEFAULT_ARTICLE_SAFETY.noScoresUnlessReview).toBe(true);
+  });
+
+  it('is immutable (readonly)', () => {
+    // TypeScript enforces this at compile time with `as const`
+    // We just verify the expected structure exists
+    expect(DEFAULT_ARTICLE_SAFETY).toHaveProperty('noScoresUnlessReview');
+  });
+});
+
+describe('ArticlePlanSchema safety field', () => {
+  const validPlanBase = {
+    title: 'Test Article Title That Is Long Enough',
+    categorySlug: 'guides',
+    excerpt:
+      'Start strong in Elden Ring with early routes, safe upgrades, and the key mistakes most new Tarnished make—so you level faster and stay alive.',
+    tags: ['test tag'],
+    sections: [
+      { headline: 'Section 1', goal: 'Goal', researchQueries: ['query1'] },
+      { headline: 'Section 2', goal: 'Goal', researchQueries: ['query2'] },
+      { headline: 'Section 3', goal: 'Goal', researchQueries: ['query3'] },
+    ],
+  };
+
+  it('accepts plan with explicit safety object', () => {
+    const plan = ArticlePlanSchema.parse({
+      ...validPlanBase,
+      safety: { noScoresUnlessReview: false },
+    });
+
+    expect(plan.safety?.noScoresUnlessReview).toBe(false);
+  });
+
+  it('accepts plan with safety set to true', () => {
+    const plan = ArticlePlanSchema.parse({
+      ...validPlanBase,
+      safety: { noScoresUnlessReview: true },
+    });
+
+    expect(plan.safety?.noScoresUnlessReview).toBe(true);
+  });
+
+  it('accepts plan without safety field (optional)', () => {
+    const plan = ArticlePlanSchema.parse(validPlanBase);
+
+    // Safety should be undefined (optional field)
+    expect(plan.safety).toBeUndefined();
+  });
+
+  it('rejects invalid safety value', () => {
+    expect(() =>
+      ArticlePlanSchema.parse({
+        ...validPlanBase,
+        safety: 'invalid',
+      })
+    ).toThrow();
+  });
+
+  it('rejects safety with wrong field types', () => {
+    expect(() =>
+      ArticlePlanSchema.parse({
+        ...validPlanBase,
+        safety: { noScoresUnlessReview: 'yes' },
+      })
+    ).toThrow();
   });
 });

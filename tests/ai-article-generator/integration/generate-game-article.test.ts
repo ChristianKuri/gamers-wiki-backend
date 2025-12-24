@@ -834,5 +834,135 @@ describe('generateGameArticleDraft (integration-ish)', () => {
         expect(message).toContain('platforms');
       }
     });
+
+    it('validates context BEFORE creating dependencies (CONTEXT_INVALID before CONFIG_ERROR)', async () => {
+      // Temporarily remove API key to trigger potential CONFIG_ERROR
+      const originalKey = process.env.OPENROUTER_API_KEY;
+      delete process.env.OPENROUTER_API_KEY;
+
+      try {
+        await generateGameArticleDraft({
+          gameName: '', // Invalid - should trigger CONTEXT_INVALID
+          instruction: 'Write a guide',
+        });
+        expect.fail('Should have thrown');
+      } catch (error) {
+        // Should get CONTEXT_INVALID, not CONFIG_ERROR
+        expect(error).toBeInstanceOf(ArticleGenerationError);
+        expect((error as ArticleGenerationError).code).toBe('CONTEXT_INVALID');
+      } finally {
+        if (originalKey) {
+          process.env.OPENROUTER_API_KEY = originalKey;
+        }
+      }
+    });
+  });
+
+  describe('temperature overrides', () => {
+    it('accepts temperatureOverrides in options', async () => {
+      // This test verifies the option is accepted without error
+      // Actual temperature usage is tested via the mocked LLM calls
+      const draft = await generateGameArticleDraft(
+        {
+          gameName: 'Test Game',
+          instruction: 'Write a guide',
+        },
+        undefined,
+        {
+          temperatureOverrides: {
+            scout: 0.1,
+            editor: 0.3,
+            specialist: 0.7,
+          },
+        }
+      );
+
+      expect(draft.title).toBeTruthy();
+      expect(draft.markdown).toMatch(/^#\s+/m);
+    });
+
+    it('accepts partial temperature overrides', async () => {
+      const draft = await generateGameArticleDraft(
+        {
+          gameName: 'Test Game',
+          instruction: 'Write a guide',
+        },
+        undefined,
+        {
+          temperatureOverrides: {
+            specialist: 0.9, // Only override specialist
+          },
+        }
+      );
+
+      expect(draft.title).toBeTruthy();
+    });
+
+    it('works with empty temperatureOverrides object', async () => {
+      const draft = await generateGameArticleDraft(
+        {
+          gameName: 'Test Game',
+          instruction: 'Write a guide',
+        },
+        undefined,
+        {
+          temperatureOverrides: {},
+        }
+      );
+
+      expect(draft.title).toBeTruthy();
+    });
+  });
+
+  describe('clock option', () => {
+    it('accepts custom clock for time operations', async () => {
+      let clockCalls = 0;
+      const mockClock = {
+        now: () => {
+          clockCalls++;
+          return 1700000000000 + clockCalls * 100; // Advance 100ms per call
+        },
+      };
+
+      const draft = await generateGameArticleDraft(
+        {
+          gameName: 'Test Game',
+          instruction: 'Write a guide',
+        },
+        undefined,
+        { clock: mockClock }
+      );
+
+      expect(draft.title).toBeTruthy();
+      expect(clockCalls).toBeGreaterThan(0); // Clock was called
+    });
+
+    it('uses clock for metadata timing', async () => {
+      const fixedTime = 1700000000000;
+      let callCount = 0;
+      const mockClock = {
+        now: () => {
+          callCount++;
+          // Return increasing times to simulate duration
+          return fixedTime + callCount * 10;
+        },
+      };
+
+      const draft = await generateGameArticleDraft(
+        {
+          gameName: 'Test Game',
+          instruction: 'Write a guide',
+        },
+        undefined,
+        { clock: mockClock }
+      );
+
+      // Verify metadata has timing data
+      expect(draft.metadata.totalDurationMs).toBeGreaterThan(0);
+      expect(draft.metadata.phaseDurations.scout).toBeGreaterThanOrEqual(0);
+      expect(draft.metadata.phaseDurations.editor).toBeGreaterThanOrEqual(0);
+      expect(draft.metadata.phaseDurations.specialist).toBeGreaterThanOrEqual(0);
+      expect(draft.metadata.phaseDurations.validation).toBeGreaterThanOrEqual(0);
+    });
   });
 });

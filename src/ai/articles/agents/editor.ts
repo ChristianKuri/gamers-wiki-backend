@@ -10,6 +10,7 @@ import type { LanguageModel } from 'ai';
 import { createPrefixedLogger, type Logger } from '../../../utils/logger';
 import {
   ArticlePlanSchema,
+  DEFAULT_ARTICLE_SAFETY,
   normalizeArticleCategorySlug,
   type ArticlePlan,
   type ArticleCategorySlugInput,
@@ -38,6 +39,8 @@ export interface EditorDeps {
   readonly logger?: Logger;
   /** Optional AbortSignal for cancellation support */
   readonly signal?: AbortSignal;
+  /** Optional temperature override (default: EDITOR_CONFIG.TEMPERATURE) */
+  readonly temperature?: number;
 }
 
 // ============================================================================
@@ -59,6 +62,7 @@ export async function runEditor(
   deps: EditorDeps
 ): Promise<ArticlePlan> {
   const log = deps.logger ?? createPrefixedLogger('[Editor]');
+  const temperature = deps.temperature ?? EDITOR_CONFIG.TEMPERATURE;
   const localeInstruction = 'Write all strings in English.';
 
   const categoryHintsSection = buildCategoryHintsSection(context.categoryHints);
@@ -87,7 +91,7 @@ export async function runEditor(
     () =>
       deps.generateObject({
         model: deps.model,
-        temperature: EDITOR_CONFIG.TEMPERATURE,
+        temperature,
         schema: ArticlePlanSchema,
         system: getEditorSystemPrompt(localeInstruction),
         prompt: getEditorUserPrompt(promptContext),
@@ -100,9 +104,12 @@ export async function runEditor(
     rawPlan.categorySlug as ArticleCategorySlugInput
   );
 
+  // Apply default safety settings if AI omitted them
+  // (Zod .default() doesn't work with AI SDK's JSON Schema conversion)
   const plan: ArticlePlan = {
     ...rawPlan,
     categorySlug: normalizedCategorySlug,
+    safety: rawPlan.safety ?? DEFAULT_ARTICLE_SAFETY,
   };
 
   log.debug(

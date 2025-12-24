@@ -294,3 +294,65 @@ export type SearchFunction = (
   results: readonly { title: string; url: string; content?: string; score?: number }[];
 }>;
 
+// ============================================================================
+// Clock Abstraction (for testability)
+// ============================================================================
+
+/**
+ * Clock interface for time-related operations.
+ * Enables deterministic testing by allowing time to be mocked.
+ *
+ * @example
+ * // Production usage (default)
+ * const clock = systemClock;
+ * const now = clock.now();
+ *
+ * @example
+ * // Test usage
+ * const mockClock: Clock = { now: () => 1234567890000 };
+ */
+export interface Clock {
+  /** Returns current timestamp in milliseconds (like Date.now()) */
+  now(): number;
+}
+
+/**
+ * Default clock implementation using system time.
+ */
+export const systemClock: Clock = {
+  now: () => Date.now(),
+};
+
+/**
+ * Creates a mock clock for testing with a fixed or advancing time.
+ *
+ * @param initialTime - Starting timestamp in milliseconds
+ * @param autoAdvance - If provided, advances time by this many ms on each call
+ * @returns A Clock instance for testing
+ *
+ * @example
+ * // Fixed time
+ * const clock = createMockClock(1000000);
+ * clock.now(); // 1000000
+ * clock.now(); // 1000000
+ *
+ * @example
+ * // Auto-advancing time (100ms per call)
+ * const clock = createMockClock(1000000, 100);
+ * clock.now(); // 1000000
+ * clock.now(); // 1000100
+ * clock.now(); // 1000200
+ */
+export function createMockClock(initialTime: number, autoAdvance?: number): Clock {
+  let currentTime = initialTime;
+  return {
+    now: () => {
+      const time = currentTime;
+      if (autoAdvance !== undefined) {
+        currentTime += autoAdvance;
+      }
+      return time;
+    },
+  };
+}
+

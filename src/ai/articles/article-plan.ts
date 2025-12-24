@@ -100,10 +100,21 @@ export type ArticleSectionPlan = z.infer<typeof ArticleSectionPlanSchema>;
 // ============================================================================
 
 /**
+ * Default safety settings for article plans.
+ * Applied by Editor agent when AI omits the safety field.
+ */
+export const DEFAULT_ARTICLE_SAFETY = {
+  noScoresUnlessReview: true,
+} as const;
+
+/**
  * Article plan schema for AI SDK's generateObject.
  *
  * NOTE: categorySlug accepts aliases but does NOT auto-normalize.
  * The Editor agent normalizes after parsing.
+ *
+ * NOTE: safety is optional because Zod's .default() doesn't translate to JSON Schema
+ * for AI SDK's generateObject. The Editor agent applies DEFAULT_ARTICLE_SAFETY if omitted.
  */
 export const ArticlePlanSchema = z.object({
   title: z
@@ -132,7 +143,7 @@ export const ArticlePlanSchema = z.object({
     .object({
       noScoresUnlessReview: z.boolean(),
     })
-    .default({ noScoresUnlessReview: true }),
+    .optional(),
 });
 
 /**

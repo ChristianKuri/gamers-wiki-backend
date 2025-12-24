@@ -25,12 +25,13 @@ import {
   processSearchResults,
   ResearchPoolBuilder,
 } from '../research-pool';
-import type {
-  CategorizedSearchResult,
-  GameArticleContext,
-  ResearchPool,
-  ScoutOutput,
-  SearchFunction,
+import {
+  ArticleGenerationError,
+  type CategorizedSearchResult,
+  type GameArticleContext,
+  type ResearchPool,
+  type ScoutOutput,
+  type SearchFunction,
 } from '../types';
 
 // Re-export config for backwards compatibility
@@ -62,20 +63,38 @@ export interface ScoutDeps {
   readonly signal?: AbortSignal;
   /** Optional callback for reporting granular progress */
   readonly onProgress?: ScoutProgressCallback;
+  /** Optional temperature override (default: SCOUT_CONFIG.TEMPERATURE) */
+  readonly temperature?: number;
 }
 
 // ============================================================================
-// Helper Functions
+// Exported Helper Functions (for testing)
 // ============================================================================
 
 /**
- * Executes a search with retry logic and processes results into a CategorizedSearchResult.
+ * Options for executing a search operation.
  */
-async function executeSearch(
+export interface ExecuteSearchOptions {
+  readonly searchDepth: 'basic' | 'advanced';
+  readonly maxResults: number;
+  readonly signal?: AbortSignal;
+}
+
+/**
+ * Executes a search with retry logic and processes results into a CategorizedSearchResult.
+ * Exported for unit testing.
+ *
+ * @param search - Search function to use
+ * @param query - Query string
+ * @param category - Category to assign to results
+ * @param options - Search options (depth, max results, signal)
+ * @returns Processed search results
+ */
+export async function executeSearch(
   search: SearchFunction,
   query: string,
   category: CategorizedSearchResult['category'],
-  options: { searchDepth: 'basic' | 'advanced'; maxResults: number; signal?: AbortSignal }
+  options: ExecuteSearchOptions
 ): Promise<CategorizedSearchResult> {
   const result = await withRetry(
     () =>
@@ -93,15 +112,26 @@ async function executeSearch(
 
 /**
  * Builds search context string from search results.
+ * Exported for unit testing.
+ *
+ * @param results - Array of categorized search results
+ * @param config - Optional config overrides for snippet settings
+ * @returns Formatted search context string
  */
-function buildSearchContext(results: readonly CategorizedSearchResult[]): string {
+export function buildSearchContext(
+  results: readonly CategorizedSearchResult[],
+  config: { resultsPerContext?: number; maxSnippetLength?: number } = {}
+): string {
+  const resultsPerContext = config.resultsPerContext ?? SCOUT_CONFIG.RESULTS_PER_SEARCH_CONTEXT;
+  const maxSnippetLength = config.maxSnippetLength ?? SCOUT_CONFIG.MAX_SNIPPET_LENGTH;
+
   return results
     .map((search) => {
       const snippets = search.results
-        .slice(0, SCOUT_CONFIG.RESULTS_PER_SEARCH_CONTEXT)
+        .slice(0, resultsPerContext)
         .map(
           (r) =>
-            `  - ${r.title} (${r.url})\n    ${r.content.slice(0, SCOUT_CONFIG.MAX_SNIPPET_LENGTH)}`
+            `  - ${r.title} (${r.url})\n    ${r.content.slice(0, maxSnippetLength)}`
         )
         .join('\n');
 
@@ -116,13 +146,21 @@ ${snippets}`;
 
 /**
  * Builds category context string from category-specific findings.
+ * Exported for unit testing.
+ *
+ * @param findings - Array of category-specific search results
+ * @param keyFindingsLimit - Max number of key findings to include (default from config)
+ * @returns Formatted category context string
  */
-function buildCategoryContext(findings: readonly CategorizedSearchResult[]): string {
+export function buildCategoryContext(
+  findings: readonly CategorizedSearchResult[],
+  keyFindingsLimit: number = SCOUT_CONFIG.KEY_FINDINGS_LIMIT
+): string {
   return findings
     .map(
       (search) =>
         `Query: "${search.query}"\nSummary: ${search.answer || '(none)'}\nKey findings: ${search.results
-          .slice(0, SCOUT_CONFIG.KEY_FINDINGS_LIMIT)
+          .slice(0, keyFindingsLimit)
           .map((r) => r.title)
           .join('; ')}`
     )
@@ -131,18 +169,36 @@ function buildCategoryContext(findings: readonly CategorizedSearchResult[]): str
 
 /**
  * Builds recent developments context string.
+ * Exported for unit testing.
+ *
+ * @param findings - Array of recent search results
+ * @param config - Optional config overrides for limits
+ * @returns Formatted recent developments string
  */
-function buildRecentContext(findings: readonly CategorizedSearchResult[]): string {
+export function buildRecentContext(
+  findings: readonly CategorizedSearchResult[],
+  config: { recentResultsLimit?: number; recentContentLength?: number } = {}
+): string {
+  const recentResultsLimit = config.recentResultsLimit ?? SCOUT_CONFIG.RECENT_RESULTS_LIMIT;
+  const recentContentLength = config.recentContentLength ?? SCOUT_CONFIG.RECENT_CONTENT_LENGTH;
+
   return findings
-    .flatMap((search) => search.results.slice(0, SCOUT_CONFIG.RECENT_RESULTS_LIMIT))
-    .map((r) => `- ${r.title}: ${r.content.slice(0, SCOUT_CONFIG.RECENT_CONTENT_LENGTH)}`)
+    .flatMap((search) => search.results.slice(0, recentResultsLimit))
+    .map((r) => `- ${r.title}: ${r.content.slice(0, recentContentLength)}`)
     .join('\n');
 }
 
 /**
  * Builds the full context document combining all briefings.
+ * Exported for unit testing.
+ *
+ * @param context - Game article context
+ * @param overviewBriefing - Overview briefing text
+ * @param categoryBriefing - Category insights text
+ * @param recentBriefing - Recent developments text
+ * @returns Formatted full context document
  */
-function buildFullContext(
+export function buildFullContext(
   context: GameArticleContext,
   overviewBriefing: string,
   categoryBriefing: string,
@@ -168,6 +224,90 @@ ${context.igdbDescription ? `\nIGDB: ${context.igdbDescription}` : ''}
 ${context.instruction ? `\nUser Directive: ${context.instruction}` : ''}`;
 }
 
+/**
+ * Validates Scout output and logs warnings.
+ * Exported for unit testing.
+ *
+ * @param overviewBriefing - The overview briefing to validate
+ * @param poolBuilder - Research pool builder with stats
+ * @param researchPool - Built research pool
+ * @param gameName - Game name for error messages
+ * @param log - Logger instance
+ * @throws ArticleGenerationError if validation fails
+ */
+export function validateScoutOutput(
+  overviewBriefing: string,
+  poolBuilder: ResearchPoolBuilder,
+  researchPool: ResearchPool,
+  gameName: string,
+  log: Logger
+): void {
+  if (poolBuilder.urlCount < SCOUT_CONFIG.MIN_SOURCES_WARNING) {
+    log.warn(
+      `Found only ${poolBuilder.urlCount} sources for "${gameName}" ` +
+        `(minimum recommended: ${SCOUT_CONFIG.MIN_SOURCES_WARNING}). Article quality may be limited.`
+    );
+  }
+
+  if (poolBuilder.queryCount < SCOUT_CONFIG.MIN_QUERIES_WARNING) {
+    log.warn(
+      `Only ${poolBuilder.queryCount} unique queries executed for "${gameName}" ` +
+        `(minimum recommended: ${SCOUT_CONFIG.MIN_QUERIES_WARNING}). Research depth may be limited.`
+    );
+  }
+
+  if (!overviewBriefing || overviewBriefing.length < SCOUT_CONFIG.MIN_OVERVIEW_LENGTH) {
+    throw new ArticleGenerationError(
+      'SCOUT_FAILED',
+      `Scout failed to generate meaningful overview briefing for "${gameName}". ` +
+        `Generated briefing was ${overviewBriefing.length} characters. ` +
+        `This may indicate poor search results or API issues.`
+    );
+  }
+
+  // Check for failed searches
+  const failedSearches = Array.from(researchPool.queryCache.values()).filter(
+    (r) => r.results.length === 0
+  );
+
+  if (failedSearches.length > 0) {
+    log.warn(
+      `${failedSearches.length} search(es) returned no results: ` +
+        failedSearches.map((s) => `"${s.query}"`).join(', ')
+    );
+  }
+}
+
+/**
+ * Assembles the final ScoutOutput from components.
+ * Exported for unit testing.
+ *
+ * @param overviewBriefing - Overview briefing text
+ * @param categoryBriefing - Category insights text
+ * @param recentBriefing - Recent developments text
+ * @param fullContext - Full context document
+ * @param researchPool - Built research pool
+ * @returns Complete ScoutOutput
+ */
+export function assembleScoutOutput(
+  overviewBriefing: string,
+  categoryBriefing: string,
+  recentBriefing: string,
+  fullContext: string,
+  researchPool: ResearchPool
+): ScoutOutput {
+  return {
+    briefing: {
+      overview: overviewBriefing,
+      categoryInsights: categoryBriefing,
+      recentDevelopments: recentBriefing,
+      fullContext,
+    },
+    researchPool,
+    sourceUrls: Array.from(researchPool.allUrls),
+  };
+}
+
 // ============================================================================
 // Main Scout Function
 // ============================================================================
@@ -186,6 +326,7 @@ export async function runScout(
 ): Promise<ScoutOutput> {
   const log = deps.logger ?? createPrefixedLogger('[Scout]');
   const { signal } = deps;
+  const temperature = deps.temperature ?? SCOUT_CONFIG.TEMPERATURE;
   const localeInstruction = 'Write in English.';
 
   // Build search queries
@@ -299,7 +440,7 @@ export async function runScout(
         () =>
           deps.generateText({
             model: deps.model,
-            temperature: SCOUT_CONFIG.TEMPERATURE,
+            temperature,
             system: getScoutOverviewSystemPrompt(localeInstruction),
             prompt: getScoutOverviewUserPrompt(promptContext),
           }),
@@ -311,7 +452,7 @@ export async function runScout(
         () =>
           deps.generateText({
             model: deps.model,
-            temperature: SCOUT_CONFIG.TEMPERATURE,
+            temperature,
             system: getScoutCategorySystemPrompt(localeInstruction),
             prompt: getScoutCategoryUserPrompt(context.gameName, context.instruction, categoryContext),
           }),
@@ -323,7 +464,7 @@ export async function runScout(
         () =>
           deps.generateText({
             model: deps.model,
-            temperature: SCOUT_CONFIG.TEMPERATURE,
+            temperature,
             system: getScoutRecentSystemPrompt(localeInstruction),
             prompt: getScoutRecentUserPrompt(context.gameName, recentContext),
           }),
@@ -337,51 +478,10 @@ export async function runScout(
   const recentBriefing = recentResult.text.trim();
 
   // ===== VALIDATION =====
-  if (poolBuilder.urlCount < SCOUT_CONFIG.MIN_SOURCES_WARNING) {
-    log.warn(
-      `Found only ${poolBuilder.urlCount} sources for "${context.gameName}" ` +
-        `(minimum recommended: ${SCOUT_CONFIG.MIN_SOURCES_WARNING}). Article quality may be limited.`
-    );
-  }
+  validateScoutOutput(overviewBriefing, poolBuilder, researchPool, context.gameName, log);
 
-  if (poolBuilder.queryCount < SCOUT_CONFIG.MIN_QUERIES_WARNING) {
-    log.warn(
-      `Only ${poolBuilder.queryCount} unique queries executed for "${context.gameName}" ` +
-        `(minimum recommended: ${SCOUT_CONFIG.MIN_QUERIES_WARNING}). Research depth may be limited.`
-    );
-  }
-
-  if (!overviewBriefing || overviewBriefing.length < SCOUT_CONFIG.MIN_OVERVIEW_LENGTH) {
-    throw new Error(
-      `Scout failed to generate meaningful overview briefing for "${context.gameName}". ` +
-        `Generated briefing was ${overviewBriefing.length} characters. ` +
-        `This may indicate poor search results or API issues.`
-    );
-  }
-
-  // Check for failed searches
-  const failedSearches = Array.from(researchPool.queryCache.values()).filter(
-    (r) => r.results.length === 0
-  );
-
-  if (failedSearches.length > 0) {
-    log.warn(
-      `${failedSearches.length} search(es) returned no results: ` +
-        failedSearches.map((s) => `"${s.query}"`).join(', ')
-    );
-  }
-
+  // ===== ASSEMBLE OUTPUT =====
   const fullContext = buildFullContext(context, overviewBriefing, categoryBriefing, recentBriefing);
-
-  return {
-    briefing: {
-      overview: overviewBriefing,
-      categoryInsights: categoryBriefing,
-      recentDevelopments: recentBriefing,
-      fullContext,
-    },
-    researchPool,
-    sourceUrls: Array.from(researchPool.allUrls),
-  };
+  return assembleScoutOutput(overviewBriefing, categoryBriefing, recentBriefing, fullContext, researchPool);
 }
 
