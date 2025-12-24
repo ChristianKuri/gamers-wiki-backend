@@ -5,23 +5,23 @@
  * - Scout: Gathers research from multiple sources
  * - Editor: Plans article structure and assigns research queries
  * - Specialist: Writes article sections based on research and plan
+ *
+ * Note: Internal helper functions for testing are available via './scout.internals'.
+ * Import from there only in test files:
+ *
+ * @example
+ * // In test files only:
+ * import { buildSearchContext, validateScoutOutput } from './scout.internals';
  */
 
+// Public API exports
 export {
   runScout,
   SCOUT_CONFIG,
-  // Helper functions (exported for testing)
-  executeSearch,
-  buildSearchContext,
-  buildCategoryContext,
-  buildRecentContext,
-  buildFullContext,
-  validateScoutOutput,
-  assembleScoutOutput,
   type ScoutDeps,
   type ScoutProgressCallback,
-  type ExecuteSearchOptions,
 } from './scout';
+
 export { runEditor, EDITOR_CONFIG, type EditorDeps, type EditorOutput } from './editor';
 export { runSpecialist, SPECIALIST_CONFIG, type SpecialistDeps, type SpecialistOutput } from './specialist';
 

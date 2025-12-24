@@ -130,6 +130,12 @@ export interface ResearchPool {
 // ============================================================================
 
 /**
+ * Confidence level for research quality.
+ * Used by downstream agents to adjust behavior when research is limited.
+ */
+export type ResearchConfidence = 'high' | 'medium' | 'low';
+
+/**
  * Output from the Scout agent containing research briefings and sources.
  */
 export interface ScoutOutput {
@@ -143,6 +149,13 @@ export interface ScoutOutput {
   readonly sourceUrls: readonly string[];
   /** Token usage for Scout phase LLM calls */
   readonly tokenUsage: TokenUsage;
+  /**
+   * Confidence level based on research quality.
+   * - 'high': Good source count and briefing quality
+   * - 'medium': Some concerns but usable
+   * - 'low': Limited research, article quality may be compromised
+   */
+  readonly confidence: ResearchConfidence;
 }
 
 // ============================================================================
@@ -206,6 +219,8 @@ export interface AggregatedTokenUsage {
   readonly editor: TokenUsage;
   readonly specialist: TokenUsage;
   readonly total: TokenUsage;
+  /** Estimated total cost in USD (if pricing data is available) */
+  readonly estimatedCostUsd?: number;
 }
 
 /**
@@ -250,6 +265,10 @@ export interface ArticleGenerationMetadata {
   readonly sourcesCollected: number;
   /** Token usage by phase (optional - may not be available if API doesn't report it) */
   readonly tokenUsage?: AggregatedTokenUsage;
+  /** Correlation ID for log tracing */
+  readonly correlationId: string;
+  /** Research confidence level from Scout phase */
+  readonly researchConfidence: ResearchConfidence;
 }
 
 /**
@@ -300,6 +319,14 @@ export type ArticleProgressCallback = (
  * @param headline - Headline of the section being written
  */
 export type SectionProgressCallback = (current: number, total: number, headline: string) => void;
+
+/**
+ * Callback for monitoring batch research progress within the Specialist phase.
+ *
+ * @param completed - Number of completed queries
+ * @param total - Total number of queries to execute
+ */
+export type ResearchProgressCallback = (completed: number, total: number) => void;
 
 // ============================================================================
 // Validation Types

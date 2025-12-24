@@ -30,6 +30,7 @@ import {
   type CategorizedSearchResult,
   type GameArticleContext,
   type ResearchPool,
+  type ResearchProgressCallback,
   type ScoutOutput,
   type SearchFunction,
   type SectionProgressCallback,
@@ -50,6 +51,8 @@ export interface SpecialistDeps {
   readonly logger?: Logger;
   /** Optional callback for reporting section writing progress */
   readonly onSectionProgress?: SectionProgressCallback;
+  /** Optional callback for reporting batch research progress */
+  readonly onResearchProgress?: ResearchProgressCallback;
   /**
    * If true, writes sections in parallel instead of sequentially.
    * Faster but loses narrative flow between sections.
@@ -76,48 +79,118 @@ export interface SpecialistOutput {
 // ============================================================================
 
 /**
+ * Result from a single search operation.
+ */
+interface SingleSearchResult {
+  readonly query: string;
+  readonly result: ReturnType<typeof processSearchResults>;
+  readonly success: true;
+}
+
+/**
+ * Result when a search operation fails but is recoverable.
+ */
+interface FailedSearchResult {
+  readonly query: string;
+  readonly error: string;
+  readonly success: false;
+}
+
+type SearchOperationResult = SingleSearchResult | FailedSearchResult;
+
+/**
  * Executes a single search with retry logic.
  * Separated for use in parallel execution.
+ *
+ * @param search - Search function to use
+ * @param query - Query string
+ * @param signal - Optional abort signal
+ * @param log - Logger for warnings
+ * @param gracefulDegradation - If true, returns null on failure instead of throwing
+ * @returns Search result or null if graceful degradation is enabled and search fails
  */
 async function executeSingleSearch(
   search: SearchFunction,
   query: string,
-  signal?: AbortSignal
-): Promise<{ query: string; result: ReturnType<typeof processSearchResults> }> {
-  const result = await withRetry(
-    () =>
-      search(query, {
-        searchDepth: SPECIALIST_CONFIG.SEARCH_DEPTH,
-        maxResults: SPECIALIST_CONFIG.MAX_SEARCH_RESULTS,
-        includeAnswer: true,
-      }),
-    { context: `Specialist search: "${query.slice(0, 50)}..."`, signal }
-  );
+  signal?: AbortSignal,
+  log?: Logger,
+  gracefulDegradation = false
+): Promise<SearchOperationResult> {
+  try {
+    const result = await withRetry(
+      () =>
+        search(query, {
+          searchDepth: SPECIALIST_CONFIG.SEARCH_DEPTH,
+          maxResults: SPECIALIST_CONFIG.MAX_SEARCH_RESULTS,
+          includeAnswer: true,
+        }),
+      { context: `Specialist search: "${query.slice(0, 50)}..."`, signal }
+    );
 
-  return {
-    query,
-    result: processSearchResults(query, 'section-specific', result),
-  };
+    return {
+      query,
+      result: processSearchResults(query, 'section-specific', result),
+      success: true,
+    };
+  } catch (error) {
+    // Re-throw if cancelled - we don't want to gracefully degrade cancellation
+    if (signal?.aborted) {
+      throw error;
+    }
+
+    // If graceful degradation is enabled, return failure info instead of throwing
+    if (gracefulDegradation) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      log?.warn(`Search failed for "${query}": ${errorMessage}`);
+      return {
+        query,
+        error: errorMessage,
+        success: false,
+      };
+    }
+
+    throw error;
+  }
+}
+
+/**
+ * Result from batch research execution.
+ */
+interface BatchResearchResult {
+  readonly pool: ResearchPool;
+  readonly successCount: number;
+  readonly failureCount: number;
+  readonly failedQueries: readonly string[];
+}
+
+/**
+ * Options for batch research execution.
+ */
+interface BatchResearchOptions {
+  readonly signal?: AbortSignal;
+  readonly onProgress?: ResearchProgressCallback;
 }
 
 /**
  * Executes batch research for all sections with controlled parallelism.
  * Uses configurable concurrency to balance speed vs API rate limits.
+ * Supports graceful degradation - failed searches are logged and skipped.
  *
  * @param plan - Article plan with section queries
  * @param existingPool - Research pool from Scout phase
  * @param search - Search function
  * @param log - Logger instance
- * @param signal - Optional abort signal
- * @returns Enriched research pool
+ * @param options - Optional signal and progress callback
+ * @returns Enriched research pool with execution stats
  */
 async function batchResearchForSections(
   plan: ArticlePlan,
   existingPool: ResearchPool,
   search: SearchFunction,
   log: Logger,
-  signal?: AbortSignal
-): Promise<ResearchPool> {
+  options?: BatchResearchOptions
+): Promise<BatchResearchResult> {
+  const { signal, onProgress } = options ?? {};
   // Collect ALL research queries from all sections
   const allQueries = plan.sections.flatMap((section) => section.researchQueries);
 
@@ -130,7 +203,12 @@ async function batchResearchForSections(
 
   if (newQueries.length === 0) {
     log.debug('All research queries already satisfied by Scout research');
-    return existingPool;
+    return {
+      pool: existingPool,
+      successCount: 0,
+      failureCount: 0,
+      failedQueries: [],
+    };
   }
 
   const alreadySatisfiedCount = allQueries.length - newQueriesRaw.length;
@@ -144,6 +222,13 @@ async function batchResearchForSections(
       (duplicatesRemovedCount > 0 ? `, ${duplicatesRemovedCount} duplicate(s) removed` : '') +
       `)`
   );
+
+  let successCount = 0;
+  const failedQueries: string[] = [];
+  let completedQueries = 0;
+
+  // Report initial progress
+  onProgress?.(0, newQueries.length);
 
   // Process queries in batches with controlled concurrency
   for (let batchStart = 0; batchStart < newQueries.length; batchStart += concurrency) {
@@ -160,15 +245,24 @@ async function batchResearchForSections(
         `queries ${batchStart + 1}-${batchEnd} of ${newQueries.length}`
     );
 
-    // Execute batch in parallel
+    // Execute batch in parallel with graceful degradation
     const batchResults = await Promise.all(
-      batch.map((query) => executeSingleSearch(search, query, signal))
+      batch.map((query) => executeSingleSearch(search, query, signal, log, true))
     );
 
-    // Add results to pool
-    for (const { result } of batchResults) {
-      poolBuilder.add(result);
+    // Add successful results to pool, track failures
+    for (const searchResult of batchResults) {
+      if (searchResult.success) {
+        poolBuilder.add(searchResult.result);
+        successCount++;
+      } else {
+        failedQueries.push(searchResult.query);
+      }
     }
+
+    // Report progress after each batch
+    completedQueries += batch.length;
+    onProgress?.(completedQueries, newQueries.length);
 
     // Add delay between batches (but not after the last batch)
     if (batchDelay > 0 && batchEnd < newQueries.length) {
@@ -176,7 +270,19 @@ async function batchResearchForSections(
     }
   }
 
-  return poolBuilder.build();
+  if (failedQueries.length > 0) {
+    log.warn(
+      `${failedQueries.length} of ${newQueries.length} research queries failed. ` +
+        `Article may have reduced coverage for some sections.`
+    );
+  }
+
+  return {
+    pool: poolBuilder.build(),
+    successCount,
+    failureCount: failedQueries.length,
+    failedQueries,
+  };
 }
 
 /**
@@ -345,13 +451,17 @@ export async function runSpecialist(
 
   // ===== BATCH RESEARCH PHASE =====
   log.info('Starting batch research for all sections...');
-  const enrichedPool = await batchResearchForSections(
+  const { pool: enrichedPool, successCount, failureCount } = await batchResearchForSections(
     plan,
     scoutOutput.researchPool,
     deps.search,
     log,
-    signal
+    { signal, onProgress: deps.onResearchProgress }
   );
+
+  if (successCount > 0 || failureCount > 0) {
+    log.info(`Batch research complete: ${successCount} successful, ${failureCount} failed`);
+  }
 
   // ===== SECTION WRITING PHASE =====
   let sectionTexts: string[];

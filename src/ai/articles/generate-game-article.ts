@@ -50,7 +50,14 @@ import { generateObject, generateText } from 'ai';
 
 import { getModel } from '../config';
 import { tavilySearch } from '../tools/tavily';
-import { createPrefixedLogger, type Logger } from '../../utils/logger';
+import { getModelPricing } from './config';
+import {
+  createContextualLogger,
+  createPrefixedLogger,
+  generateCorrelationId,
+  type ContextualLogger,
+  type Logger,
+} from '../../utils/logger';
 import { runScout, runEditor, runSpecialist, type EditorOutput } from './agents';
 import type { SpecialistOutput } from './agents/specialist';
 import type { ArticlePlan } from './article-plan';
@@ -71,6 +78,7 @@ import {
   type ScoutOutput,
   type TokenUsage,
 } from './types';
+import { PhaseTimer } from './phase-timer';
 import { ProgressTracker } from './progress-tracker';
 import { validateArticleDraft, validateArticlePlan, validateGameArticleContext, getErrors, getWarnings } from './validation';
 
@@ -89,6 +97,12 @@ export interface ArticleGeneratorDeps {
 }
 
 /**
+ * Valid temperature range for LLM calls.
+ * Most models support 0-2, with 0 being deterministic and 2 being highly creative.
+ */
+const TEMPERATURE_RANGE = { min: 0, max: 2 } as const;
+
+/**
  * Temperature overrides for individual agents.
  * Useful for experimentation or tuning specific phases.
  */
@@ -99,6 +113,39 @@ export interface TemperatureOverrides {
   readonly editor?: number;
   /** Override Specialist agent temperature (default: 0.6 - engaging prose) */
   readonly specialist?: number;
+}
+
+/**
+ * Validates temperature overrides are within acceptable range.
+ *
+ * @param overrides - Temperature overrides to validate
+ * @throws ArticleGenerationError with 'CONFIG_ERROR' if any temperature is invalid
+ */
+function validateTemperatureOverrides(overrides?: TemperatureOverrides): void {
+  if (!overrides) return;
+
+  const entries: Array<[string, number | undefined]> = [
+    ['scout', overrides.scout],
+    ['editor', overrides.editor],
+    ['specialist', overrides.specialist],
+  ];
+
+  for (const [agent, temp] of entries) {
+    if (temp !== undefined) {
+      if (typeof temp !== 'number' || Number.isNaN(temp)) {
+        throw new ArticleGenerationError(
+          'CONFIG_ERROR',
+          `Invalid temperature for ${agent}: ${temp} (must be a number)`
+        );
+      }
+      if (temp < TEMPERATURE_RANGE.min || temp > TEMPERATURE_RANGE.max) {
+        throw new ArticleGenerationError(
+          'CONFIG_ERROR',
+          `Invalid temperature for ${agent}: ${temp} (must be between ${TEMPERATURE_RANGE.min} and ${TEMPERATURE_RANGE.max})`
+        );
+      }
+    }
+  }
 }
 
 /**
@@ -167,6 +214,19 @@ export interface ArticleGeneratorOptions {
    * });
    */
   readonly temperatureOverrides?: TemperatureOverrides;
+
+  /**
+   * Optional correlation ID for log tracing.
+   * If not provided, a unique ID will be generated.
+   * Useful for correlating logs across distributed systems.
+   *
+   * @example
+   * // Use existing correlation ID from request
+   * const draft = await generateGameArticleDraft(context, undefined, {
+   *   correlationId: req.headers['x-correlation-id'],
+   * });
+   */
+  readonly correlationId?: string;
 }
 
 // ============================================================================
@@ -397,8 +457,9 @@ interface PhaseContext {
   readonly context: GameArticleContext;
   readonly deps: ArticleGeneratorDeps;
   readonly basePhaseOptions: BasePhaseOptions;
-  readonly log: Logger;
+  readonly log: ContextualLogger;
   readonly progressTracker: ProgressTracker;
+  readonly phaseTimer: PhaseTimer;
   readonly temperatureOverrides?: TemperatureOverrides;
 }
 
@@ -409,10 +470,11 @@ async function executeScoutPhase(
   phaseContext: PhaseContext,
   scoutModel: string
 ): Promise<PhaseResult<ScoutOutput>> {
-  const { context, deps, basePhaseOptions, log, progressTracker, temperatureOverrides } = phaseContext;
+  const { context, deps, basePhaseOptions, log, progressTracker, phaseTimer, temperatureOverrides } = phaseContext;
 
   log.info(`Phase 1: Scout - Deep multi-query research (model: ${scoutModel})...`);
   progressTracker.startPhase('scout');
+  phaseTimer.start('scout');
 
   const result = await runPhase(
     'Scout',
@@ -429,10 +491,12 @@ async function executeScoutPhase(
     { ...basePhaseOptions, modelName: scoutModel }
   );
 
+  phaseTimer.end('scout');
   log.info(
     `Scout (${scoutModel}) complete in ${result.durationMs}ms: ` +
       `${result.output.researchPool.allUrls.size} sources, ` +
-      `${result.output.researchPool.queryCache.size} unique queries`
+      `${result.output.researchPool.queryCache.size} unique queries, ` +
+      `confidence: ${result.output.confidence}`
   );
   progressTracker.completePhase('scout', `Found ${result.output.researchPool.allUrls.size} sources`);
 
@@ -457,10 +521,11 @@ async function executeEditorPhase(
   scoutOutput: ScoutOutput,
   editorModel: string
 ): Promise<EditorPhaseResult> {
-  const { context, deps, basePhaseOptions, log, progressTracker, temperatureOverrides } = phaseContext;
+  const { context, deps, basePhaseOptions, log, progressTracker, phaseTimer, temperatureOverrides } = phaseContext;
 
   log.info(`Phase 2: Editor - Planning article (model: ${editorModel})...`);
   progressTracker.startPhase('editor');
+  phaseTimer.start('editor');
 
   const result = await runPhase(
     'Editor',
@@ -476,6 +541,7 @@ async function executeEditorPhase(
     { ...basePhaseOptions, modelName: editorModel }
   );
 
+  phaseTimer.end('editor');
   const { plan, tokenUsage } = result.output;
   log.info(
     `Editor (${editorModel}) complete in ${result.durationMs}ms: ` +
@@ -513,13 +579,14 @@ async function executeSpecialistPhase(
   specialistModel: string,
   parallelSections: boolean
 ): Promise<PhaseResult<SpecialistOutput>> {
-  const { context, deps, basePhaseOptions, log, progressTracker, temperatureOverrides } = phaseContext;
+  const { context, deps, basePhaseOptions, log, progressTracker, phaseTimer, temperatureOverrides } = phaseContext;
 
   const modeLabel = parallelSections ? 'parallel' : 'sequential';
   log.info(
     `Phase 3: Specialist - Batch research + section writing in ${modeLabel} mode (model: ${specialistModel})...`
   );
   progressTracker.startPhase('specialist');
+  phaseTimer.start('specialist');
 
   // Note: Specialist doesn't use top-level retry because it's a long operation.
   // Retry logic is applied to individual search/generateText calls inside the agent.
@@ -543,6 +610,7 @@ async function executeSpecialistPhase(
     { ...basePhaseOptions, modelName: specialistModel, skipRetry: true }
   );
 
+  phaseTimer.end('specialist');
   log.info(
     `Specialist (${specialistModel}) complete in ${result.durationMs}ms: ` +
       `${countContentH2Sections(result.output.markdown)} sections written, ${result.output.sources.length} total sources`
@@ -644,6 +712,9 @@ export async function generateGameArticleDraft(
     );
   }
 
+  // Validate temperature overrides early (before expensive operations)
+  validateTemperatureOverrides(options?.temperatureOverrides);
+
   // Use provided deps or create default production deps
   const { openrouter, search, generateText: genText, generateObject: genObject } =
     deps ?? createDefaultDeps();
@@ -652,8 +723,15 @@ export async function generateGameArticleDraft(
   const editorModel = getModel('ARTICLE_EDITOR');
   const specialistModel = getModel('ARTICLE_SPECIALIST');
 
-  const log = createPrefixedLogger('[ArticleGen]');
+  // Create contextual logger with correlation ID for tracing
+  const correlationId = options?.correlationId ?? generateCorrelationId();
+  const log = createContextualLogger('[ArticleGen]', {
+    correlationId,
+    gameName: context.gameName,
+  });
+
   const progressTracker = new ProgressTracker(options?.onProgress);
+  const phaseTimer = new PhaseTimer(options?.clock ?? systemClock);
   const timeoutMs = options?.timeoutMs ?? GENERATOR_CONFIG.DEFAULT_TIMEOUT_MS;
   const signal = options?.signal;
   const clock = options?.clock ?? systemClock;
@@ -691,6 +769,7 @@ export async function generateGameArticleDraft(
     basePhaseOptions,
     log,
     progressTracker,
+    phaseTimer,
     temperatureOverrides,
   };
 
@@ -720,9 +799,9 @@ export async function generateGameArticleDraft(
   const { markdown, sources, researchPool: finalResearchPool, tokenUsage: specialistTokenUsage } = specialistResult.output;
 
   // ===== PHASE 4: VALIDATION =====
-  const validationStartTime = clock.now();
   log.info('Phase 4: Validation - Checking content quality...');
   progressTracker.startPhase('validation');
+  phaseTimer.start('validation');
 
   const draft = {
     title: plan.title,
@@ -738,7 +817,7 @@ export async function generateGameArticleDraft(
   const errors = getErrors(validationIssues);
   const warnings = getWarnings(validationIssues);
 
-  const validationDurationMs = clock.now() - validationStartTime;
+  phaseTimer.end('validation');
 
   if (warnings.length > 0) {
     log.warn(`Article validation warnings: ${warnings.map((w) => w.message).join('; ')}`);
@@ -770,12 +849,34 @@ export async function generateGameArticleDraft(
   // Check if any tokens were reported (some APIs may not report usage)
   const hasTokenUsage = totalTokenUsage.input > 0 || totalTokenUsage.output > 0;
 
+  // Calculate estimated cost based on model pricing
+  let estimatedCostUsd: number | undefined;
+  if (hasTokenUsage) {
+    const scoutPricing = getModelPricing(scoutModel);
+    const editorPricing = getModelPricing(editorModel);
+    const specialistPricing = getModelPricing(specialistModel);
+
+    estimatedCostUsd =
+      (scoutTokenUsage.input / 1000) * scoutPricing.inputPer1k +
+      (scoutTokenUsage.output / 1000) * scoutPricing.outputPer1k +
+      (editorTokenUsage.input / 1000) * editorPricing.inputPer1k +
+      (editorTokenUsage.output / 1000) * editorPricing.outputPer1k +
+      (specialistTokenUsage.input / 1000) * specialistPricing.inputPer1k +
+      (specialistTokenUsage.output / 1000) * specialistPricing.outputPer1k;
+
+    // Round to 6 decimal places for precision
+    estimatedCostUsd = Math.round(estimatedCostUsd * 1_000_000) / 1_000_000;
+
+    log.info(`Estimated generation cost: $${estimatedCostUsd.toFixed(4)} USD`);
+  }
+
   const tokenUsage: AggregatedTokenUsage | undefined = hasTokenUsage
     ? {
         scout: scoutTokenUsage,
         editor: editorTokenUsage,
         specialist: specialistTokenUsage,
         total: totalTokenUsage,
+        estimatedCostUsd,
       }
     : undefined;
 
@@ -783,15 +884,12 @@ export async function generateGameArticleDraft(
   const metadata: ArticleGenerationMetadata = {
     generatedAt: new Date().toISOString(),
     totalDurationMs,
-    phaseDurations: {
-      scout: scoutResult.durationMs,
-      editor: editorResult.durationMs,
-      specialist: specialistResult.durationMs,
-      validation: validationDurationMs,
-    },
+    phaseDurations: phaseTimer.getDurations(),
     queriesExecuted: finalResearchPool.queryCache.size,
     sourcesCollected: finalResearchPool.allUrls.size,
     tokenUsage,
+    correlationId,
+    researchConfidence: scoutOutput.confidence,
   };
 
   return {

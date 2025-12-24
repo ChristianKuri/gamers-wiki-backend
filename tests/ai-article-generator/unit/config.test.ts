@@ -1,6 +1,15 @@
 import { describe, it, expect } from 'vitest';
 
-import { GENERATOR_CONFIG, CONFIG, SPECIALIST_CONFIG, SCOUT_CONFIG, EDITOR_CONFIG } from '../../../src/ai/articles/config';
+import {
+  GENERATOR_CONFIG,
+  CONFIG,
+  SPECIALIST_CONFIG,
+  SCOUT_CONFIG,
+  EDITOR_CONFIG,
+  MODEL_PRICING,
+  DEFAULT_MODEL_PRICING,
+  getModelPricing,
+} from '../../../src/ai/articles/config';
 
 describe('GENERATOR_CONFIG', () => {
   describe('progress constants', () => {
@@ -132,6 +141,111 @@ describe('EDITOR_CONFIG', () => {
       expect(EDITOR_CONFIG.TEMPERATURE).toBeGreaterThanOrEqual(SCOUT_CONFIG.TEMPERATURE);
       expect(EDITOR_CONFIG.TEMPERATURE).toBeLessThanOrEqual(SPECIALIST_CONFIG.TEMPERATURE);
     });
+  });
+});
+
+describe('MODEL_PRICING', () => {
+  describe('structure', () => {
+    it('contains known Anthropic models', () => {
+      expect(MODEL_PRICING['anthropic/claude-sonnet-4']).toBeDefined();
+      expect(MODEL_PRICING['anthropic/claude-3.5-sonnet']).toBeDefined();
+      expect(MODEL_PRICING['anthropic/claude-3-haiku']).toBeDefined();
+    });
+
+    it('contains known OpenAI models', () => {
+      expect(MODEL_PRICING['openai/gpt-4o']).toBeDefined();
+      expect(MODEL_PRICING['openai/gpt-4o-mini']).toBeDefined();
+    });
+
+    it('all entries have valid pricing structure', () => {
+      for (const [model, pricing] of Object.entries(MODEL_PRICING)) {
+        expect(pricing.inputPer1k).toBeDefined();
+        expect(pricing.outputPer1k).toBeDefined();
+        expect(typeof pricing.inputPer1k).toBe('number');
+        expect(typeof pricing.outputPer1k).toBe('number');
+        expect(pricing.inputPer1k).toBeGreaterThan(0);
+        expect(pricing.outputPer1k).toBeGreaterThan(0);
+      }
+    });
+
+    it('output pricing is typically higher than or equal to input pricing', () => {
+      for (const [model, pricing] of Object.entries(MODEL_PRICING)) {
+        // This is a common pricing pattern - output tokens cost more
+        expect(pricing.outputPer1k).toBeGreaterThanOrEqual(pricing.inputPer1k);
+      }
+    });
+  });
+
+  describe('DEFAULT_MODEL_PRICING', () => {
+    it('has valid structure', () => {
+      expect(DEFAULT_MODEL_PRICING.inputPer1k).toBeDefined();
+      expect(DEFAULT_MODEL_PRICING.outputPer1k).toBeDefined();
+    });
+
+    it('has positive values', () => {
+      expect(DEFAULT_MODEL_PRICING.inputPer1k).toBeGreaterThan(0);
+      expect(DEFAULT_MODEL_PRICING.outputPer1k).toBeGreaterThan(0);
+    });
+  });
+});
+
+describe('getModelPricing', () => {
+  describe('exact match', () => {
+    it('returns exact pricing for known model', () => {
+      const pricing = getModelPricing('anthropic/claude-sonnet-4');
+      expect(pricing).toBe(MODEL_PRICING['anthropic/claude-sonnet-4']);
+    });
+
+    it('returns exact pricing for OpenAI model', () => {
+      const pricing = getModelPricing('openai/gpt-4o');
+      expect(pricing).toBe(MODEL_PRICING['openai/gpt-4o']);
+    });
+  });
+
+  describe('prefix matching', () => {
+    it('matches versioned Anthropic models', () => {
+      const pricing = getModelPricing('anthropic/claude-sonnet-4-20250514');
+      expect(pricing).toBe(MODEL_PRICING['anthropic/claude-sonnet-4']);
+    });
+
+    it('matches versioned models with different suffixes', () => {
+      const pricing = getModelPricing('anthropic/claude-3.5-sonnet-latest');
+      expect(pricing).toBe(MODEL_PRICING['anthropic/claude-3.5-sonnet']);
+    });
+  });
+
+  describe('fallback', () => {
+    it('returns default pricing for unknown model', () => {
+      const pricing = getModelPricing('unknown/mystery-model');
+      expect(pricing).toBe(DEFAULT_MODEL_PRICING);
+    });
+
+    it('returns default pricing for empty string', () => {
+      const pricing = getModelPricing('');
+      expect(pricing).toBe(DEFAULT_MODEL_PRICING);
+    });
+
+    it('returns default pricing for partial match that does not exist', () => {
+      const pricing = getModelPricing('anthropic/nonexistent');
+      expect(pricing).toBe(DEFAULT_MODEL_PRICING);
+    });
+  });
+});
+
+describe('Configuration validation', () => {
+  // The config module validates itself at load time
+  // If we got here without errors, the base config is valid
+
+  it('module loads without throwing validation errors', () => {
+    // This test passes if the module loaded successfully
+    expect(CONFIG).toBeDefined();
+  });
+
+  it('all temperature constraints are enforced consistently', () => {
+    // Temperatures should follow: Scout <= Editor <= Specialist
+    // This is a logical constraint for the system design
+    expect(SCOUT_CONFIG.TEMPERATURE).toBeLessThanOrEqual(EDITOR_CONFIG.TEMPERATURE);
+    expect(EDITOR_CONFIG.TEMPERATURE).toBeLessThanOrEqual(SPECIALIST_CONFIG.TEMPERATURE);
   });
 });
 

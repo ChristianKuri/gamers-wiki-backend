@@ -6,6 +6,64 @@
  */
 
 // ============================================================================
+// Configuration Validation
+// ============================================================================
+
+/**
+ * Configuration validation error.
+ * Thrown at module load time if configuration is inconsistent.
+ */
+class ConfigValidationError extends Error {
+  constructor(message: string) {
+    super(`Article generation config error: ${message}`);
+    this.name = 'ConfigValidationError';
+  }
+}
+
+/**
+ * Validates that a MIN value is less than or equal to MAX value.
+ */
+function validateMinMax(
+  minValue: number,
+  maxValue: number,
+  minName: string,
+  maxName: string
+): void {
+  if (minValue > maxValue) {
+    throw new ConfigValidationError(
+      `${minName} (${minValue}) cannot be greater than ${maxName} (${maxValue})`
+    );
+  }
+}
+
+/**
+ * Validates that a value is positive.
+ */
+function validatePositive(value: number, name: string): void {
+  if (value <= 0) {
+    throw new ConfigValidationError(`${name} must be positive (got ${value})`);
+  }
+}
+
+/**
+ * Validates that a value is non-negative.
+ */
+function validateNonNegative(value: number, name: string): void {
+  if (value < 0) {
+    throw new ConfigValidationError(`${name} cannot be negative (got ${value})`);
+  }
+}
+
+/**
+ * Validates temperature is in valid range (0-2).
+ */
+function validateTemperature(value: number, name: string): void {
+  if (value < 0 || value > 2) {
+    throw new ConfigValidationError(`${name} must be between 0 and 2 (got ${value})`);
+  }
+}
+
+// ============================================================================
 // Article Plan Constraints
 // ============================================================================
 
@@ -192,6 +250,81 @@ export const GENERATOR_CONFIG = {
 } as const;
 
 // ============================================================================
+// Model Pricing Configuration
+// ============================================================================
+
+/**
+ * Pricing per 1000 tokens for supported models.
+ * Prices are approximate and should be updated periodically.
+ * Source: OpenRouter pricing page.
+ */
+export interface ModelPricing {
+  /** Cost per 1000 input tokens in USD */
+  readonly inputPer1k: number;
+  /** Cost per 1000 output tokens in USD */
+  readonly outputPer1k: number;
+}
+
+/**
+ * Known model pricing data.
+ * Uses pattern matching - model names are matched against these patterns.
+ */
+export const MODEL_PRICING: Record<string, ModelPricing> = {
+  // Anthropic Claude models
+  'anthropic/claude-sonnet-4': { inputPer1k: 0.003, outputPer1k: 0.015 },
+  'anthropic/claude-3.5-sonnet': { inputPer1k: 0.003, outputPer1k: 0.015 },
+  'anthropic/claude-3-5-haiku': { inputPer1k: 0.001, outputPer1k: 0.005 },
+  'anthropic/claude-3-haiku': { inputPer1k: 0.00025, outputPer1k: 0.00125 },
+  'anthropic/claude-3-opus': { inputPer1k: 0.015, outputPer1k: 0.075 },
+
+  // OpenAI models
+  'openai/gpt-4o': { inputPer1k: 0.005, outputPer1k: 0.015 },
+  'openai/gpt-4o-mini': { inputPer1k: 0.00015, outputPer1k: 0.0006 },
+  'openai/gpt-4-turbo': { inputPer1k: 0.01, outputPer1k: 0.03 },
+  'openai/gpt-3.5-turbo': { inputPer1k: 0.0005, outputPer1k: 0.0015 },
+
+  // Meta Llama models
+  'meta-llama/llama-3.1-70b-instruct': { inputPer1k: 0.0008, outputPer1k: 0.0008 },
+  'meta-llama/llama-3.1-8b-instruct': { inputPer1k: 0.0001, outputPer1k: 0.0001 },
+
+  // Google models
+  'google/gemini-pro': { inputPer1k: 0.00025, outputPer1k: 0.0005 },
+  'google/gemini-pro-1.5': { inputPer1k: 0.00125, outputPer1k: 0.005 },
+} as const;
+
+/**
+ * Default pricing when model is not found in MODEL_PRICING.
+ * Uses conservative mid-range estimate.
+ */
+export const DEFAULT_MODEL_PRICING: ModelPricing = {
+  inputPer1k: 0.002,
+  outputPer1k: 0.008,
+};
+
+/**
+ * Gets pricing for a model, with fallback to default.
+ * Supports partial matching for versioned model names.
+ *
+ * @param modelName - The model name (e.g., 'anthropic/claude-sonnet-4-20250514')
+ * @returns Pricing data for the model
+ */
+export function getModelPricing(modelName: string): ModelPricing {
+  // Try exact match first
+  if (MODEL_PRICING[modelName]) {
+    return MODEL_PRICING[modelName];
+  }
+
+  // Try prefix matching for versioned models
+  for (const [pattern, pricing] of Object.entries(MODEL_PRICING)) {
+    if (modelName.startsWith(pattern)) {
+      return pricing;
+    }
+  }
+
+  return DEFAULT_MODEL_PRICING;
+}
+
+// ============================================================================
 // Unified Config Export
 // ============================================================================
 
@@ -209,4 +342,94 @@ export const CONFIG = {
   retry: RETRY_CONFIG,
   generator: GENERATOR_CONFIG,
 } as const;
+
+// ============================================================================
+// Runtime Configuration Validation
+// ============================================================================
+
+/**
+ * Validates all configuration values at module load time.
+ * Throws ConfigValidationError if any values are inconsistent.
+ */
+function validateConfiguration(): void {
+  // Article Plan Constraints
+  validateMinMax(
+    ARTICLE_PLAN_CONSTRAINTS.TITLE_MIN_LENGTH,
+    ARTICLE_PLAN_CONSTRAINTS.TITLE_MAX_LENGTH,
+    'TITLE_MIN_LENGTH',
+    'TITLE_MAX_LENGTH'
+  );
+  validateMinMax(
+    ARTICLE_PLAN_CONSTRAINTS.EXCERPT_MIN_LENGTH,
+    ARTICLE_PLAN_CONSTRAINTS.EXCERPT_MAX_LENGTH,
+    'EXCERPT_MIN_LENGTH',
+    'EXCERPT_MAX_LENGTH'
+  );
+  validateMinMax(
+    ARTICLE_PLAN_CONSTRAINTS.MIN_SECTIONS,
+    ARTICLE_PLAN_CONSTRAINTS.MAX_SECTIONS,
+    'MIN_SECTIONS',
+    'MAX_SECTIONS'
+  );
+  validateMinMax(
+    ARTICLE_PLAN_CONSTRAINTS.MIN_TAGS,
+    ARTICLE_PLAN_CONSTRAINTS.MAX_TAGS,
+    'MIN_TAGS',
+    'MAX_TAGS'
+  );
+  validateMinMax(
+    ARTICLE_PLAN_CONSTRAINTS.MIN_RESEARCH_QUERIES_PER_SECTION,
+    ARTICLE_PLAN_CONSTRAINTS.MAX_RESEARCH_QUERIES_PER_SECTION,
+    'MIN_RESEARCH_QUERIES_PER_SECTION',
+    'MAX_RESEARCH_QUERIES_PER_SECTION'
+  );
+  validatePositive(ARTICLE_PLAN_CONSTRAINTS.MIN_MARKDOWN_LENGTH, 'MIN_MARKDOWN_LENGTH');
+  validatePositive(ARTICLE_PLAN_CONSTRAINTS.TAG_MAX_LENGTH, 'TAG_MAX_LENGTH');
+
+  // Scout Config
+  validatePositive(SCOUT_CONFIG.MAX_SNIPPET_LENGTH, 'SCOUT_CONFIG.MAX_SNIPPET_LENGTH');
+  validatePositive(SCOUT_CONFIG.MAX_SNIPPETS, 'SCOUT_CONFIG.MAX_SNIPPETS');
+  validatePositive(SCOUT_CONFIG.OVERVIEW_SEARCH_RESULTS, 'SCOUT_CONFIG.OVERVIEW_SEARCH_RESULTS');
+  validateTemperature(SCOUT_CONFIG.TEMPERATURE, 'SCOUT_CONFIG.TEMPERATURE');
+
+  // Editor Config
+  validateTemperature(EDITOR_CONFIG.TEMPERATURE, 'EDITOR_CONFIG.TEMPERATURE');
+  validatePositive(EDITOR_CONFIG.OVERVIEW_LINES_IN_PROMPT, 'EDITOR_CONFIG.OVERVIEW_LINES_IN_PROMPT');
+
+  // Specialist Config
+  validateTemperature(SPECIALIST_CONFIG.TEMPERATURE, 'SPECIALIST_CONFIG.TEMPERATURE');
+  validatePositive(SPECIALIST_CONFIG.SNIPPET_LENGTH, 'SPECIALIST_CONFIG.SNIPPET_LENGTH');
+  validateMinMax(
+    SPECIALIST_CONFIG.MIN_PARAGRAPHS,
+    SPECIALIST_CONFIG.MAX_PARAGRAPHS,
+    'SPECIALIST_CONFIG.MIN_PARAGRAPHS',
+    'SPECIALIST_CONFIG.MAX_PARAGRAPHS'
+  );
+  validatePositive(SPECIALIST_CONFIG.BATCH_CONCURRENCY, 'SPECIALIST_CONFIG.BATCH_CONCURRENCY');
+  validateNonNegative(SPECIALIST_CONFIG.BATCH_DELAY_MS, 'SPECIALIST_CONFIG.BATCH_DELAY_MS');
+  validatePositive(SPECIALIST_CONFIG.MAX_SOURCES, 'SPECIALIST_CONFIG.MAX_SOURCES');
+
+  // Retry Config
+  validatePositive(RETRY_CONFIG.MAX_RETRIES, 'RETRY_CONFIG.MAX_RETRIES');
+  validatePositive(RETRY_CONFIG.INITIAL_DELAY_MS, 'RETRY_CONFIG.INITIAL_DELAY_MS');
+  validateMinMax(
+    RETRY_CONFIG.INITIAL_DELAY_MS,
+    RETRY_CONFIG.MAX_DELAY_MS,
+    'RETRY_CONFIG.INITIAL_DELAY_MS',
+    'RETRY_CONFIG.MAX_DELAY_MS'
+  );
+  validatePositive(RETRY_CONFIG.BACKOFF_MULTIPLIER, 'RETRY_CONFIG.BACKOFF_MULTIPLIER');
+
+  // Generator Config
+  validateNonNegative(GENERATOR_CONFIG.DEFAULT_TIMEOUT_MS, 'GENERATOR_CONFIG.DEFAULT_TIMEOUT_MS');
+  validateMinMax(
+    GENERATOR_CONFIG.SPECIALIST_PROGRESS_START,
+    GENERATOR_CONFIG.SPECIALIST_PROGRESS_END,
+    'GENERATOR_CONFIG.SPECIALIST_PROGRESS_START',
+    'GENERATOR_CONFIG.SPECIALIST_PROGRESS_END'
+  );
+}
+
+// Run validation at module load time
+validateConfiguration();
 

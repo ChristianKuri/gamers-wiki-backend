@@ -6,8 +6,10 @@ import {
   buildRecentContext,
   buildFullContext,
   assembleScoutOutput,
-} from '../../../src/ai/articles/agents/scout';
+  calculateResearchConfidence,
+} from '../../../src/ai/articles/agents/scout.internals';
 import { createEmptyResearchPool } from '../../../src/ai/articles/research-pool';
+import { createEmptyTokenUsage } from '../../../src/ai/articles/types';
 import type { CategorizedSearchResult, GameArticleContext } from '../../../src/ai/articles/types';
 
 // ============================================================================
@@ -342,12 +344,15 @@ describe('Scout Helper Functions', () => {
   describe('assembleScoutOutput', () => {
     it('creates a properly structured ScoutOutput', () => {
       const pool = createEmptyResearchPool();
+      const tokenUsage = createEmptyTokenUsage();
       const output = assembleScoutOutput(
         'Overview briefing',
         'Category briefing',
         'Recent briefing',
         'Full context document',
-        pool
+        pool,
+        tokenUsage,
+        'high'
       );
 
       expect(output.briefing.overview).toBe('Overview briefing');
@@ -355,13 +360,79 @@ describe('Scout Helper Functions', () => {
       expect(output.briefing.recentDevelopments).toBe('Recent briefing');
       expect(output.briefing.fullContext).toBe('Full context document');
       expect(output.researchPool).toBe(pool);
+      expect(output.tokenUsage).toBe(tokenUsage);
+      expect(output.confidence).toBe('high');
     });
 
     it('extracts source URLs from research pool', () => {
       const pool = createEmptyResearchPool();
-      const output = assembleScoutOutput('o', 'c', 'r', 'f', pool);
+      const tokenUsage = createEmptyTokenUsage();
+      const output = assembleScoutOutput('o', 'c', 'r', 'f', pool, tokenUsage, 'medium');
 
       expect(Array.isArray(output.sourceUrls)).toBe(true);
+    });
+
+    it('includes confidence level in output', () => {
+      const pool = createEmptyResearchPool();
+      const tokenUsage = createEmptyTokenUsage();
+      
+      const highOutput = assembleScoutOutput('o', 'c', 'r', 'f', pool, tokenUsage, 'high');
+      const mediumOutput = assembleScoutOutput('o', 'c', 'r', 'f', pool, tokenUsage, 'medium');
+      const lowOutput = assembleScoutOutput('o', 'c', 'r', 'f', pool, tokenUsage, 'low');
+
+      expect(highOutput.confidence).toBe('high');
+      expect(mediumOutput.confidence).toBe('medium');
+      expect(lowOutput.confidence).toBe('low');
+    });
+  });
+
+  describe('calculateResearchConfidence', () => {
+    it('returns high confidence when all metrics exceed thresholds', () => {
+      // High thresholds: sources >= 10, queries >= 6, overview >= 200 chars
+      const confidence = calculateResearchConfidence(15, 8, 300);
+      expect(confidence).toBe('high');
+    });
+
+    it('returns medium confidence when metrics meet medium thresholds', () => {
+      // Medium thresholds: sources >= 5, queries >= 3, overview >= 50 chars
+      const confidence = calculateResearchConfidence(6, 4, 100);
+      expect(confidence).toBe('medium');
+    });
+
+    it('returns low confidence when metrics are below medium thresholds', () => {
+      const confidence = calculateResearchConfidence(2, 1, 30);
+      expect(confidence).toBe('low');
+    });
+
+    it('considers all three dimensions for scoring', () => {
+      // High sources but low everything else
+      const highSourcesOnly = calculateResearchConfidence(20, 1, 10);
+      expect(highSourcesOnly).toBe('low');
+
+      // High queries but low everything else
+      const highQueriesOnly = calculateResearchConfidence(1, 10, 10);
+      expect(highQueriesOnly).toBe('low');
+
+      // High overview but low everything else
+      const highOverviewOnly = calculateResearchConfidence(1, 1, 500);
+      expect(highOverviewOnly).toBe('low');
+    });
+
+    it('handles edge case of zero values', () => {
+      const confidence = calculateResearchConfidence(0, 0, 0);
+      expect(confidence).toBe('low');
+    });
+
+    it('returns medium for borderline cases', () => {
+      // Just meeting medium thresholds: sources = 5, queries = 3, overview = 50
+      const confidence = calculateResearchConfidence(5, 3, 50);
+      expect(confidence).toBe('medium');
+    });
+
+    it('returns high when two dimensions are high and one is medium', () => {
+      // High sources and queries, medium overview
+      const confidence = calculateResearchConfidence(12, 8, 100);
+      expect(confidence).toBe('high');
     });
   });
 });

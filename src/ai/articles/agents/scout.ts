@@ -31,6 +31,7 @@ import {
   createEmptyTokenUsage,
   type CategorizedSearchResult,
   type GameArticleContext,
+  type ResearchConfidence,
   type ResearchPool,
   type ScoutOutput,
   type SearchFunction,
@@ -282,6 +283,47 @@ export function validateScoutOutput(
 }
 
 /**
+ * Calculates research confidence based on source count and briefing quality.
+ * Exported for unit testing.
+ *
+ * @param sourceCount - Number of unique sources found
+ * @param queryCount - Number of unique queries executed
+ * @param overviewLength - Length of the overview briefing
+ * @returns Confidence level ('high', 'medium', or 'low')
+ */
+export function calculateResearchConfidence(
+  sourceCount: number,
+  queryCount: number,
+  overviewLength: number
+): ResearchConfidence {
+  // Thresholds for confidence levels
+  const HIGH_SOURCE_THRESHOLD = SCOUT_CONFIG.MIN_SOURCES_WARNING * 2; // 10 sources
+  const HIGH_QUERY_THRESHOLD = SCOUT_CONFIG.MIN_QUERIES_WARNING * 2; // 6 queries
+  const HIGH_OVERVIEW_THRESHOLD = SCOUT_CONFIG.MIN_OVERVIEW_LENGTH * 4; // 200 chars
+
+  const MEDIUM_SOURCE_THRESHOLD = SCOUT_CONFIG.MIN_SOURCES_WARNING; // 5 sources
+  const MEDIUM_QUERY_THRESHOLD = SCOUT_CONFIG.MIN_QUERIES_WARNING; // 3 queries
+  const MEDIUM_OVERVIEW_THRESHOLD = SCOUT_CONFIG.MIN_OVERVIEW_LENGTH; // 50 chars
+
+  // Score each dimension
+  let score = 0;
+
+  if (sourceCount >= HIGH_SOURCE_THRESHOLD) score += 2;
+  else if (sourceCount >= MEDIUM_SOURCE_THRESHOLD) score += 1;
+
+  if (queryCount >= HIGH_QUERY_THRESHOLD) score += 2;
+  else if (queryCount >= MEDIUM_QUERY_THRESHOLD) score += 1;
+
+  if (overviewLength >= HIGH_OVERVIEW_THRESHOLD) score += 2;
+  else if (overviewLength >= MEDIUM_OVERVIEW_THRESHOLD) score += 1;
+
+  // Map score to confidence level (max score = 6)
+  if (score >= 5) return 'high';
+  if (score >= 3) return 'medium';
+  return 'low';
+}
+
+/**
  * Assembles the final ScoutOutput from components.
  * Exported for unit testing.
  *
@@ -291,6 +333,7 @@ export function validateScoutOutput(
  * @param fullContext - Full context document
  * @param researchPool - Built research pool
  * @param tokenUsage - Aggregated token usage from LLM calls
+ * @param confidence - Research confidence level
  * @returns Complete ScoutOutput
  */
 export function assembleScoutOutput(
@@ -299,7 +342,8 @@ export function assembleScoutOutput(
   recentBriefing: string,
   fullContext: string,
   researchPool: ResearchPool,
-  tokenUsage: TokenUsage
+  tokenUsage: TokenUsage,
+  confidence: ResearchConfidence
 ): ScoutOutput {
   return {
     briefing: {
@@ -311,6 +355,7 @@ export function assembleScoutOutput(
     researchPool,
     sourceUrls: Array.from(researchPool.allUrls),
     tokenUsage,
+    confidence,
   };
 }
 
@@ -497,8 +542,22 @@ export async function runScout(
   // ===== VALIDATION =====
   validateScoutOutput(overviewBriefing, poolBuilder, researchPool, context.gameName, log);
 
+  // ===== CALCULATE CONFIDENCE =====
+  const confidence = calculateResearchConfidence(
+    poolBuilder.urlCount,
+    poolBuilder.queryCount,
+    overviewBriefing.length
+  );
+
+  if (confidence === 'low') {
+    log.warn(
+      `Research confidence is LOW for "${context.gameName}". ` +
+        `Article quality may be compromised. Consider reviewing sources manually.`
+    );
+  }
+
   // ===== ASSEMBLE OUTPUT =====
   const fullContext = buildFullContext(context, overviewBriefing, categoryBriefing, recentBriefing);
-  return assembleScoutOutput(overviewBriefing, categoryBriefing, recentBriefing, fullContext, researchPool, tokenUsage);
+  return assembleScoutOutput(overviewBriefing, categoryBriefing, recentBriefing, fullContext, researchPool, tokenUsage, confidence);
 }
 

@@ -180,3 +180,144 @@ export function createStructuredLogger(prefix: string): StructuredLogger {
   };
 }
 
+// ============================================================================
+// Correlation ID Support
+// ============================================================================
+
+/**
+ * Logging context with correlation ID for tracing requests.
+ */
+export interface LoggingContext {
+  /** Unique identifier for correlating logs across phases */
+  readonly correlationId: string;
+  /** Additional context fields to include in all logs */
+  readonly [key: string]: unknown;
+}
+
+/**
+ * Logger with correlation context automatically included.
+ */
+export interface ContextualLogger extends StructuredLogger {
+  /** The correlation context for this logger */
+  readonly context: LoggingContext;
+  /** Create a child logger with additional context */
+  child: (additionalContext: Record<string, unknown>) => ContextualLogger;
+}
+
+/**
+ * Generates a unique correlation ID.
+ * Uses timestamp + random suffix for uniqueness.
+ */
+export function generateCorrelationId(): string {
+  const timestamp = Date.now().toString(36);
+  const random = Math.random().toString(36).substring(2, 8);
+  return `${timestamp}-${random}`;
+}
+
+/**
+ * Formats a structured log entry with correlation context.
+ */
+function formatContextualEntry(
+  prefix: string,
+  context: LoggingContext,
+  entry: StructuredLogEntry
+): string {
+  const { correlationId, ...restContext } = context;
+  const { event, message, ...restEntry } = entry;
+
+  const allData = { ...restContext, ...restEntry };
+  const dataStr = Object.keys(allData).length > 0 ? ` ${JSON.stringify(allData)}` : '';
+  const msgStr = message ? `: ${message}` : '';
+  const corrStr = `[${correlationId}]`;
+
+  return `${prefix} ${corrStr} [${event}]${msgStr}${dataStr}`;
+}
+
+/**
+ * Formats a structured log entry with correlation context as JSON.
+ */
+function formatContextualJson(
+  prefix: string,
+  level: LogLevel,
+  context: LoggingContext,
+  entry: StructuredLogEntry
+): string {
+  return JSON.stringify({
+    timestamp: new Date().toISOString(),
+    level,
+    module: prefix.replace(/[\[\]]/g, '').trim(),
+    ...context,
+    ...entry,
+  });
+}
+
+/**
+ * Creates a contextual logger with correlation ID for tracing.
+ * All logs from this logger include the correlation context.
+ *
+ * @param prefix - The prefix/module name to add to all log messages
+ * @param context - Logging context including correlationId
+ * @returns A contextual logger with correlation ID support
+ *
+ * @example
+ * // Create logger with correlation ID
+ * const correlationId = generateCorrelationId();
+ * const log = createContextualLogger('[ArticleGen]', {
+ *   correlationId,
+ *   gameName: 'Elden Ring',
+ * });
+ *
+ * // All logs include the context
+ * log.info('Starting generation'); // [ArticleGen] [abc123] Starting generation
+ *
+ * @example
+ * // Create child logger with additional context
+ * const scoutLog = log.child({ phase: 'scout' });
+ * scoutLog.structured('info', { event: 'search_complete', sources: 25 });
+ */
+export function createContextualLogger(
+  prefix: string,
+  context: LoggingContext
+): ContextualLogger {
+  const logAtLevel = (level: LogLevel, message: string): void => {
+    switch (level) {
+      case 'debug':
+        logger.debug(message);
+        break;
+      case 'info':
+        logger.info(message);
+        break;
+      case 'warn':
+        logger.warn(message);
+        break;
+      case 'error':
+        logger.error(message);
+        break;
+    }
+  };
+
+  const formatWithContext = (message: string): string => {
+    return `${prefix} [${context.correlationId}] ${message}`;
+  };
+
+  return {
+    context,
+
+    info: (message: string) => logger.info(formatWithContext(message)),
+    warn: (message: string) => logger.warn(formatWithContext(message)),
+    error: (message: string) => logger.error(formatWithContext(message)),
+    debug: (message: string) => logger.debug(formatWithContext(message)),
+
+    structured: (level: LogLevel, entry: StructuredLogEntry): void => {
+      const formatted = isJsonLogging()
+        ? formatContextualJson(prefix, level, context, entry)
+        : formatContextualEntry(prefix, context, entry);
+      logAtLevel(level, formatted);
+    },
+
+    child: (additionalContext: Record<string, unknown>): ContextualLogger => {
+      return createContextualLogger(prefix, { ...context, ...additionalContext });
+    },
+  };
+}
+
