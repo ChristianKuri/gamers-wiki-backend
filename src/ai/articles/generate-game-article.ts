@@ -1,6 +1,5 @@
 import { createOpenAI } from '@ai-sdk/openai';
 import { generateObject, generateText } from 'ai';
-import { z } from 'zod';
 
 import type { SupportedLocale } from '../config';
 import { getModel } from '../config';
@@ -13,6 +12,7 @@ import {
   type ArticleCategorySlug,
   type ArticleSectionPlan,
 } from './article-plan';
+import { countContentH2Sections, getContentH2Sections, stripSourcesSection } from './markdown-utils';
 
 // Configuration constants
 const SCOUT_CONFIG = {
@@ -177,7 +177,7 @@ async function withTimeout<T>(
   timeoutMs: number,
   operation: string
 ): Promise<T> {
-  let timeoutId: NodeJS.Timeout;
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
   const timeoutPromise = new Promise<never>((_, reject) => {
     timeoutId = setTimeout(() => {
       reject(new Error(`${operation} timed out after ${timeoutMs}ms`));
@@ -187,7 +187,7 @@ async function withTimeout<T>(
   try {
     return await Promise.race([promise, timeoutPromise]);
   } finally {
-    clearTimeout(timeoutId!);
+    if (timeoutId) clearTimeout(timeoutId);
   }
 }
 
@@ -212,7 +212,15 @@ async function withRetry<T>(
       }
     }
   }
-  throw new Error(`${operation} failed after ${maxRetries} attempts: ${lastError?.message}`);
+  interface ErrorWithCause extends Error {
+    cause?: unknown;
+  }
+
+  const err: ErrorWithCause = new Error(
+    `${operation} failed after ${maxRetries} attempts: ${lastError?.message}`
+  );
+  err.cause = lastError ?? undefined;
+  throw err;
 }
 
 async function rateLimitedMap<T, R>(
@@ -309,12 +317,19 @@ async function executeSearch(
   return {
     query,
     answer: result.answer || null,
-    results: result.results.map(r => ({
-      title: r.title,
-      url: normalizeUrl(r.url) ?? r.url,
-      content: r.content || '',
-      score: r.score,
-    })),
+    results: result.results
+      .map((r) => {
+        const normalized = normalizeUrl(r.url);
+        if (!normalized) return null;
+        const score = typeof r.score === 'number' ? r.score : undefined;
+        return {
+          title: r.title,
+          url: normalized,
+          content: r.content || '',
+          ...(score !== undefined ? { score } : {}),
+        };
+      })
+      .filter((r): r is SearchResultItem => r !== null),
     category,
     timestamp: Date.now(),
   };
@@ -1069,6 +1084,7 @@ interface ValidationIssue {
 
 function validateArticleDraft(draft: Omit<GameArticleDraft, 'models'>): ValidationIssue[] {
   const issues: ValidationIssue[] = [];
+  const contentMarkdown = stripSourcesSection(draft.markdown);
 
   // Validate excerpt length
   if (draft.excerpt.length < 120) {
@@ -1099,7 +1115,7 @@ function validateArticleDraft(draft: Omit<GameArticleDraft, 'models'>): Validati
   }
 
   // Validate markdown structure
-  const sectionCount = (draft.markdown.match(/^## /gm) || []).length;
+  const sectionCount = countContentH2Sections(draft.markdown);
   if (sectionCount < 3) {
     issues.push({
       severity: 'warning',
@@ -1108,9 +1124,9 @@ function validateArticleDraft(draft: Omit<GameArticleDraft, 'models'>): Validati
   }
 
   // Check for empty sections
-  const sections = draft.markdown.split(/^## /m).slice(1); // Skip title
+  const sections = getContentH2Sections(draft.markdown);
   sections.forEach((section, idx) => {
-    const content = section.split('\n').slice(1).join('\n').trim();
+    const content = section.content.trim();
     if (content.length < 100) {
       issues.push({
         severity: 'warning',
@@ -1130,7 +1146,13 @@ function validateArticleDraft(draft: Omit<GameArticleDraft, 'models'>): Validati
   // Check for invalid URLs in sources
   draft.sources.forEach((url, idx) => {
     try {
-      new URL(url);
+      const u = new URL(url);
+      if (u.protocol !== 'http:' && u.protocol !== 'https:') {
+        issues.push({
+          severity: 'error',
+          message: `Invalid source URL scheme at index ${idx}: ${url}`,
+        });
+      }
     } catch {
       issues.push({
         severity: 'error',
@@ -1154,14 +1176,14 @@ function validateArticleDraft(draft: Omit<GameArticleDraft, 'models'>): Validati
   }
 
   // Check for common quality issues in markdown
-  if (draft.markdown.includes('```')) {
+  if (contentMarkdown.includes('```')) {
     issues.push({
       severity: 'warning',
       message: 'Article contains code fences (usually undesirable for prose)',
     });
   }
 
-  if (draft.markdown.match(/\$\d+/)) {
+  if (contentMarkdown.match(/\$\d+/)) {
     issues.push({
       severity: 'warning',
       message: 'Article contains pricing information or currency figures (verify policy compliance)',
@@ -1171,7 +1193,9 @@ function validateArticleDraft(draft: Omit<GameArticleDraft, 'models'>): Validati
   // Check for placeholder text
   const placeholders = ['TODO', 'TBD', 'PLACEHOLDER', 'FIXME', '[INSERT', 'XXX'];
   placeholders.forEach((placeholder) => {
-    if (draft.markdown.toUpperCase().includes(placeholder)) {
+    // Use a boundary-ish regex to reduce false positives (e.g., URLs).
+    const re = new RegExp(`\\b${placeholder.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i');
+    if (re.test(contentMarkdown)) {
       issues.push({
         severity: 'error',
         message: `Article contains placeholder text: ${placeholder}`,
@@ -1195,7 +1219,7 @@ function validateArticleDraft(draft: Omit<GameArticleDraft, 'models'>): Validati
     { phrase: 'needless to say', context: 'redundant phrase' },
   ];
 
-  const lowercaseMarkdown = draft.markdown.toLowerCase();
+  const lowercaseMarkdown = contentMarkdown.toLowerCase();
   const foundCliches: string[] = [];
 
   aiCliches.forEach(({ phrase, context }) => {
@@ -1212,7 +1236,7 @@ function validateArticleDraft(draft: Omit<GameArticleDraft, 'models'>): Validati
   }
 
   // Check for repetitive sentence starts (AI tends to repeat patterns)
-  const sentences = draft.markdown
+  const sentences = contentMarkdown
     .split(/[.!?]+/)
     .map(s => s.trim().split(/\s+/)[0]?.toLowerCase())
     .filter((word): word is string => Boolean(word && word.length > 2));
@@ -1307,7 +1331,10 @@ export async function generateGameArticleDraft(
     scoutOutput,
     plan
   );
-  logger.info(`Specialist complete in ${Date.now() - specialistStartTime}ms: ${markdown.split('\n## ').length - 1} sections written, ${sources.length} total sources`);
+  logger.info(
+    `Specialist complete in ${Date.now() - specialistStartTime}ms: ` +
+    `${countContentH2Sections(markdown)} sections written, ${sources.length} total sources`
+  );
 
   const draft = {
     title: plan.title,
