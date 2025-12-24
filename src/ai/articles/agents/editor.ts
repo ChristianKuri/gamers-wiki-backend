@@ -14,6 +14,7 @@ import {
   type ArticlePlan,
   type ArticleCategorySlugInput,
 } from '../article-plan';
+import { withRetry } from '../retry';
 import {
   buildCategoryHintsSection,
   buildExistingResearchSummary,
@@ -85,13 +86,17 @@ export async function runEditor(
 
   log.debug('Generating article plan...');
 
-  const { object: rawPlan } = await deps.generateObject({
-    model: deps.model,
-    temperature: EDITOR_CONFIG.TEMPERATURE,
-    schema: ArticlePlanSchema,
-    system: getEditorSystemPrompt(localeInstruction),
-    prompt: getEditorUserPrompt(promptContext),
-  });
+  const { object: rawPlan } = await withRetry(
+    () =>
+      deps.generateObject({
+        model: deps.model,
+        temperature: EDITOR_CONFIG.TEMPERATURE,
+        schema: ArticlePlanSchema,
+        system: getEditorSystemPrompt(localeInstruction),
+        prompt: getEditorUserPrompt(promptContext),
+      }),
+    { context: 'Editor article plan generation' }
+  );
 
   // Normalize categorySlug (AI may output aliases like 'guide' instead of 'guides')
   const normalizedCategorySlug = normalizeArticleCategorySlug(

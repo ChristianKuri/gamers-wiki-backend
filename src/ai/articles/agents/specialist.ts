@@ -9,6 +9,7 @@ import type { LanguageModel } from 'ai';
 
 import { createPrefixedLogger, type Logger } from '../../../utils/logger';
 import type { ArticlePlan, ArticleSectionPlan } from '../article-plan';
+import { withRetry } from '../retry';
 import {
   buildResearchContext,
   getCategoryToneGuide,
@@ -109,14 +110,18 @@ async function batchResearchForSections(
       `)`
   );
 
-  // Execute new queries with rate limiting
+  // Execute new queries with rate limiting and retry logic
   for (let i = 0; i < newQueries.length; i++) {
     const query = newQueries[i];
-    const result = await search(query, {
-      searchDepth: SPECIALIST_CONFIG.SEARCH_DEPTH,
-      maxResults: SPECIALIST_CONFIG.MAX_SEARCH_RESULTS,
-      includeAnswer: true,
-    });
+    const result = await withRetry(
+      () =>
+        search(query, {
+          searchDepth: SPECIALIST_CONFIG.SEARCH_DEPTH,
+          maxResults: SPECIALIST_CONFIG.MAX_SEARCH_RESULTS,
+          includeAnswer: true,
+        }),
+      { context: `Specialist search: "${query.slice(0, 50)}..."` }
+    );
 
     const categorized = processSearchResults(query, 'section-specific', result);
     poolBuilder.add(categorized);
@@ -253,20 +258,24 @@ export async function runSpecialist(
     // Report progress before writing each section
     deps.onSectionProgress?.(i + 1, plan.sections.length, section.headline);
 
-    const { text } = await deps.generateText({
-      model: deps.model,
-      temperature: SPECIALIST_CONFIG.TEMPERATURE,
-      maxOutputTokens: SPECIALIST_CONFIG.MAX_OUTPUT_TOKENS_PER_SECTION,
-      system: getSpecialistSystemPrompt(localeInstruction, categoryToneGuide),
-      prompt: getSpecialistSectionUserPrompt(
-        sectionContext,
-        plan,
-        context.gameName,
-        SPECIALIST_CONFIG.MAX_SCOUT_OVERVIEW_LENGTH,
-        SPECIALIST_CONFIG.MIN_PARAGRAPHS,
-        SPECIALIST_CONFIG.MAX_PARAGRAPHS
-      ),
-    });
+    const { text } = await withRetry(
+      () =>
+        deps.generateText({
+          model: deps.model,
+          temperature: SPECIALIST_CONFIG.TEMPERATURE,
+          maxOutputTokens: SPECIALIST_CONFIG.MAX_OUTPUT_TOKENS_PER_SECTION,
+          system: getSpecialistSystemPrompt(localeInstruction, categoryToneGuide),
+          prompt: getSpecialistSectionUserPrompt(
+            sectionContext,
+            plan,
+            context.gameName,
+            SPECIALIST_CONFIG.MAX_SCOUT_OVERVIEW_LENGTH,
+            SPECIALIST_CONFIG.MIN_PARAGRAPHS,
+            SPECIALIST_CONFIG.MAX_PARAGRAPHS
+          ),
+        }),
+      { context: `Specialist section "${section.headline}"` }
+    );
 
     const sectionText = text.trim();
     markdown += `## ${section.headline}\n\n${sectionText}\n\n`;

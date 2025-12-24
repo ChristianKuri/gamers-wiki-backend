@@ -38,6 +38,7 @@ import { tavilySearch } from '../tools/tavily';
 import { createPrefixedLogger } from '../../utils/logger';
 import { runScout, runEditor, runSpecialist } from './agents';
 import { countContentH2Sections } from './markdown-utils';
+import { withRetry } from './retry';
 import type {
   ArticleGenerationMetadata,
   ArticleProgressCallback,
@@ -179,20 +180,24 @@ export async function generateGameArticleDraft(
 
   // ===== PHASE 1: SCOUT =====
   const scoutStartTime = Date.now();
-  log.info('Phase 1: Scout - Deep multi-query research...');
+  log.info(`Phase 1: Scout - Deep multi-query research (model: ${scoutModel})...`);
   onProgress?.('scout', 0, 'Starting research phase');
 
   let scoutOutput;
   try {
-    scoutOutput = await runScout(context, {
-      search,
-      generateText: genText,
-      model: openrouter(scoutModel),
-      logger: createPrefixedLogger('[Scout]'),
-    });
+    scoutOutput = await withRetry(
+      () =>
+        runScout(context, {
+          search,
+          generateText: genText,
+          model: openrouter(scoutModel),
+          logger: createPrefixedLogger('[Scout]'),
+        }),
+      { context: `Scout phase (model: ${scoutModel})` }
+    );
   } catch (error) {
     throw createErrorWithCause(
-      `Article generation failed during Scout phase for "${context.gameName}": ${error instanceof Error ? error.message : String(error)}`,
+      `Article generation failed during Scout phase for "${context.gameName}" (model: ${scoutModel}): ${error instanceof Error ? error.message : String(error)}`,
       error instanceof Error ? error : undefined
     );
   }
@@ -207,19 +212,23 @@ export async function generateGameArticleDraft(
 
   // ===== PHASE 2: EDITOR =====
   const editorStartTime = Date.now();
-  log.info('Phase 2: Editor - Planning article with full research context...');
+  log.info(`Phase 2: Editor - Planning article (model: ${editorModel})...`);
   onProgress?.('editor', 0, 'Planning article structure');
 
   let plan;
   try {
-    plan = await runEditor(context, scoutOutput, {
-      generateObject: genObject,
-      model: openrouter(editorModel),
-      logger: createPrefixedLogger('[Editor]'),
-    });
+    plan = await withRetry(
+      () =>
+        runEditor(context, scoutOutput, {
+          generateObject: genObject,
+          model: openrouter(editorModel),
+          logger: createPrefixedLogger('[Editor]'),
+        }),
+      { context: `Editor phase (model: ${editorModel})` }
+    );
   } catch (error) {
     throw createErrorWithCause(
-      `Article generation failed during Editor phase for "${context.gameName}": ${error instanceof Error ? error.message : String(error)}`,
+      `Article generation failed during Editor phase for "${context.gameName}" (model: ${editorModel}): ${error instanceof Error ? error.message : String(error)}`,
       error instanceof Error ? error : undefined
     );
   }
@@ -233,13 +242,15 @@ export async function generateGameArticleDraft(
 
   // ===== PHASE 3: SPECIALIST =====
   const specialistStartTime = Date.now();
-  log.info('Phase 3: Specialist - Batch research + section writing...');
+  log.info(`Phase 3: Specialist - Batch research + section writing (model: ${specialistModel})...`);
   onProgress?.('specialist', 0, 'Writing article sections');
 
   let markdown: string;
   let sources: readonly string[];
   let finalResearchPool;
   try {
+    // Note: We don't wrap the entire Specialist in retry because it's a long operation.
+    // Instead, retry logic is applied to individual search/generateText calls inside the agent.
     const specialistResult = await runSpecialist(context, scoutOutput, plan, {
       search,
       generateText: genText,
@@ -256,7 +267,7 @@ export async function generateGameArticleDraft(
     finalResearchPool = specialistResult.researchPool;
   } catch (error) {
     throw createErrorWithCause(
-      `Article generation failed during Specialist phase for "${context.gameName}": ${error instanceof Error ? error.message : String(error)}`,
+      `Article generation failed during Specialist phase for "${context.gameName}" (model: ${specialistModel}): ${error instanceof Error ? error.message : String(error)}`,
       error instanceof Error ? error : undefined
     );
   }

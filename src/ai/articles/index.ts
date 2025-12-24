@@ -78,6 +78,15 @@ export {
   processSearchResults,
 } from './research-pool';
 
+// Retry utilities
+export {
+  withRetry,
+  createRetryWrapper,
+  isRetryableError,
+  RETRY_CONFIG,
+  type RetryOptions,
+} from './retry';
+
 // Agents (for advanced usage / testing)
 export {
   runScout,

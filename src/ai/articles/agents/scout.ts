@@ -8,6 +8,7 @@
 import type { LanguageModel } from 'ai';
 
 import { createPrefixedLogger, type Logger } from '../../../utils/logger';
+import { withRetry } from '../retry';
 import {
   buildScoutQueries,
   getScoutCategorySystemPrompt,
@@ -71,7 +72,7 @@ export interface ScoutDeps {
 // ============================================================================
 
 /**
- * Executes a search and processes results into a CategorizedSearchResult.
+ * Executes a search with retry logic and processes results into a CategorizedSearchResult.
  */
 async function executeSearch(
   search: SearchFunction,
@@ -79,12 +80,16 @@ async function executeSearch(
   category: CategorizedSearchResult['category'],
   options: { searchDepth: 'basic' | 'advanced'; maxResults: number }
 ): Promise<CategorizedSearchResult> {
-  const result = await search(query, {
-    searchDepth: options.searchDepth,
-    maxResults: options.maxResults,
-    includeAnswer: true,
-    includeRawContent: false,
-  });
+  const result = await withRetry(
+    () =>
+      search(query, {
+        searchDepth: options.searchDepth,
+        maxResults: options.maxResults,
+        includeAnswer: true,
+        includeRawContent: false,
+      }),
+    { context: `Scout search (${category}): "${query.slice(0, 40)}..."` }
+  );
 
   return processSearchResults(query, category, result);
 }
@@ -252,26 +257,38 @@ export async function runScout(
 
   log.debug('Generating briefings in parallel...');
 
-  // Run all briefing generations in parallel
+  // Run all briefing generations in parallel with retry logic
   const [overviewResult, categoryResult, recentResult] = await Promise.all([
-    deps.generateText({
-      model: deps.model,
-      temperature: SCOUT_CONFIG.TEMPERATURE,
-      system: getScoutOverviewSystemPrompt(localeInstruction),
-      prompt: getScoutOverviewUserPrompt(promptContext),
-    }),
-    deps.generateText({
-      model: deps.model,
-      temperature: SCOUT_CONFIG.TEMPERATURE,
-      system: getScoutCategorySystemPrompt(localeInstruction),
-      prompt: getScoutCategoryUserPrompt(context.gameName, context.instruction, categoryContext),
-    }),
-    deps.generateText({
-      model: deps.model,
-      temperature: SCOUT_CONFIG.TEMPERATURE,
-      system: getScoutRecentSystemPrompt(localeInstruction),
-      prompt: getScoutRecentUserPrompt(context.gameName, recentContext),
-    }),
+    withRetry(
+      () =>
+        deps.generateText({
+          model: deps.model,
+          temperature: SCOUT_CONFIG.TEMPERATURE,
+          system: getScoutOverviewSystemPrompt(localeInstruction),
+          prompt: getScoutOverviewUserPrompt(promptContext),
+        }),
+      { context: 'Scout overview briefing' }
+    ),
+    withRetry(
+      () =>
+        deps.generateText({
+          model: deps.model,
+          temperature: SCOUT_CONFIG.TEMPERATURE,
+          system: getScoutCategorySystemPrompt(localeInstruction),
+          prompt: getScoutCategoryUserPrompt(context.gameName, context.instruction, categoryContext),
+        }),
+      { context: 'Scout category briefing' }
+    ),
+    withRetry(
+      () =>
+        deps.generateText({
+          model: deps.model,
+          temperature: SCOUT_CONFIG.TEMPERATURE,
+          system: getScoutRecentSystemPrompt(localeInstruction),
+          prompt: getScoutRecentUserPrompt(context.gameName, recentContext),
+        }),
+      { context: 'Scout recent briefing' }
+    ),
   ]);
 
   const overviewBriefing = overviewResult.text.trim();
