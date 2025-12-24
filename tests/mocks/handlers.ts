@@ -96,11 +96,39 @@ function isScoutBriefingPrompt(userText: string): boolean {
   return userText.toLowerCase().includes('briefing document');
 }
 
-function buildMockArticlePlan(locale: 'en' | 'es') {
+function buildMockArticlePlan(locale: 'en' | 'es', category: 'guides' | 'lists' = 'guides') {
+  if (category === 'lists') {
+    return {
+      title: 'Top 10 Best Weapons in the Game',
+      categorySlug: 'lists',
+      excerpt:
+        'Discover the most powerful weapons in the game, ranked by damage output, versatility, and how easy they are to obtain in the early game.',
+      tags: ['weapons', 'best gear', 'top 10', 'rankings'],
+      sections: [
+        {
+          headline: 'Sword of Legends',
+          goal: 'Describe the top-ranked weapon.',
+          researchQueries: ['best weapon damage stats'],
+        },
+        {
+          headline: 'Moonlight Greatsword',
+          goal: 'Describe the second weapon.',
+          researchQueries: ['moonlight greatsword location'],
+        },
+        {
+          headline: 'Dragon Halberd',
+          goal: 'Describe the third weapon.',
+          researchQueries: ['dragon halberd requirements'],
+        },
+      ],
+      safety: { noPrices: true, noScoresUnlessReview: true },
+    };
+  }
+
   if (locale === 'es') {
     return {
       title: 'Guía para principiantes: primeras 5 horas',
-      categorySlug: 'guide',
+      categorySlug: 'guides',
       excerpt:
         'Empieza fuerte con rutas seguras, mejoras clave y los errores más comunes durante tus primeras horas, para progresar más rápido y evitar frustraciones.',
       tags: ['principiantes', 'primeras horas', 'consejos'],
@@ -132,7 +160,7 @@ function buildMockArticlePlan(locale: 'en' | 'es') {
 
   return {
     title: 'Beginner Guide: Your First 5 Hours',
-    categorySlug: 'guide',
+    categorySlug: 'guides',
     excerpt:
       'Start strong with safe routes, key upgrades, and the most common mistakes to avoid in your first hours—so you level faster, stay alive, and enjoy the opening.',
     tags: ['beginner tips', 'early game', 'progression'],

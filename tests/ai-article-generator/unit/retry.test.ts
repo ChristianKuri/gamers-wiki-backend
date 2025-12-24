@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { withRetry, isRetryableError, RETRY_CONFIG } from '../../../src/ai/articles/retry';
+import { withRetry, isRetryableError, sleep, RETRY_CONFIG } from '../../../src/ai/articles/retry';
 
 describe('isRetryableError', () => {
   it('returns true for rate limit errors', () => {
@@ -112,6 +112,90 @@ describe('withRetry', () => {
     expect(RETRY_CONFIG.INITIAL_DELAY_MS).toBe(1000);
     expect(RETRY_CONFIG.MAX_DELAY_MS).toBe(10000);
     expect(RETRY_CONFIG.BACKOFF_MULTIPLIER).toBe(2);
+  });
+
+  describe('AbortSignal support', () => {
+    it('throws immediately when signal is already aborted before call', async () => {
+      const controller = new AbortController();
+      controller.abort();
+
+      const fn = vi.fn().mockResolvedValue('should not be called');
+
+      await expect(
+        withRetry(fn, { signal: controller.signal, context: 'test operation' })
+      ).rejects.toThrow('test operation was cancelled');
+
+      expect(fn).not.toHaveBeenCalled();
+    });
+
+    it('throws when signal is aborted after operation failure', async () => {
+      const controller = new AbortController();
+      let callCount = 0;
+
+      const fn = vi.fn().mockImplementation(() => {
+        callCount++;
+        if (callCount === 1) {
+          // Abort after first failure
+          controller.abort();
+          return Promise.reject(new Error('Rate limit'));
+        }
+        return Promise.resolve('success');
+      });
+
+      await expect(
+        withRetry(fn, {
+          signal: controller.signal,
+          context: 'test operation',
+          maxRetries: 3,
+          initialDelayMs: 10,
+        })
+      ).rejects.toThrow('test operation was cancelled');
+
+      expect(fn).toHaveBeenCalledTimes(1);
+    });
+
+    it('succeeds when signal is not aborted', async () => {
+      const controller = new AbortController();
+
+      const fn = vi
+        .fn()
+        .mockRejectedValueOnce(new Error('Rate limit'))
+        .mockResolvedValueOnce('success');
+
+      const result = await withRetry(fn, {
+        signal: controller.signal,
+        maxRetries: 3,
+        initialDelayMs: 10,
+      });
+
+      expect(result).toBe('success');
+      expect(fn).toHaveBeenCalledTimes(2);
+    });
+  });
+});
+
+describe('sleep', () => {
+  it('resolves after specified duration', async () => {
+    const start = Date.now();
+    await sleep(50);
+    const elapsed = Date.now() - start;
+
+    // Allow some tolerance for timing
+    expect(elapsed).toBeGreaterThanOrEqual(45);
+    expect(elapsed).toBeLessThan(150);
+  });
+
+  it('resolves with undefined', async () => {
+    const result = await sleep(10);
+    expect(result).toBeUndefined();
+  });
+
+  it('handles zero duration', async () => {
+    const start = Date.now();
+    await sleep(0);
+    const elapsed = Date.now() - start;
+
+    expect(elapsed).toBeLessThan(50);
   });
 });
 

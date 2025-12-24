@@ -9,6 +9,7 @@ import { errorHandlers } from '../../mocks/handlers';
 import { http, HttpResponse } from 'msw';
 
 import { generateGameArticleDraft } from '../../../src/ai/articles/generate-game-article';
+import { ArticleGenerationError } from '../../../src/ai/articles/types';
 
 describe('generateGameArticleDraft (integration-ish)', () => {
   const envBackup = { ...process.env };
@@ -236,5 +237,209 @@ describe('generateGameArticleDraft (integration-ish)', () => {
     // Scout searches will add additional Tavily calls; we only care that this specific
     // section-specific query is executed once.
     expect(tavilyQueries.filter((q) => q === duplicateQuery)).toHaveLength(1);
+  });
+
+  it('uses parallel section writing for lists category articles', async () => {
+    const sectionWriteOrder: string[] = [];
+    const longGenericText =
+      'This is a sufficiently long generic mock response to satisfy Scout validation checks and keep the pipeline moving during tests. ' +
+      'The content here is deliberately verbose and repetitive to ensure the generated article meets the minimum character requirements. ' +
+      'Without this padding, the validation would fail because the article would be too short.';
+
+    // Create a lists category plan
+    const listsPlan = {
+      title: 'Top 10 Best Weapons in the Game',
+      categorySlug: 'lists',
+      excerpt:
+        'Discover the most powerful weapons in the game, ranked by damage output, versatility, and how easy they are to obtain early.',
+      tags: ['weapons', 'best gear', 'top 10'],
+      sections: [
+        { headline: 'Sword of Legends', goal: 'desc', researchQueries: ['q1'] },
+        { headline: 'Moonlight Greatsword', goal: 'desc', researchQueries: ['q2'] },
+        { headline: 'Dragon Halberd', goal: 'desc', researchQueries: ['q3'] },
+      ],
+      safety: { noPrices: true, noScoresUnlessReview: true },
+    };
+
+    server.use(
+      http.post('https://api.tavily.com/search', async ({ request }) => {
+        const body = (await request.json()) as { query?: string };
+        return HttpResponse.json({
+          query: body?.query || '',
+          answer: 'Mocked answer',
+          results: [{ title: 'Mock', url: 'https://example.com/mock', content: 'Mock content', score: 0.9 }],
+        });
+      }),
+      http.post('https://openrouter.ai/api/v1/chat/completions', async ({ request }) => {
+        const body = (await request.json()) as {
+          messages: Array<{ role: string; content: string }>;
+          model: string;
+        };
+        const userText = body.messages.find((m) => m.role === 'user')?.content ?? '';
+
+        // Return lists plan for Editor
+        if (userText.includes('Return ONLY valid JSON')) {
+          return HttpResponse.json({
+            id: 'mock',
+            object: 'chat.completion',
+            created: Date.now(),
+            model: body.model,
+            choices: [{ index: 0, message: { role: 'assistant', content: JSON.stringify(listsPlan) }, finish_reason: 'stop' }],
+            usage: { prompt_tokens: 10, completion_tokens: 10, total_tokens: 20 },
+          });
+        }
+
+        // Track section write order
+        if (userText.includes('Write the next section')) {
+          const headlineMatch = userText.match(/headline:\s*"([^"]+)"/i) || userText.match(/Headline:\s*([^\n]+)/i);
+          const headline = headlineMatch?.[1] || 'unknown';
+          sectionWriteOrder.push(headline);
+        }
+
+        return HttpResponse.json({
+          id: 'mock',
+          object: 'chat.completion',
+          created: Date.now(),
+          model: body.model,
+          choices: [{ index: 0, message: { role: 'assistant', content: longGenericText }, finish_reason: 'stop' }],
+          usage: { prompt_tokens: 10, completion_tokens: 10, total_tokens: 20 },
+        });
+      }),
+      http.post('https://openrouter.ai/api/v1/responses', async ({ request }) => {
+        const body = (await request.json()) as {
+          input: Array<{ role: string; content: string | Array<{ type: string; text: string }> }>;
+          model: string;
+        };
+
+        const messages = body.input.map((msg) => {
+          const content =
+            typeof msg.content === 'string'
+              ? msg.content
+              : (msg.content as Array<{ type: string; text: string }>)?.[0]?.text || '';
+          return { role: msg.role, content };
+        });
+
+        const userText = messages.find((m) => m.role === 'user')?.content ?? '';
+
+        if (userText.includes('Return ONLY valid JSON')) {
+          return HttpResponse.json({
+            id: 'mock',
+            object: 'response',
+            created_at: Date.now(),
+            model: body.model,
+            status: 'completed',
+            output: [{ id: 'mock', type: 'message', role: 'assistant', status: 'completed', content: [{ type: 'output_text', text: JSON.stringify(listsPlan), annotations: [] }] }],
+            usage: { input_tokens: 10, output_tokens: 10, total_tokens: 20 },
+          });
+        }
+
+        if (userText.includes('Write the next section')) {
+          const headlineMatch = userText.match(/headline:\s*"([^"]+)"/i) || userText.match(/Headline:\s*([^\n]+)/i);
+          const headline = headlineMatch?.[1] || 'unknown';
+          sectionWriteOrder.push(headline);
+        }
+
+        return HttpResponse.json({
+          id: 'mock',
+          object: 'response',
+          created_at: Date.now(),
+          model: body.model,
+          status: 'completed',
+          output: [{ id: 'mock', type: 'message', role: 'assistant', status: 'completed', content: [{ type: 'output_text', text: longGenericText, annotations: [] }] }],
+          usage: { input_tokens: 10, output_tokens: 10, total_tokens: 20 },
+        });
+      })
+    );
+
+    const draft = await generateGameArticleDraft({
+      gameName: 'Test Game',
+      instruction: 'Write a top 10 weapons list',
+    });
+
+    // Verify lists category was selected
+    expect(draft.categorySlug).toBe('lists');
+    
+    // Verify article has expected sections
+    expect(draft.markdown).toContain('Sword of Legends');
+    expect(draft.markdown).toContain('Moonlight Greatsword');
+    expect(draft.markdown).toContain('Dragon Halberd');
+  });
+
+  it('can be cancelled via AbortSignal', async () => {
+    const controller = new AbortController();
+
+    // Set up a handler that takes time
+    server.use(
+      http.post('https://api.tavily.com/search', async () => {
+        // Simulate slow search
+        await new Promise((resolve) => setTimeout(resolve, 100));
+        return HttpResponse.json({
+          query: 'test',
+          answer: 'test answer',
+          results: [{ title: 'Test', url: 'https://test.com', content: 'Test', score: 0.9 }],
+        });
+      })
+    );
+
+    // Abort after a short delay
+    setTimeout(() => controller.abort(), 50);
+
+    await expect(
+      generateGameArticleDraft(
+        { gameName: 'Test Game', instruction: 'Test' },
+        undefined,
+        { signal: controller.signal }
+      )
+    ).rejects.toThrow();
+  });
+
+  it('respects timeout option', async () => {
+    // Set up a handler that takes too long
+    server.use(
+      http.post('https://api.tavily.com/search', async () => {
+        await new Promise((resolve) => setTimeout(resolve, 500));
+        return HttpResponse.json({
+          query: 'test',
+          answer: 'test answer',
+          results: [],
+        });
+      })
+    );
+
+    try {
+      await generateGameArticleDraft(
+        { gameName: 'Test Game', instruction: 'Test' },
+        undefined,
+        { timeoutMs: 100 }
+      );
+      expect.fail('Should have thrown timeout error');
+    } catch (error) {
+      expect(error).toBeInstanceOf(ArticleGenerationError);
+      expect((error as ArticleGenerationError).code).toBe('TIMEOUT');
+    }
+  });
+
+  it('returns metadata with phase durations', async () => {
+    const draft = await generateGameArticleDraft({
+      gameName: 'The Legend of Zelda: Tears of the Kingdom',
+      instruction: 'Write a beginner guide',
+    });
+
+    // Verify metadata structure
+    expect(draft.metadata).toBeDefined();
+    expect(draft.metadata.generatedAt).toBeTruthy();
+    expect(typeof draft.metadata.totalDurationMs).toBe('number');
+    expect(draft.metadata.totalDurationMs).toBeGreaterThan(0);
+
+    // Verify phase durations
+    expect(draft.metadata.phaseDurations).toBeDefined();
+    expect(typeof draft.metadata.phaseDurations.scout).toBe('number');
+    expect(typeof draft.metadata.phaseDurations.editor).toBe('number');
+    expect(typeof draft.metadata.phaseDurations.specialist).toBe('number');
+    expect(typeof draft.metadata.phaseDurations.validation).toBe('number');
+
+    // Verify query/source counts
+    expect(typeof draft.metadata.queriesExecuted).toBe('number');
+    expect(typeof draft.metadata.sourcesCollected).toBe('number');
   });
 });
