@@ -58,28 +58,6 @@ export const ALLOWED_SENTENCE_START_REPEATS = new Set([
   'with',
 ]);
 
-// ============================================================================
-// Validation Constants
-// ============================================================================
-
-/**
- * Currency patterns to detect in content (policy violation).
- * Covers multiple formats:
- * - Symbol prefix: $100, €50.99, £10,000
- * - Symbol suffix (some locales): 100€, 50¥
- * - Text-based: 100 USD, 50 dollars, 99.99 euros
- * - Shorthand: $100k, €2M
- */
-const CURRENCY_PATTERNS: readonly RegExp[] = [
-  // Symbol prefix with optional thousands separators: $100, €50.99, £10,000.50
-  /[$€£¥₹₩₽฿]\s*[\d,]+(?:\.\d{1,2})?(?:k|m|b)?/i,
-  // Symbol suffix (some European locales): 100€, 50£
-  /\d+(?:[,.]?\d+)*\s*[$€£¥₹₩₽฿]/,
-  // Text-based currency names after number: 100 USD, 50 dollars, 99.99 EUR
-  /\b\d+(?:[,.]?\d+)*\s*(?:USD|EUR|GBP|JPY|INR|KRW|RUB|dollars?|euros?|pounds?|yen)\b/i,
-  // MSRP/price patterns: "MSRP $59.99", "priced at €49"
-  /(?:MSRP|price[ds]?|costs?|starting at|for only)\s*[$€£¥₹₩₽฿]?\s*[\d,]+(?:\.\d{1,2})?/i,
-];
 
 // ============================================================================
 // Zod Schemas
@@ -211,17 +189,9 @@ function validateContentQuality(markdown: string): ValidationIssue[] {
     issues.push(issue('warning', 'Article contains code fences (usually undesirable for prose)'));
   }
 
-  // Pricing information (policy violation)
-  const matchedCurrencyPattern = CURRENCY_PATTERNS.find((pattern) => pattern.test(contentMarkdown));
-  if (matchedCurrencyPattern) {
-    const match = contentMarkdown.match(matchedCurrencyPattern);
-    issues.push(
-      issue(
-        'warning',
-        `Article contains pricing information or currency figures: "${match?.[0] ?? 'unknown'}" (verify policy compliance)`
-      )
-    );
-  }
+  // Note: Price mentions (launch prices, sales, historical prices) are allowed.
+  // We only avoid displaying dynamic "current prices" on the platform itself,
+  // but mentioning prices in article content is fine.
 
   // Placeholder text
   for (const placeholder of PLACEHOLDER_PATTERNS) {

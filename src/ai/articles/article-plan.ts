@@ -124,10 +124,9 @@ export const ArticlePlanSchema = z.object({
     .max(ARTICLE_PLAN_CONSTRAINTS.MAX_SECTIONS),
   safety: z
     .object({
-      noPrices: z.literal(true),
       noScoresUnlessReview: z.boolean(),
     })
-    .default({ noPrices: true, noScoresUnlessReview: true }),
+    .default({ noScoresUnlessReview: true }),
 });
 
 /**
@@ -141,7 +140,7 @@ export interface ArticlePlan {
   readonly tags: readonly string[];
   readonly sections: readonly ArticleSectionPlan[];
   readonly safety: {
-    readonly noPrices: true;
+    /** If true, avoid numerical scores/ratings unless this is a review article */
     readonly noScoresUnlessReview: boolean;
   };
 }
