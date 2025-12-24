@@ -236,11 +236,12 @@ ${' '.repeat(500)}Content that meets minimum length requirements with plenty of 
     };
     const issues = validateArticleDraft(draft);
     const tagLengthErrors = getErrors(issues).filter((e) =>
-      e.message.includes('Tag') && e.message.includes('too long')
+      e.message.includes('too long')
     );
 
     expect(tagLengthErrors.length).toBe(1);
-    expect(tagLengthErrors[0].message).toContain('Tag 2 too long');
+    // Zod uses 0-based array indices: tags.1 = second tag
+    expect(tagLengthErrors[0].message).toContain('tags.1');
     expect(tagLengthErrors[0].message).toContain(
       `maximum ${ARTICLE_PLAN_CONSTRAINTS.TAG_MAX_LENGTH}`
     );
@@ -255,12 +256,13 @@ ${' '.repeat(500)}Content that meets minimum length requirements with plenty of 
     };
     const issues = validateArticleDraft(draft);
     const tagLengthErrors = getErrors(issues).filter((e) =>
-      e.message.includes('Tag') && e.message.includes('too long')
+      e.message.includes('too long')
     );
 
     expect(tagLengthErrors.length).toBe(2);
-    expect(tagLengthErrors[0].message).toContain('Tag 1');
-    expect(tagLengthErrors[1].message).toContain('Tag 3');
+    // Zod uses 0-based array indices
+    expect(tagLengthErrors[0].message).toContain('tags.0');
+    expect(tagLengthErrors[1].message).toContain('tags.2');
   });
 
   it('accepts tags at exactly max length', () => {
@@ -275,6 +277,31 @@ ${' '.repeat(500)}Content that meets minimum length requirements with plenty of 
     );
 
     expect(tagLengthErrors.length).toBe(0);
+  });
+
+  it('rejects whitespace-only tags', () => {
+    const draft = {
+      ...validDraft,
+      tags: ['valid tag', '   ', 'another valid'],
+    };
+    const issues = validateArticleDraft(draft);
+    const whitespaceErrors = getErrors(issues).filter((e) =>
+      e.message.includes('whitespace')
+    );
+
+    expect(whitespaceErrors.length).toBe(1);
+  });
+
+  it('rejects empty string tags', () => {
+    const draft = {
+      ...validDraft,
+      tags: ['valid tag', ''],
+    };
+    const issues = validateArticleDraft(draft);
+    // Empty string fails min(1) check, not whitespace check
+    const errors = getErrors(issues);
+
+    expect(errors.length).toBeGreaterThan(0);
   });
 });
 

@@ -95,6 +95,34 @@ describe('ArticlePlanSchema', () => {
         })
       ).toThrow();
     });
+
+    it('rejects whitespace-only tags', () => {
+      expect(() =>
+        ArticlePlanSchema.parse({
+          ...validPlanBase,
+          tags: ['   '],
+        })
+      ).toThrow();
+    });
+
+    it('rejects tags with only spaces and tabs', () => {
+      expect(() =>
+        ArticlePlanSchema.parse({
+          ...validPlanBase,
+          tags: ['valid tag', '\t  \t', 'another valid'],
+        })
+      ).toThrow();
+    });
+
+    it('accepts tags with leading/trailing whitespace if they have content', () => {
+      // Note: regex /\S/ only requires one non-whitespace char, doesn't trim
+      const plan = ArticlePlanSchema.parse({
+        ...validPlanBase,
+        tags: ['  tag with spaces  ', 'normal tag'],
+      });
+
+      expect(plan.tags).toContain('  tag with spaces  ');
+    });
   });
 });
 

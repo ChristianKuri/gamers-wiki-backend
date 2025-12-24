@@ -26,6 +26,7 @@ export const ARTICLE_GENERATION_PHASES = ['scout', 'editor', 'specialist', 'vali
  * Each code corresponds to a specific phase or validation step.
  */
 export type ArticleGenerationErrorCode =
+  | 'CONFIG_ERROR'
   | 'CONTEXT_INVALID'
   | 'SCOUT_FAILED'
   | 'EDITOR_FAILED'

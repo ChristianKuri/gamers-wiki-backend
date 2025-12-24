@@ -137,6 +137,12 @@ export const GENERATOR_CONFIG = {
   DEFAULT_OPENROUTER_BASE_URL: 'https://openrouter.ai/api/v1',
   /** Default timeout for entire generation (ms) - 0 means no timeout */
   DEFAULT_TIMEOUT_MS: 0,
+  /**
+   * Progress reporting constants for the Specialist phase.
+   * Section progress is reported between START and END percentages.
+   */
+  SPECIALIST_PROGRESS_START: 10,
+  SPECIALIST_PROGRESS_END: 90,
 } as const;
 
 // ============================================================================

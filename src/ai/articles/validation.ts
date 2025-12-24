@@ -81,6 +81,7 @@ export const GameArticleDraftSchema = z.object({
     .array(
       z.string()
         .min(1)
+        .regex(/\S/, 'Tag cannot be whitespace only')
         .max(ARTICLE_PLAN_CONSTRAINTS.TAG_MAX_LENGTH, `Tag too long (maximum ${ARTICLE_PLAN_CONSTRAINTS.TAG_MAX_LENGTH} characters)`)
     )
     .min(ARTICLE_PLAN_CONSTRAINTS.MIN_TAGS, `At least ${ARTICLE_PLAN_CONSTRAINTS.MIN_TAGS} tag required`)
@@ -103,12 +104,49 @@ function issue(severity: ValidationSeverity, message: string): ValidationIssue {
 }
 
 /**
- * Validates the basic structure of a draft.
- * Uses constraints from ARTICLE_PLAN_CONSTRAINTS for consistency.
+ * Converts Zod errors to ValidationIssue array.
+ * All Zod errors are treated as 'error' severity.
  */
-function validateStructure(draft: {
+function zodErrorsToIssues(zodError: z.ZodError): ValidationIssue[] {
+  return zodError.issues.map((err) => {
+    const path = err.path.length > 0 ? `${err.path.join('.')}: ` : '';
+    return issue('error', `${path}${err.message}`);
+  });
+}
+
+/**
+ * Validates the basic structure of a draft using Zod schema.
+ * Returns errors from schema validation.
+ */
+function validateStructureWithSchema(draft: {
   title: string;
+  categorySlug: string;
   excerpt: string;
+  tags: readonly string[];
+  markdown: string;
+  sources: readonly string[];
+}): ValidationIssue[] {
+  // Use Zod schema for structural validation (errors)
+  const result = GameArticleDraftSchema.safeParse({
+    ...draft,
+    tags: [...draft.tags], // Convert readonly to mutable for Zod
+    sources: [...draft.sources],
+  });
+
+  if (result.success) {
+    return [];
+  }
+
+  // result.error is guaranteed to be ZodError when success is false
+  return zodErrorsToIssues(result.error);
+}
+
+/**
+ * Validates advisory/warning-level concerns that Zod can't express.
+ * These are recommendations, not hard failures.
+ */
+function validateStructureWarnings(draft: {
+  title: string;
   tags: readonly string[];
   markdown: string;
   sources: readonly string[];
@@ -116,34 +154,18 @@ function validateStructure(draft: {
   const issues: ValidationIssue[] = [];
   const C = ARTICLE_PLAN_CONSTRAINTS;
 
-  // Excerpt length
-  if (draft.excerpt.length < C.EXCERPT_MIN_LENGTH) {
-    issues.push(issue('error', `Excerpt too short: ${draft.excerpt.length} characters (minimum ${C.EXCERPT_MIN_LENGTH})`));
-  }
-  if (draft.excerpt.length > C.EXCERPT_MAX_LENGTH) {
-    issues.push(issue('error', `Excerpt too long: ${draft.excerpt.length} characters (maximum ${C.EXCERPT_MAX_LENGTH})`));
-  }
-
-  // Title
-  if (!draft.title || draft.title.length < C.TITLE_MIN_LENGTH) {
-    issues.push(issue('error', `Title too short or missing (minimum ${C.TITLE_MIN_LENGTH} characters)`));
-  }
+  // Title length recommendation (warning, not error)
   if (draft.title.length > C.TITLE_RECOMMENDED_MAX_LENGTH) {
     issues.push(issue('warning', `Title is quite long: ${draft.title.length} characters (recommended: ≤${C.TITLE_RECOMMENDED_MAX_LENGTH})`));
   }
 
-  // Markdown minimum length
-  if (draft.markdown.length < C.MIN_MARKDOWN_LENGTH) {
-    issues.push(issue('error', `Article content too short: ${draft.markdown.length} characters (minimum ${C.MIN_MARKDOWN_LENGTH})`));
-  }
-
-  // Sections
+  // Section count check (warning)
   const sectionCount = countContentH2Sections(draft.markdown);
   if (sectionCount < C.MIN_SECTIONS) {
     issues.push(issue('warning', `Only ${sectionCount} sections found (minimum ${C.MIN_SECTIONS})`));
   }
 
-  // Check for empty sections
+  // Check for short sections (warning)
   const sections = getContentH2Sections(draft.markdown);
   sections.forEach((section, idx) => {
     const content = section.content.trim();
@@ -152,37 +174,15 @@ function validateStructure(draft: {
     }
   });
 
-  // Tags
+  // Tag count minimum (warning - having few tags is not fatal)
   if (draft.tags.length < C.MIN_TAGS) {
     issues.push(issue('warning', `Not enough tags: ${draft.tags.length} (minimum ${C.MIN_TAGS})`));
   }
-  if (draft.tags.length > C.MAX_TAGS) {
-    issues.push(issue('error', `Too many tags: ${draft.tags.length} (maximum ${C.MAX_TAGS})`));
-  }
 
-  // Validate individual tag lengths
-  draft.tags.forEach((tag, idx) => {
-    if (tag.length > C.TAG_MAX_LENGTH) {
-      issues.push(issue('error', `Tag ${idx + 1} too long: ${tag.length} characters (maximum ${C.TAG_MAX_LENGTH})`));
-    }
-  });
-
-  // Sources
+  // No sources (warning)
   if (draft.sources.length === 0) {
     issues.push(issue('warning', 'No sources were collected'));
   }
-
-  // Validate source URLs
-  draft.sources.forEach((url, idx) => {
-    try {
-      const u = new URL(url);
-      if (u.protocol !== 'http:' && u.protocol !== 'https:') {
-        issues.push(issue('error', `Invalid source URL scheme at index ${idx}: ${url}`));
-      }
-    } catch {
-      issues.push(issue('error', `Invalid source URL at index ${idx}: ${url}`));
-    }
-  });
 
   return issues;
 }
@@ -261,6 +261,9 @@ function validateContentQuality(markdown: string): ValidationIssue[] {
  * Validates an article draft comprehensively.
  * Articles are always generated in English; translation to other languages is a separate process.
  *
+ * Uses Zod schema for structural validation (hard errors), plus manual checks
+ * for warnings (advisory issues that don't block publication).
+ *
  * @param draft - The draft to validate
  * @returns Array of validation issues (empty if valid)
  *
@@ -280,8 +283,11 @@ export function validateArticleDraft(draft: {
 }): ValidationIssue[] {
   const issues: ValidationIssue[] = [];
 
-  // Structure validation
-  issues.push(...validateStructure(draft));
+  // Zod schema validation (errors)
+  issues.push(...validateStructureWithSchema(draft));
+
+  // Warning-level structural checks
+  issues.push(...validateStructureWarnings(draft));
 
   // Content quality validation
   issues.push(...validateContentQuality(draft.markdown));

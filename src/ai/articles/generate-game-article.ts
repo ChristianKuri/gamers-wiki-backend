@@ -110,11 +110,50 @@ export interface ArticleGeneratorOptions {
    * });
    */
   readonly signal?: AbortSignal;
+
+  /**
+   * Override parallel section writing mode.
+   * - undefined: auto-decide based on category (parallel for 'lists')
+   * - true: force parallel (faster, sections written independently)
+   * - false: force sequential (maintains narrative flow between sections)
+   */
+  readonly parallelSections?: boolean;
 }
 
 // ============================================================================
 // Timeout and Cancellation Helpers
 // ============================================================================
+
+/**
+ * Throws if the operation should not proceed due to cancellation or timeout.
+ * Call this before starting any long-running phase.
+ *
+ * @param userSignal - Optional user-provided AbortSignal
+ * @param startTime - Start time of the overall operation
+ * @param timeoutMs - Total timeout in ms (0 = no timeout)
+ * @param gameName - Game name for error messages
+ * @throws ArticleGenerationError with 'CANCELLED' if signal is aborted
+ * @throws ArticleGenerationError with 'TIMEOUT' if timeout exceeded
+ */
+function assertCanProceed(
+  userSignal: AbortSignal | undefined,
+  startTime: number,
+  timeoutMs: number,
+  gameName: string
+): void {
+  if (userSignal?.aborted) {
+    throw new ArticleGenerationError(
+      'CANCELLED',
+      `Article generation for "${gameName}" was cancelled`
+    );
+  }
+  if (timeoutMs > 0 && Date.now() - startTime > timeoutMs) {
+    throw new ArticleGenerationError(
+      'TIMEOUT',
+      `Article generation for "${gameName}" timed out after ${timeoutMs}ms`
+    );
+  }
+}
 
 /**
  * Wraps a promise with timeout and cancellation support using Promise.race.
@@ -138,21 +177,8 @@ async function withTimeoutAndCancellation<T>(
   gameName: string,
   phaseName: string
 ): Promise<T> {
-  // Pre-check: already cancelled?
-  if (userSignal?.aborted) {
-    throw new ArticleGenerationError(
-      'CANCELLED',
-      `Article generation for "${gameName}" was cancelled`
-    );
-  }
-
-  // Pre-check: already timed out?
-  if (timeoutMs > 0 && Date.now() - startTime > timeoutMs) {
-    throw new ArticleGenerationError(
-      'TIMEOUT',
-      `Article generation for "${gameName}" timed out after ${timeoutMs}ms`
-    );
-  }
+  // Pre-check: verify we can proceed before setting up race
+  assertCanProceed(userSignal, startTime, timeoutMs, gameName);
 
   // No timeout or cancellation needed - return promise directly
   if (!userSignal && timeoutMs <= 0) {
@@ -300,7 +326,10 @@ async function runPhase<T>(
 
 function createDefaultDeps(): ArticleGeneratorDeps {
   if (!process.env.OPENROUTER_API_KEY) {
-    throw new Error('OPENROUTER_API_KEY is not configured');
+    throw new ArticleGenerationError(
+      'CONFIG_ERROR',
+      'OPENROUTER_API_KEY environment variable is required'
+    );
   }
 
   // Support configurable base URL for proxies or alternative endpoints
@@ -337,7 +366,7 @@ function createDefaultDeps(): ArticleGeneratorDeps {
  * @throws ArticleGenerationError with code 'VALIDATION_FAILED' if validation fails
  * @throws ArticleGenerationError with code 'TIMEOUT' if timeoutMs is exceeded
  * @throws ArticleGenerationError with code 'CANCELLED' if signal is aborted
- * @throws Error if OPENROUTER_API_KEY is not configured (when using default deps)
+ * @throws ArticleGenerationError with code 'CONFIG_ERROR' if OPENROUTER_API_KEY is not configured
  *
  * @example
  * // Production usage
@@ -429,7 +458,7 @@ export async function generateGameArticleDraft(
 
   const scoutOutput = scoutResult.output;
   log.info(
-    `Scout complete in ${scoutResult.durationMs}ms: ` +
+    `Scout (${scoutModel}) complete in ${scoutResult.durationMs}ms: ` +
       `${scoutOutput.researchPool.allUrls.size} sources, ` +
       `${scoutOutput.researchPool.queryCache.size} unique queries`
   );
@@ -454,14 +483,15 @@ export async function generateGameArticleDraft(
 
   const plan = editorResult.output;
   log.info(
-    `Editor complete in ${editorResult.durationMs}ms: ` +
+    `Editor (${editorModel}) complete in ${editorResult.durationMs}ms: ` +
       `${plan.categorySlug} article with ${plan.sections.length} sections`
   );
   onProgress?.('editor', 100, `Planned ${plan.sections.length} sections`);
 
   // ===== PHASE 3: SPECIALIST =====
-  // Auto-enable parallel sections for 'lists' category (sections are independent)
-  const useParallelSections = plan.categorySlug === 'lists';
+  // Use option override if provided, otherwise auto-decide based on category
+  // (parallel for 'lists' category where sections are independent)
+  const useParallelSections = options?.parallelSections ?? (plan.categorySlug === 'lists');
   const modeLabel = useParallelSections ? 'parallel' : 'sequential';
   log.info(
     `Phase 3: Specialist - Batch research + section writing in ${modeLabel} mode (model: ${specialistModel})...`
@@ -482,8 +512,10 @@ export async function generateGameArticleDraft(
         parallelSections: useParallelSections,
         signal,
         onSectionProgress: (current, total, headline) => {
-          // Report granular progress during section writing (10-90% of specialist phase)
-          const sectionProgress = Math.round(10 + (current / total) * 80);
+          // Report granular progress during section writing
+          const { SPECIALIST_PROGRESS_START, SPECIALIST_PROGRESS_END } = GENERATOR_CONFIG;
+          const progressRange = SPECIALIST_PROGRESS_END - SPECIALIST_PROGRESS_START;
+          const sectionProgress = Math.round(SPECIALIST_PROGRESS_START + (current / total) * progressRange);
           onProgress?.('specialist', sectionProgress, `Writing section ${current}/${total}: ${headline}`);
         },
       }),
@@ -492,14 +524,14 @@ export async function generateGameArticleDraft(
 
   const { markdown, sources, researchPool: finalResearchPool } = specialistResult.output;
   log.info(
-    `Specialist complete in ${specialistResult.durationMs}ms: ` +
+    `Specialist (${specialistModel}) complete in ${specialistResult.durationMs}ms: ` +
       `${countContentH2Sections(markdown)} sections written, ${sources.length} total sources`
   );
   onProgress?.('specialist', 100, `Wrote ${countContentH2Sections(markdown)} sections`);
 
   // ===== PHASE 4: VALIDATION =====
   const validationStartTime = Date.now();
-  log.info('Phase 4: Validating generated content...');
+  log.info('Phase 4: Validation - Checking content quality...');
   onProgress?.('validation', 0, 'Validating article quality');
 
   const draft = {

@@ -497,6 +497,273 @@ describe('generateGameArticleDraft (integration-ish)', () => {
     });
   });
 
+  describe('CONFIG_ERROR', () => {
+    it('throws ArticleGenerationError with CONFIG_ERROR when OPENROUTER_API_KEY is missing', async () => {
+      const originalKey = process.env.OPENROUTER_API_KEY;
+      delete process.env.OPENROUTER_API_KEY;
+
+      try {
+        await generateGameArticleDraft({
+          gameName: 'Test Game',
+          instruction: 'Write a guide',
+        });
+        expect.fail('Should have thrown CONFIG_ERROR');
+      } catch (error) {
+        expect(error).toBeInstanceOf(ArticleGenerationError);
+        expect((error as ArticleGenerationError).code).toBe('CONFIG_ERROR');
+        expect((error as ArticleGenerationError).message).toContain('OPENROUTER_API_KEY');
+      } finally {
+        // Restore the key
+        if (originalKey) {
+          process.env.OPENROUTER_API_KEY = originalKey;
+        }
+      }
+    });
+  });
+
+  describe('parallelSections option', () => {
+    it('respects parallelSections: true override for non-lists category', async () => {
+      const sectionWriteOrder: string[] = [];
+      const longGenericText =
+        'This is a sufficiently long generic mock response to satisfy Scout validation checks and keep the pipeline moving during tests. ' +
+        'The content here is deliberately verbose and repetitive to ensure the generated article meets the minimum character requirements.';
+
+      // Create a guides category plan (normally sequential)
+      const guidesPlan = {
+        title: 'Beginner Guide for Test Game',
+        categorySlug: 'guides',
+        excerpt:
+          'Learn the basics of Test Game with this comprehensive beginner guide covering everything new players need to know to get started.',
+        tags: ['beginner', 'guide', 'tips'],
+        sections: [
+          { headline: 'Getting Started', goal: 'intro', researchQueries: ['q1'] },
+          { headline: 'Basic Controls', goal: 'controls', researchQueries: ['q2'] },
+          { headline: 'First Mission', goal: 'mission', researchQueries: ['q3'] },
+        ],
+        safety: { noScoresUnlessReview: true },
+      };
+
+      server.use(
+        http.post('https://api.tavily.com/search', async ({ request }) => {
+          const body = (await request.json()) as { query?: string };
+          return HttpResponse.json({
+            query: body?.query || '',
+            answer: 'Mocked answer',
+            results: [{ title: 'Mock', url: 'https://example.com/mock', content: 'Mock content', score: 0.9 }],
+          });
+        }),
+        http.post('https://openrouter.ai/api/v1/chat/completions', async ({ request }) => {
+          const body = (await request.json()) as {
+            messages: Array<{ role: string; content: string }>;
+            model: string;
+          };
+          const userText = body.messages.find((m) => m.role === 'user')?.content ?? '';
+
+          if (userText.includes('Return ONLY valid JSON')) {
+            return HttpResponse.json({
+              id: 'mock',
+              object: 'chat.completion',
+              created: Date.now(),
+              model: body.model,
+              choices: [{ index: 0, message: { role: 'assistant', content: JSON.stringify(guidesPlan) }, finish_reason: 'stop' }],
+              usage: { prompt_tokens: 10, completion_tokens: 10, total_tokens: 20 },
+            });
+          }
+
+          if (userText.includes('Write the next section')) {
+            const headlineMatch = userText.match(/headline:\s*"([^"]+)"/i) || userText.match(/Headline:\s*([^\n]+)/i);
+            const headline = headlineMatch?.[1] || 'unknown';
+            sectionWriteOrder.push(headline);
+          }
+
+          return HttpResponse.json({
+            id: 'mock',
+            object: 'chat.completion',
+            created: Date.now(),
+            model: body.model,
+            choices: [{ index: 0, message: { role: 'assistant', content: longGenericText }, finish_reason: 'stop' }],
+            usage: { prompt_tokens: 10, completion_tokens: 10, total_tokens: 20 },
+          });
+        }),
+        http.post('https://openrouter.ai/api/v1/responses', async ({ request }) => {
+          const body = (await request.json()) as {
+            input: Array<{ role: string; content: string | Array<{ type: string; text: string }> }>;
+            model: string;
+          };
+
+          const messages = body.input.map((msg) => {
+            const content =
+              typeof msg.content === 'string'
+                ? msg.content
+                : (msg.content as Array<{ type: string; text: string }>)?.[0]?.text || '';
+            return { role: msg.role, content };
+          });
+
+          const userText = messages.find((m) => m.role === 'user')?.content ?? '';
+
+          if (userText.includes('Return ONLY valid JSON')) {
+            return HttpResponse.json({
+              id: 'mock',
+              object: 'response',
+              created_at: Date.now(),
+              model: body.model,
+              status: 'completed',
+              output: [{ id: 'mock', type: 'message', role: 'assistant', status: 'completed', content: [{ type: 'output_text', text: JSON.stringify(guidesPlan), annotations: [] }] }],
+              usage: { input_tokens: 10, output_tokens: 10, total_tokens: 20 },
+            });
+          }
+
+          if (userText.includes('Write the next section')) {
+            const headlineMatch = userText.match(/headline:\s*"([^"]+)"/i) || userText.match(/Headline:\s*([^\n]+)/i);
+            const headline = headlineMatch?.[1] || 'unknown';
+            sectionWriteOrder.push(headline);
+          }
+
+          return HttpResponse.json({
+            id: 'mock',
+            object: 'response',
+            created_at: Date.now(),
+            model: body.model,
+            status: 'completed',
+            output: [{ id: 'mock', type: 'message', role: 'assistant', status: 'completed', content: [{ type: 'output_text', text: longGenericText, annotations: [] }] }],
+            usage: { input_tokens: 10, output_tokens: 10, total_tokens: 20 },
+          });
+        })
+      );
+
+      const draft = await generateGameArticleDraft(
+        {
+          gameName: 'Test Game',
+          instruction: 'Write a beginner guide',
+        },
+        undefined,
+        { parallelSections: true } // Force parallel even for guides
+      );
+
+      // Verify guides category was selected (not lists)
+      expect(draft.categorySlug).toBe('guides');
+
+      // Verify article was generated successfully
+      expect(draft.markdown).toContain('Getting Started');
+      expect(draft.markdown).toContain('Basic Controls');
+      expect(draft.markdown).toContain('First Mission');
+    });
+
+    it('respects parallelSections: false override for lists category', async () => {
+      const longGenericText =
+        'This is a sufficiently long generic mock response to satisfy Scout validation checks and keep the pipeline moving during tests. ' +
+        'The content here is deliberately verbose and repetitive to ensure the generated article meets the minimum character requirements.';
+
+      // Create a lists category plan (normally parallel)
+      const listsPlan = {
+        title: 'Top 5 Weapons in Test Game',
+        categorySlug: 'lists',
+        excerpt:
+          'Discover the most powerful weapons in Test Game, ranked by damage output and versatility for both beginners and veteran players.',
+        tags: ['weapons', 'top 5', 'gear'],
+        sections: [
+          { headline: 'Legendary Sword', goal: 'desc', researchQueries: ['q1'] },
+          { headline: 'Dragon Bow', goal: 'desc', researchQueries: ['q2'] },
+          { headline: 'Magic Staff', goal: 'desc', researchQueries: ['q3'] },
+        ],
+        safety: { noScoresUnlessReview: true },
+      };
+
+      server.use(
+        http.post('https://api.tavily.com/search', async ({ request }) => {
+          const body = (await request.json()) as { query?: string };
+          return HttpResponse.json({
+            query: body?.query || '',
+            answer: 'Mocked answer',
+            results: [{ title: 'Mock', url: 'https://example.com/mock', content: 'Mock content', score: 0.9 }],
+          });
+        }),
+        http.post('https://openrouter.ai/api/v1/chat/completions', async ({ request }) => {
+          const body = (await request.json()) as {
+            messages: Array<{ role: string; content: string }>;
+            model: string;
+          };
+          const userText = body.messages.find((m) => m.role === 'user')?.content ?? '';
+
+          if (userText.includes('Return ONLY valid JSON')) {
+            return HttpResponse.json({
+              id: 'mock',
+              object: 'chat.completion',
+              created: Date.now(),
+              model: body.model,
+              choices: [{ index: 0, message: { role: 'assistant', content: JSON.stringify(listsPlan) }, finish_reason: 'stop' }],
+              usage: { prompt_tokens: 10, completion_tokens: 10, total_tokens: 20 },
+            });
+          }
+
+          return HttpResponse.json({
+            id: 'mock',
+            object: 'chat.completion',
+            created: Date.now(),
+            model: body.model,
+            choices: [{ index: 0, message: { role: 'assistant', content: longGenericText }, finish_reason: 'stop' }],
+            usage: { prompt_tokens: 10, completion_tokens: 10, total_tokens: 20 },
+          });
+        }),
+        http.post('https://openrouter.ai/api/v1/responses', async ({ request }) => {
+          const body = (await request.json()) as {
+            input: Array<{ role: string; content: string | Array<{ type: string; text: string }> }>;
+            model: string;
+          };
+
+          const messages = body.input.map((msg) => {
+            const content =
+              typeof msg.content === 'string'
+                ? msg.content
+                : (msg.content as Array<{ type: string; text: string }>)?.[0]?.text || '';
+            return { role: msg.role, content };
+          });
+
+          const userText = messages.find((m) => m.role === 'user')?.content ?? '';
+
+          if (userText.includes('Return ONLY valid JSON')) {
+            return HttpResponse.json({
+              id: 'mock',
+              object: 'response',
+              created_at: Date.now(),
+              model: body.model,
+              status: 'completed',
+              output: [{ id: 'mock', type: 'message', role: 'assistant', status: 'completed', content: [{ type: 'output_text', text: JSON.stringify(listsPlan), annotations: [] }] }],
+              usage: { input_tokens: 10, output_tokens: 10, total_tokens: 20 },
+            });
+          }
+
+          return HttpResponse.json({
+            id: 'mock',
+            object: 'response',
+            created_at: Date.now(),
+            model: body.model,
+            status: 'completed',
+            output: [{ id: 'mock', type: 'message', role: 'assistant', status: 'completed', content: [{ type: 'output_text', text: longGenericText, annotations: [] }] }],
+            usage: { input_tokens: 10, output_tokens: 10, total_tokens: 20 },
+          });
+        })
+      );
+
+      const draft = await generateGameArticleDraft(
+        {
+          gameName: 'Test Game',
+          instruction: 'Write a top 5 weapons list',
+        },
+        undefined,
+        { parallelSections: false } // Force sequential even for lists
+      );
+
+      // Verify lists category was selected
+      expect(draft.categorySlug).toBe('lists');
+
+      // Verify article was generated successfully
+      expect(draft.markdown).toContain('Legendary Sword');
+      expect(draft.markdown).toContain('Dragon Bow');
+      expect(draft.markdown).toContain('Magic Staff');
+    });
+  });
+
   describe('context validation', () => {
     it('throws ArticleGenerationError for missing gameName', async () => {
       await expect(

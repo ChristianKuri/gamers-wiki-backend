@@ -119,6 +119,7 @@ export const ArticlePlanSchema = z.object({
     .array(
       z.string()
         .min(1)
+        .regex(/\S/, 'Tag cannot be whitespace only')
         .max(ARTICLE_PLAN_CONSTRAINTS.TAG_MAX_LENGTH, `Tag too long (maximum ${ARTICLE_PLAN_CONSTRAINTS.TAG_MAX_LENGTH} characters)`)
     )
     .min(ARTICLE_PLAN_CONSTRAINTS.MIN_TAGS, `At least ${ARTICLE_PLAN_CONSTRAINTS.MIN_TAGS} tag is required`)
