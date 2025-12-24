@@ -8,6 +8,7 @@
 import type { LanguageModel } from 'ai';
 
 import { createPrefixedLogger, type Logger } from '../../../utils/logger';
+import { SCOUT_CONFIG } from '../config';
 import { withRetry } from '../retry';
 import {
   buildScoutQueries,
@@ -32,29 +33,8 @@ import type {
   SearchFunction,
 } from '../types';
 
-// ============================================================================
-// Configuration
-// ============================================================================
-
-export const SCOUT_CONFIG = {
-  MAX_SNIPPET_LENGTH: 800,
-  MAX_SNIPPETS: 10,
-  OVERVIEW_SEARCH_RESULTS: 8,
-  CATEGORY_SEARCH_RESULTS: 6,
-  RECENT_SEARCH_RESULTS: 5,
-  MAX_CATEGORY_SEARCHES: 2,
-  OVERVIEW_SEARCH_DEPTH: 'advanced' as const,
-  CATEGORY_SEARCH_DEPTH: 'advanced' as const,
-  RECENT_SEARCH_DEPTH: 'basic' as const,
-  TEMPERATURE: 0.2,
-  RESULTS_PER_SEARCH_CONTEXT: 5,
-  KEY_FINDINGS_LIMIT: 3,
-  RECENT_RESULTS_LIMIT: 3,
-  RECENT_CONTENT_LENGTH: 300,
-  MIN_SOURCES_WARNING: 5,
-  MIN_QUERIES_WARNING: 3,
-  MIN_OVERVIEW_LENGTH: 50,
-};
+// Re-export config for backwards compatibility
+export { SCOUT_CONFIG } from '../config';
 
 // ============================================================================
 // Types

@@ -8,11 +8,78 @@
 import type { ArticleCategorySlug, ArticlePlan } from './article-plan';
 
 // ============================================================================
+// Phase Constants
+// ============================================================================
+
+/**
+ * All phases of article generation as a const array.
+ * Used to derive the ArticleGenerationPhase type.
+ */
+export const ARTICLE_GENERATION_PHASES = ['scout', 'editor', 'specialist', 'validation'] as const;
+
+// ============================================================================
 // Error Types
 // ============================================================================
 
 /**
+ * Error codes for article generation failures.
+ * Each code corresponds to a specific phase or validation step.
+ */
+export type ArticleGenerationErrorCode =
+  | 'CONTEXT_INVALID'
+  | 'SCOUT_FAILED'
+  | 'EDITOR_FAILED'
+  | 'SPECIALIST_FAILED'
+  | 'VALIDATION_FAILED'
+  | 'TIMEOUT'
+  | 'CANCELLED';
+
+/**
+ * Custom error class for article generation failures.
+ * Provides structured error information for programmatic handling.
+ *
+ * @example
+ * try {
+ *   await generateGameArticleDraft(context);
+ * } catch (error) {
+ *   if (error instanceof ArticleGenerationError) {
+ *     switch (error.code) {
+ *       case 'SCOUT_FAILED':
+ *         // Handle research failure
+ *         break;
+ *       case 'VALIDATION_FAILED':
+ *         // Handle validation failure
+ *         break;
+ *     }
+ *   }
+ * }
+ */
+export class ArticleGenerationError extends Error {
+  readonly name = 'ArticleGenerationError';
+
+  constructor(
+    readonly code: ArticleGenerationErrorCode,
+    message: string,
+    readonly cause?: Error
+  ) {
+    super(message);
+    // Maintains proper stack trace for where error was thrown (V8 only)
+    if (Error.captureStackTrace) {
+      Error.captureStackTrace(this, ArticleGenerationError);
+    }
+  }
+}
+
+/**
+ * Type guard to check if an error is an ArticleGenerationError.
+ */
+export function isArticleGenerationError(error: unknown): error is ArticleGenerationError {
+  return error instanceof ArticleGenerationError;
+}
+
+/**
  * Error with cause for proper error chaining.
+ * @deprecated Use ArticleGenerationError instead for new code.
  * Compatible with ES2022+ Error cause property.
  */
 export interface ErrorWithCause extends Error {
@@ -21,6 +88,7 @@ export interface ErrorWithCause extends Error {
 
 /**
  * Creates an error with cause for proper error chaining.
+ * @deprecated Use ArticleGenerationError instead for new code.
  */
 export function createErrorWithCause(message: string, cause?: Error): ErrorWithCause {
   const error = new Error(message) as ErrorWithCause;
@@ -181,8 +249,8 @@ export interface GameArticleDraft {
 // Progress Callback Types
 // ============================================================================
 
-/** Phases of article generation */
-export type ArticleGenerationPhase = 'scout' | 'editor' | 'specialist' | 'validation';
+/** Phases of article generation, derived from ARTICLE_GENERATION_PHASES constant */
+export type ArticleGenerationPhase = (typeof ARTICLE_GENERATION_PHASES)[number];
 
 /**
  * Progress callback for monitoring article generation.

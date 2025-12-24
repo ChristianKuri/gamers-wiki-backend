@@ -9,6 +9,7 @@ import type { LanguageModel } from 'ai';
 
 import { createPrefixedLogger, type Logger } from '../../../utils/logger';
 import type { ArticlePlan, ArticleSectionPlan } from '../article-plan';
+import { SPECIALIST_CONFIG } from '../config';
 import { withRetry } from '../retry';
 import {
   buildResearchContext,
@@ -32,27 +33,8 @@ import type {
   SectionProgressCallback,
 } from '../types';
 
-// ============================================================================
-// Configuration
-// ============================================================================
-
-export const SPECIALIST_CONFIG = {
-  SNIPPET_LENGTH: 280,
-  TOP_RESULTS_PER_QUERY: 3,
-  CONTEXT_TAIL_LENGTH: 500,
-  MIN_PARAGRAPHS: 2,
-  MAX_PARAGRAPHS: 5,
-  MAX_SCOUT_OVERVIEW_LENGTH: 2500,
-  RESEARCH_CONTEXT_PER_RESULT: 600,
-  THIN_RESEARCH_THRESHOLD: 500,
-  TEMPERATURE: 0.6,
-  RESULTS_PER_RESEARCH_CONTEXT: 5,
-  MAX_OUTPUT_TOKENS_PER_SECTION: 1500,
-  SEARCH_DEPTH: 'advanced' as const,
-  MAX_SEARCH_RESULTS: 5,
-  MAX_SOURCES: 25,
-  RATE_LIMIT_DELAY_MS: 300,
-};
+// Re-export config for backwards compatibility
+export { SPECIALIST_CONFIG } from '../config';
 
 // ============================================================================
 // Types
@@ -65,6 +47,13 @@ export interface SpecialistDeps {
   readonly logger?: Logger;
   /** Optional callback for reporting section writing progress */
   readonly onSectionProgress?: SectionProgressCallback;
+  /**
+   * If true, writes sections in parallel instead of sequentially.
+   * Faster but loses narrative flow between sections.
+   * Best suited for "list" category articles where sections are independent.
+   * Default: false
+   */
+  readonly parallelSections?: boolean;
 }
 
 export interface SpecialistOutput {
@@ -176,6 +165,86 @@ function ensureUniqueStrings(values: readonly string[], max: number): string[] {
   return out;
 }
 
+/**
+ * Writes a single section using the Specialist agent.
+ * Extracted to enable parallel section writing.
+ */
+async function writeSection(
+  context: GameArticleContext,
+  scoutOutput: ScoutOutput,
+  plan: ArticlePlan,
+  section: ArticleSectionPlan,
+  sectionIndex: number,
+  enrichedPool: ResearchPool,
+  deps: Pick<SpecialistDeps, 'generateText' | 'model' | 'logger'>,
+  previousContext: string
+): Promise<string> {
+  const log = deps.logger ?? createPrefixedLogger('[Specialist]');
+  const localeInstruction = 'Write in English.';
+  const categoryToneGuide = getCategoryToneGuide(plan.categorySlug);
+
+  const isFirst = sectionIndex === 0;
+  const isLast = sectionIndex === plan.sections.length - 1;
+
+  // Extract relevant research from pool
+  const sectionResearch = extractSectionResearch(section, enrichedPool);
+  const researchContentLength = calculateResearchContentLength(sectionResearch);
+  const isThinResearch = researchContentLength < SPECIALIST_CONFIG.THIN_RESEARCH_THRESHOLD;
+
+  // Guard: Check if we have any meaningful research
+  const hasAnyResearch = sectionResearch.some((r) => r.results.length > 0);
+  if (!hasAnyResearch && !scoutOutput.briefing.overview) {
+    log.warn(
+      `Section "${section.headline}" has no research and no Scout overview - quality may be compromised`
+    );
+  }
+
+  // Build research context
+  const researchContext = buildResearchContext(
+    sectionResearch,
+    SPECIALIST_CONFIG.RESULTS_PER_RESEARCH_CONTEXT,
+    SPECIALIST_CONFIG.RESEARCH_CONTEXT_PER_RESULT
+  );
+
+  const sectionContext: SpecialistSectionContext = {
+    sectionIndex,
+    totalSections: plan.sections.length,
+    headline: section.headline,
+    goal: section.goal,
+    isFirst,
+    isLast,
+    previousContext,
+    researchContext,
+    scoutOverview: scoutOutput.briefing.overview,
+    categoryInsights: scoutOutput.briefing.categoryInsights,
+    isThinResearch,
+    researchContentLength,
+  };
+
+  log.debug(`Writing section ${sectionIndex + 1}/${plan.sections.length}: ${section.headline}`);
+
+  const { text } = await withRetry(
+    () =>
+      deps.generateText({
+        model: deps.model,
+        temperature: SPECIALIST_CONFIG.TEMPERATURE,
+        maxOutputTokens: SPECIALIST_CONFIG.MAX_OUTPUT_TOKENS_PER_SECTION,
+        system: getSpecialistSystemPrompt(localeInstruction, categoryToneGuide),
+        prompt: getSpecialistSectionUserPrompt(
+          sectionContext,
+          plan,
+          context.gameName,
+          SPECIALIST_CONFIG.MAX_SCOUT_OVERVIEW_LENGTH,
+          SPECIALIST_CONFIG.MIN_PARAGRAPHS,
+          SPECIALIST_CONFIG.MAX_PARAGRAPHS
+        ),
+      }),
+    { context: `Specialist section "${section.headline}"` }
+  );
+
+  return text.trim();
+}
+
 // ============================================================================
 // Main Specialist Function
 // ============================================================================
@@ -184,10 +253,16 @@ function ensureUniqueStrings(values: readonly string[], max: number): string[] {
  * Runs the Specialist agent to write article sections.
  * Articles are always written in English.
  *
+ * Supports two modes:
+ * - Sequential (default): Sections are written in order, each receiving context from the previous.
+ *   This maintains narrative flow but is slower.
+ * - Parallel (parallelSections: true): Sections are written simultaneously.
+ *   Faster but sections are independent. Best for "lists" category articles.
+ *
  * @param context - Game context
  * @param scoutOutput - Research from Scout agent
  * @param plan - Article plan from Editor agent
- * @param deps - Dependencies (search, generateText, model, onSectionProgress)
+ * @param deps - Dependencies (search, generateText, model, onSectionProgress, parallelSections)
  * @returns Written markdown, sources, and final research pool
  */
 export async function runSpecialist(
@@ -197,8 +272,7 @@ export async function runSpecialist(
   deps: SpecialistDeps
 ): Promise<SpecialistOutput> {
   const log = deps.logger ?? createPrefixedLogger('[Specialist]');
-  const localeInstruction = 'Write in English.';
-  const categoryToneGuide = getCategoryToneGuide(plan.categorySlug);
+  const parallelSections = deps.parallelSections ?? false;
 
   // ===== BATCH RESEARCH PHASE =====
   log.info('Starting batch research for all sections...');
@@ -210,76 +284,66 @@ export async function runSpecialist(
   );
 
   // ===== SECTION WRITING PHASE =====
-  let markdown = `# ${plan.title}\n\n`;
-  let previousContext = '';
+  let sectionTexts: string[];
 
+  if (parallelSections) {
+    // Parallel mode: Write all sections simultaneously
+    log.info(`Writing ${plan.sections.length} sections in PARALLEL mode...`);
+
+    // Report initial progress for all sections
+    deps.onSectionProgress?.(0, plan.sections.length, 'Starting parallel write');
+
+    const sectionPromises = plan.sections.map((section, i) =>
+      writeSection(
+        context,
+        scoutOutput,
+        plan,
+        section,
+        i,
+        enrichedPool,
+        { generateText: deps.generateText, model: deps.model, logger: deps.logger },
+        '' // No previous context in parallel mode
+      ).then((text) => {
+        // Report progress as each section completes
+        deps.onSectionProgress?.(i + 1, plan.sections.length, section.headline);
+        return text;
+      })
+    );
+
+    sectionTexts = await Promise.all(sectionPromises);
+  } else {
+    // Sequential mode: Write sections in order with context flow
+    log.info(`Writing ${plan.sections.length} sections in SEQUENTIAL mode...`);
+    sectionTexts = [];
+    let previousContext = '';
+
+    for (let i = 0; i < plan.sections.length; i++) {
+      const section = plan.sections[i];
+
+      // Report progress before writing each section
+      deps.onSectionProgress?.(i + 1, plan.sections.length, section.headline);
+
+      const sectionText = await writeSection(
+        context,
+        scoutOutput,
+        plan,
+        section,
+        i,
+        enrichedPool,
+        { generateText: deps.generateText, model: deps.model, logger: deps.logger },
+        previousContext
+      );
+
+      sectionTexts.push(sectionText);
+      previousContext = sectionText.slice(-SPECIALIST_CONFIG.CONTEXT_TAIL_LENGTH);
+    }
+  }
+
+  // ===== ASSEMBLE MARKDOWN =====
+  let markdown = `# ${plan.title}\n\n`;
   for (let i = 0; i < plan.sections.length; i++) {
     const section = plan.sections[i];
-    const isFirst = i === 0;
-    const isLast = i === plan.sections.length - 1;
-
-    // Extract relevant research from pool
-    const sectionResearch = extractSectionResearch(section, enrichedPool);
-    const researchContentLength = calculateResearchContentLength(sectionResearch);
-    const isThinResearch = researchContentLength < SPECIALIST_CONFIG.THIN_RESEARCH_THRESHOLD;
-
-    // Guard: Check if we have any meaningful research
-    const hasAnyResearch = sectionResearch.some((r) => r.results.length > 0);
-    if (!hasAnyResearch && !scoutOutput.briefing.overview) {
-      log.warn(
-        `Section "${section.headline}" has no research and no Scout overview - quality may be compromised`
-      );
-    }
-
-    // Build research context
-    const researchContext = buildResearchContext(
-      sectionResearch,
-      SPECIALIST_CONFIG.RESULTS_PER_RESEARCH_CONTEXT,
-      SPECIALIST_CONFIG.RESEARCH_CONTEXT_PER_RESULT
-    );
-
-    const sectionContext: SpecialistSectionContext = {
-      sectionIndex: i,
-      totalSections: plan.sections.length,
-      headline: section.headline,
-      goal: section.goal,
-      isFirst,
-      isLast,
-      previousContext,
-      researchContext,
-      scoutOverview: scoutOutput.briefing.overview,
-      categoryInsights: scoutOutput.briefing.categoryInsights,
-      isThinResearch,
-      researchContentLength,
-    };
-
-    log.debug(`Writing section ${i + 1}/${plan.sections.length}: ${section.headline}`);
-
-    // Report progress before writing each section
-    deps.onSectionProgress?.(i + 1, plan.sections.length, section.headline);
-
-    const { text } = await withRetry(
-      () =>
-        deps.generateText({
-          model: deps.model,
-          temperature: SPECIALIST_CONFIG.TEMPERATURE,
-          maxOutputTokens: SPECIALIST_CONFIG.MAX_OUTPUT_TOKENS_PER_SECTION,
-          system: getSpecialistSystemPrompt(localeInstruction, categoryToneGuide),
-          prompt: getSpecialistSectionUserPrompt(
-            sectionContext,
-            plan,
-            context.gameName,
-            SPECIALIST_CONFIG.MAX_SCOUT_OVERVIEW_LENGTH,
-            SPECIALIST_CONFIG.MIN_PARAGRAPHS,
-            SPECIALIST_CONFIG.MAX_PARAGRAPHS
-          ),
-        }),
-      { context: `Specialist section "${section.headline}"` }
-    );
-
-    const sectionText = text.trim();
-    markdown += `## ${section.headline}\n\n${sectionText}\n\n`;
-    previousContext = sectionText.slice(-SPECIALIST_CONFIG.CONTEXT_TAIL_LENGTH);
+    markdown += `## ${section.headline}\n\n${sectionTexts[i]}\n\n`;
   }
 
   // Collect all sources from research pool

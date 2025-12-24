@@ -1,0 +1,32 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "description": "AI clichés and overused phrases to detect in generated content",
+  "cliches": [
+    { "phrase": "in conclusion", "context": "conclusion cliché" },
+    { "phrase": "let's dive into", "context": "conversational filler" },
+    { "phrase": "without further ado", "context": "unnecessary preamble" },
+    { "phrase": "it's worth noting", "context": "hedging phrase" },
+    { "phrase": "game-changing", "context": "marketing hyperbole" },
+    { "phrase": "truly revolutionary", "context": "marketing hyperbole" },
+    { "phrase": "seamlessly", "context": "overused modifier" },
+    { "phrase": "unparalleled", "context": "marketing hyperbole" },
+    { "phrase": "delve into", "context": "academic formality" },
+    { "phrase": "utilize", "context": "unnecessarily formal (use 'use')" },
+    { "phrase": "at the end of the day", "context": "filler phrase" },
+    { "phrase": "needless to say", "context": "redundant phrase" },
+    { "phrase": "dive deep", "context": "overused metaphor" },
+    { "phrase": "a must-have", "context": "marketing cliché" },
+    { "phrase": "stands out", "context": "vague praise" },
+    { "phrase": "cutting-edge", "context": "marketing hyperbole" },
+    { "phrase": "in this article", "context": "meta reference" },
+    { "phrase": "the landscape of", "context": "buzzword phrase" },
+    { "phrase": "navigate the", "context": "overused metaphor" },
+    { "phrase": "unlock the secrets", "context": "clickbait phrase" },
+    { "phrase": "take your experience to the next level", "context": "marketing cliché" },
+    { "phrase": "whether you're a", "context": "generic opener" },
+    { "phrase": "first and foremost", "context": "filler phrase" },
+    { "phrase": "it goes without saying", "context": "redundant phrase" },
+    { "phrase": "in today's gaming landscape", "context": "generic opener" }
+  ]
+}
+

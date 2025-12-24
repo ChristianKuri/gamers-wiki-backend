@@ -6,21 +6,10 @@
  */
 
 import { createPrefixedLogger } from '../../utils/logger';
+import { RETRY_CONFIG } from './config';
 
-// ============================================================================
-// Configuration
-// ============================================================================
-
-export const RETRY_CONFIG = {
-  /** Maximum number of retry attempts */
-  MAX_RETRIES: 3,
-  /** Initial delay in milliseconds before first retry */
-  INITIAL_DELAY_MS: 1000,
-  /** Maximum delay in milliseconds between retries */
-  MAX_DELAY_MS: 10000,
-  /** Multiplier for exponential backoff */
-  BACKOFF_MULTIPLIER: 2,
-} as const;
+// Re-export config for backwards compatibility
+export { RETRY_CONFIG } from './config';
 
 // ============================================================================
 // Types

@@ -114,9 +114,12 @@ export class ResearchPoolBuilder {
       return this;
     }
 
-    // Add URLs to tracking
+    // Add normalized URLs to tracking (prevents duplicates with trailing slashes, etc.)
     for (const r of result.results) {
-      this.pool.allUrls.add(r.url);
+      const normalized = normalizeUrl(r.url);
+      if (normalized) {
+        this.pool.allUrls.add(normalized);
+      }
     }
 
     // Add to appropriate category

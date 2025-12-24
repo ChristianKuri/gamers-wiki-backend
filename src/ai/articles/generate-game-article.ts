@@ -28,6 +28,21 @@
  *     console.log(`[${phase}] ${progress}%: ${message}`);
  *   },
  * });
+ *
+ * @example
+ * // With timeout (2 minutes)
+ * const draft = await generateGameArticleDraft(context, undefined, {
+ *   timeoutMs: 120000,
+ * });
+ *
+ * @example
+ * // With AbortController for cancellation
+ * const controller = new AbortController();
+ * setTimeout(() => controller.abort(), 60000); // Cancel after 60s
+ *
+ * const draft = await generateGameArticleDraft(context, undefined, {
+ *   signal: controller.signal,
+ * });
  */
 
 import { createOpenAI } from '@ai-sdk/openai';
@@ -39,20 +54,16 @@ import { createPrefixedLogger } from '../../utils/logger';
 import { runScout, runEditor, runSpecialist } from './agents';
 import { countContentH2Sections } from './markdown-utils';
 import { withRetry } from './retry';
-import type {
-  ArticleGenerationMetadata,
-  ArticleProgressCallback,
-  GameArticleContext,
-  GameArticleDraft,
+import {
+  ArticleGenerationError,
+  type ArticleGenerationMetadata,
+  type ArticleProgressCallback,
+  type GameArticleContext,
+  type GameArticleDraft,
 } from './types';
-import { createErrorWithCause } from './types';
 import { validateArticleDraft, validateGameArticleContext, getErrors, getWarnings } from './validation';
 
-// ============================================================================
-// Configuration
-// ============================================================================
-
-const DEFAULT_OPENROUTER_BASE_URL = 'https://openrouter.ai/api/v1';
+import { GENERATOR_CONFIG } from './config';
 
 // ============================================================================
 // Dependencies Interface
@@ -77,6 +88,146 @@ export interface ArticleGeneratorOptions {
    * Called at the start and end of each phase, and for each section during Specialist phase.
    */
   readonly onProgress?: ArticleProgressCallback;
+
+  /**
+   * Optional timeout in milliseconds for the entire generation process.
+   * If exceeded, throws ArticleGenerationError with code 'TIMEOUT'.
+   * Default: 0 (no timeout).
+   */
+  readonly timeoutMs?: number;
+
+  /**
+   * Optional AbortSignal for cancellation support.
+   * If aborted, throws ArticleGenerationError with code 'CANCELLED'.
+   *
+   * @example
+   * const controller = new AbortController();
+   * setTimeout(() => controller.abort(), 60000); // Cancel after 60s
+   *
+   * const draft = await generateGameArticleDraft(context, undefined, {
+   *   signal: controller.signal,
+   * });
+   */
+  readonly signal?: AbortSignal;
+}
+
+// ============================================================================
+// Default Dependencies
+// ============================================================================
+
+// ============================================================================
+// Timeout and Cancellation Helpers
+// ============================================================================
+
+/**
+ * Checks if the operation should be cancelled due to timeout or AbortSignal.
+ * @throws ArticleGenerationError if cancelled or timed out
+ */
+function checkCancellation(
+  signal: AbortSignal | undefined,
+  startTime: number,
+  timeoutMs: number,
+  gameName: string
+): void {
+  if (signal?.aborted) {
+    throw new ArticleGenerationError(
+      'CANCELLED',
+      `Article generation for "${gameName}" was cancelled`
+    );
+  }
+
+  if (timeoutMs > 0 && Date.now() - startTime > timeoutMs) {
+    throw new ArticleGenerationError(
+      'TIMEOUT',
+      `Article generation for "${gameName}" timed out after ${timeoutMs}ms`
+    );
+  }
+}
+
+/**
+ * Wraps a promise with timeout and cancellation support.
+ */
+async function withTimeoutAndCancellation<T>(
+  promise: Promise<T>,
+  signal: AbortSignal | undefined,
+  startTime: number,
+  timeoutMs: number,
+  gameName: string,
+  phaseName: string
+): Promise<T> {
+  // Check before starting
+  checkCancellation(signal, startTime, timeoutMs, gameName);
+
+  if (!signal && timeoutMs <= 0) {
+    // No timeout or cancellation needed
+    return promise;
+  }
+
+  return new Promise<T>((resolve, reject) => {
+    let timeoutId: ReturnType<typeof setTimeout> | undefined;
+    let settled = false;
+
+    const cleanup = () => {
+      settled = true;
+      if (timeoutId) clearTimeout(timeoutId);
+      signal?.removeEventListener('abort', onAbort);
+    };
+
+    const onAbort = () => {
+      if (settled) return;
+      cleanup();
+      reject(
+        new ArticleGenerationError(
+          'CANCELLED',
+          `Article generation for "${gameName}" was cancelled during ${phaseName} phase`
+        )
+      );
+    };
+
+    if (signal) {
+      signal.addEventListener('abort', onAbort, { once: true });
+    }
+
+    // Calculate remaining time for timeout
+    if (timeoutMs > 0) {
+      const elapsed = Date.now() - startTime;
+      const remaining = Math.max(0, timeoutMs - elapsed);
+
+      if (remaining <= 0) {
+        cleanup();
+        reject(
+          new ArticleGenerationError(
+            'TIMEOUT',
+            `Article generation for "${gameName}" timed out during ${phaseName} phase`
+          )
+        );
+        return;
+      }
+
+      timeoutId = setTimeout(() => {
+        if (settled) return;
+        cleanup();
+        reject(
+          new ArticleGenerationError(
+            'TIMEOUT',
+            `Article generation for "${gameName}" timed out during ${phaseName} phase after ${timeoutMs}ms`
+          )
+        );
+      }, remaining);
+    }
+
+    promise
+      .then((result) => {
+        if (settled) return;
+        cleanup();
+        resolve(result);
+      })
+      .catch((error) => {
+        if (settled) return;
+        cleanup();
+        reject(error);
+      });
+  });
 }
 
 // ============================================================================
@@ -89,7 +240,7 @@ function createDefaultDeps(): ArticleGeneratorDeps {
   }
 
   // Support configurable base URL for proxies or alternative endpoints
-  const baseURL = process.env.OPENROUTER_BASE_URL ?? DEFAULT_OPENROUTER_BASE_URL;
+  const baseURL = process.env.OPENROUTER_BASE_URL ?? GENERATOR_CONFIG.DEFAULT_OPENROUTER_BASE_URL;
 
   return {
     openrouter: createOpenAI({
@@ -115,10 +266,14 @@ function createDefaultDeps(): ArticleGeneratorDeps {
  * @param options - Optional configuration (progress callback, etc.)
  * @returns Complete article draft with markdown, sources, and metadata
  *
+ * @throws ArticleGenerationError with code 'CONTEXT_INVALID' if context validation fails
+ * @throws ArticleGenerationError with code 'SCOUT_FAILED' if research phase fails
+ * @throws ArticleGenerationError with code 'EDITOR_FAILED' if planning phase fails
+ * @throws ArticleGenerationError with code 'SPECIALIST_FAILED' if writing phase fails
+ * @throws ArticleGenerationError with code 'VALIDATION_FAILED' if validation fails
+ * @throws ArticleGenerationError with code 'TIMEOUT' if timeoutMs is exceeded
+ * @throws ArticleGenerationError with code 'CANCELLED' if signal is aborted
  * @throws Error if OPENROUTER_API_KEY is not configured (when using default deps)
- * @throws Error if context validation fails
- * @throws Error if article validation fails (errors, not warnings)
- * @throws Error with context if any agent phase fails
  *
  * @example
  * // Production usage
@@ -166,17 +321,20 @@ export async function generateGameArticleDraft(
 
   const log = createPrefixedLogger('[ArticleGen]');
   const onProgress = options?.onProgress;
+  const timeoutMs = options?.timeoutMs ?? GENERATOR_CONFIG.DEFAULT_TIMEOUT_MS;
+  const signal = options?.signal;
   const totalStartTime = Date.now();
 
-  // Track phase durations for metadata
-  const phaseDurations = {
-    scout: 0,
-    editor: 0,
-    specialist: 0,
-    validation: 0,
-  };
+  // Phase durations will be collected as immutable values
+  let scoutDuration = 0;
+  let editorDuration = 0;
+  let specialistDuration = 0;
+  let validationDuration = 0;
 
   log.info(`=== Starting Multi-Agent Article Generation for "${context.gameName}" ===`);
+  if (timeoutMs > 0) {
+    log.info(`Timeout configured: ${timeoutMs}ms`);
+  }
 
   // ===== PHASE 1: SCOUT =====
   const scoutStartTime = Date.now();
@@ -185,26 +343,38 @@ export async function generateGameArticleDraft(
 
   let scoutOutput;
   try {
-    scoutOutput = await withRetry(
-      () =>
-        runScout(context, {
-          search,
-          generateText: genText,
-          model: openrouter(scoutModel),
-          logger: createPrefixedLogger('[Scout]'),
-        }),
-      { context: `Scout phase (model: ${scoutModel})` }
+    scoutOutput = await withTimeoutAndCancellation(
+      withRetry(
+        () =>
+          runScout(context, {
+            search,
+            generateText: genText,
+            model: openrouter(scoutModel),
+            logger: createPrefixedLogger('[Scout]'),
+          }),
+        { context: `Scout phase (model: ${scoutModel})` }
+      ),
+      signal,
+      totalStartTime,
+      timeoutMs,
+      context.gameName,
+      'Scout'
     );
   } catch (error) {
-    throw createErrorWithCause(
+    // Re-throw timeout/cancellation errors directly
+    if (error instanceof ArticleGenerationError && (error.code === 'TIMEOUT' || error.code === 'CANCELLED')) {
+      throw error;
+    }
+    throw new ArticleGenerationError(
+      'SCOUT_FAILED',
       `Article generation failed during Scout phase for "${context.gameName}" (model: ${scoutModel}): ${error instanceof Error ? error.message : String(error)}`,
       error instanceof Error ? error : undefined
     );
   }
 
-  phaseDurations.scout = Date.now() - scoutStartTime;
+  scoutDuration = Date.now() - scoutStartTime;
   log.info(
-    `Scout complete in ${phaseDurations.scout}ms: ` +
+    `Scout complete in ${scoutDuration}ms: ` +
       `${scoutOutput.researchPool.allUrls.size} sources, ` +
       `${scoutOutput.researchPool.queryCache.size} unique queries`
   );
@@ -217,25 +387,37 @@ export async function generateGameArticleDraft(
 
   let plan;
   try {
-    plan = await withRetry(
-      () =>
-        runEditor(context, scoutOutput, {
-          generateObject: genObject,
-          model: openrouter(editorModel),
-          logger: createPrefixedLogger('[Editor]'),
-        }),
-      { context: `Editor phase (model: ${editorModel})` }
+    plan = await withTimeoutAndCancellation(
+      withRetry(
+        () =>
+          runEditor(context, scoutOutput, {
+            generateObject: genObject,
+            model: openrouter(editorModel),
+            logger: createPrefixedLogger('[Editor]'),
+          }),
+        { context: `Editor phase (model: ${editorModel})` }
+      ),
+      signal,
+      totalStartTime,
+      timeoutMs,
+      context.gameName,
+      'Editor'
     );
   } catch (error) {
-    throw createErrorWithCause(
+    // Re-throw timeout/cancellation errors directly
+    if (error instanceof ArticleGenerationError && (error.code === 'TIMEOUT' || error.code === 'CANCELLED')) {
+      throw error;
+    }
+    throw new ArticleGenerationError(
+      'EDITOR_FAILED',
       `Article generation failed during Editor phase for "${context.gameName}" (model: ${editorModel}): ${error instanceof Error ? error.message : String(error)}`,
       error instanceof Error ? error : undefined
     );
   }
 
-  phaseDurations.editor = Date.now() - editorStartTime;
+  editorDuration = Date.now() - editorStartTime;
   log.info(
-    `Editor complete in ${phaseDurations.editor}ms: ` +
+    `Editor complete in ${editorDuration}ms: ` +
       `${plan.categorySlug} article with ${plan.sections.length} sections`
   );
   onProgress?.('editor', 100, `Planned ${plan.sections.length} sections`);
@@ -251,30 +433,42 @@ export async function generateGameArticleDraft(
   try {
     // Note: We don't wrap the entire Specialist in retry because it's a long operation.
     // Instead, retry logic is applied to individual search/generateText calls inside the agent.
-    const specialistResult = await runSpecialist(context, scoutOutput, plan, {
-      search,
-      generateText: genText,
-      model: openrouter(specialistModel),
-      logger: createPrefixedLogger('[Specialist]'),
-      onSectionProgress: (current, total, headline) => {
-        // Report granular progress during section writing (10-90% of specialist phase)
-        const sectionProgress = Math.round(10 + (current / total) * 80);
-        onProgress?.('specialist', sectionProgress, `Writing section ${current}/${total}: ${headline}`);
-      },
-    });
+    const specialistResult = await withTimeoutAndCancellation(
+      runSpecialist(context, scoutOutput, plan, {
+        search,
+        generateText: genText,
+        model: openrouter(specialistModel),
+        logger: createPrefixedLogger('[Specialist]'),
+        onSectionProgress: (current, total, headline) => {
+          // Report granular progress during section writing (10-90% of specialist phase)
+          const sectionProgress = Math.round(10 + (current / total) * 80);
+          onProgress?.('specialist', sectionProgress, `Writing section ${current}/${total}: ${headline}`);
+        },
+      }),
+      signal,
+      totalStartTime,
+      timeoutMs,
+      context.gameName,
+      'Specialist'
+    );
     markdown = specialistResult.markdown;
     sources = specialistResult.sources;
     finalResearchPool = specialistResult.researchPool;
   } catch (error) {
-    throw createErrorWithCause(
+    // Re-throw timeout/cancellation errors directly
+    if (error instanceof ArticleGenerationError && (error.code === 'TIMEOUT' || error.code === 'CANCELLED')) {
+      throw error;
+    }
+    throw new ArticleGenerationError(
+      'SPECIALIST_FAILED',
       `Article generation failed during Specialist phase for "${context.gameName}" (model: ${specialistModel}): ${error instanceof Error ? error.message : String(error)}`,
       error instanceof Error ? error : undefined
     );
   }
 
-  phaseDurations.specialist = Date.now() - specialistStartTime;
+  specialistDuration = Date.now() - specialistStartTime;
   log.info(
-    `Specialist complete in ${phaseDurations.specialist}ms: ` +
+    `Specialist complete in ${specialistDuration}ms: ` +
       `${countContentH2Sections(markdown)} sections written, ${sources.length} total sources`
   );
   onProgress?.('specialist', 100, `Wrote ${countContentH2Sections(markdown)} sections`);
@@ -298,7 +492,7 @@ export async function generateGameArticleDraft(
   const errors = getErrors(validationIssues);
   const warnings = getWarnings(validationIssues);
 
-  phaseDurations.validation = Date.now() - validationStartTime;
+  validationDuration = Date.now() - validationStartTime;
 
   if (warnings.length > 0) {
     log.warn(`Article validation warnings: ${warnings.map((w) => w.message).join('; ')}`);
@@ -306,7 +500,10 @@ export async function generateGameArticleDraft(
 
   if (errors.length > 0) {
     log.error(`Article validation errors: ${errors.map((e) => e.message).join('; ')}`);
-    throw new Error(`Article validation failed: ${errors.map((e) => e.message).join('; ')}`);
+    throw new ArticleGenerationError(
+      'VALIDATION_FAILED',
+      `Article validation failed: ${errors.map((e) => e.message).join('; ')}`
+    );
   }
 
   const totalDurationMs = Date.now() - totalStartTime;
@@ -317,11 +514,16 @@ export async function generateGameArticleDraft(
   );
   onProgress?.('validation', 100, 'Article validated successfully');
 
-  // Build metadata for debugging and analytics
+  // Build immutable metadata for debugging and analytics
   const metadata: ArticleGenerationMetadata = {
     generatedAt: new Date().toISOString(),
     totalDurationMs,
-    phaseDurations,
+    phaseDurations: {
+      scout: scoutDuration,
+      editor: editorDuration,
+      specialist: specialistDuration,
+      validation: validationDuration,
+    },
     queriesExecuted: finalResearchPool.queryCache.size,
     sourcesCollected: finalResearchPool.allUrls.size,
   };

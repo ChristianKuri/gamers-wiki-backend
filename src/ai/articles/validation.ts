@@ -8,6 +8,7 @@
 import { z } from 'zod';
 
 import { ARTICLE_PLAN_CONSTRAINTS, ArticleCategorySlugSchema, type ArticlePlan } from './article-plan';
+import aiClichesData from './data/ai-cliches.json';
 import { countContentH2Sections, getContentH2Sections, stripSourcesSection } from './markdown-utils';
 import type { ValidationIssue, ValidationSeverity } from './types';
 
@@ -16,29 +17,19 @@ import type { ValidationIssue, ValidationSeverity } from './types';
 // ============================================================================
 
 /**
- * AI clichés and overused phrases to detect.
- * Articles are generated in English; translation to other languages is a separate process.
+ * Type for AI cliché entries.
  */
-export const AI_CLICHES: readonly {
+export interface AICliche {
   readonly phrase: string;
   readonly context: string;
-}[] = [
-  { phrase: 'in conclusion', context: 'conclusion cliché' },
-  { phrase: "let's dive into", context: 'conversational filler' },
-  { phrase: 'without further ado', context: 'unnecessary preamble' },
-  { phrase: "it's worth noting", context: 'hedging phrase' },
-  { phrase: 'game-changing', context: 'marketing hyperbole' },
-  { phrase: 'truly revolutionary', context: 'marketing hyperbole' },
-  { phrase: 'seamlessly', context: 'overused modifier' },
-  { phrase: 'unparalleled', context: 'marketing hyperbole' },
-  { phrase: 'delve into', context: 'academic formality' },
-  { phrase: 'utilize', context: 'unnecessarily formal (use "use")' },
-  { phrase: 'at the end of the day', context: 'filler phrase' },
-  { phrase: 'needless to say', context: 'redundant phrase' },
-  { phrase: 'dive deep', context: 'overused metaphor' },
-  { phrase: 'a must-have', context: 'marketing cliché' },
-  { phrase: 'stands out', context: 'vague praise' },
-];
+}
+
+/**
+ * AI clichés and overused phrases to detect.
+ * Loaded from external JSON file for easy maintenance.
+ * Articles are generated in English; translation to other languages is a separate process.
+ */
+export const AI_CLICHES: readonly AICliche[] = aiClichesData.cliches as AICliche[];
 
 /**
  * Placeholder text that should never appear in published content.
@@ -72,10 +63,23 @@ export const ALLOWED_SENTENCE_START_REPEATS = new Set([
 // ============================================================================
 
 /**
- * Currency symbols to detect in content (policy violation).
- * Supports major world currencies: USD, EUR, GBP, JPY, INR, KRW, RUB, THB/BTC.
+ * Currency patterns to detect in content (policy violation).
+ * Covers multiple formats:
+ * - Symbol prefix: $100, €50.99, £10,000
+ * - Symbol suffix (some locales): 100€, 50¥
+ * - Text-based: 100 USD, 50 dollars, 99.99 euros
+ * - Shorthand: $100k, €2M
  */
-const CURRENCY_PATTERN = /[$€£¥₹₩₽฿]\s*\d+/;
+const CURRENCY_PATTERNS: readonly RegExp[] = [
+  // Symbol prefix with optional thousands separators: $100, €50.99, £10,000.50
+  /[$€£¥₹₩₽฿]\s*[\d,]+(?:\.\d{1,2})?(?:k|m|b)?/i,
+  // Symbol suffix (some European locales): 100€, 50£
+  /\d+(?:[,.]?\d+)*\s*[$€£¥₹₩₽฿]/,
+  // Text-based currency names after number: 100 USD, 50 dollars, 99.99 EUR
+  /\b\d+(?:[,.]?\d+)*\s*(?:USD|EUR|GBP|JPY|INR|KRW|RUB|dollars?|euros?|pounds?|yen)\b/i,
+  // MSRP/price patterns: "MSRP $59.99", "priced at €49"
+  /(?:MSRP|price[ds]?|costs?|starting at|for only)\s*[$€£¥₹₩₽฿]?\s*[\d,]+(?:\.\d{1,2})?/i,
+];
 
 // ============================================================================
 // Zod Schemas
@@ -208,8 +212,15 @@ function validateContentQuality(markdown: string): ValidationIssue[] {
   }
 
   // Pricing information (policy violation)
-  if (CURRENCY_PATTERN.test(contentMarkdown)) {
-    issues.push(issue('warning', 'Article contains pricing information or currency figures (verify policy compliance)'));
+  const matchedCurrencyPattern = CURRENCY_PATTERNS.find((pattern) => pattern.test(contentMarkdown));
+  if (matchedCurrencyPattern) {
+    const match = contentMarkdown.match(matchedCurrencyPattern);
+    issues.push(
+      issue(
+        'warning',
+        `Article contains pricing information or currency figures: "${match?.[0] ?? 'unknown'}" (verify policy compliance)`
+      )
+    );
   }
 
   // Placeholder text

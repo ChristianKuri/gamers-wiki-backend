@@ -14,6 +14,7 @@ import {
   type ArticlePlan,
   type ArticleCategorySlugInput,
 } from '../article-plan';
+import { EDITOR_CONFIG } from '../config';
 import { withRetry } from '../retry';
 import {
   buildCategoryHintsSection,
@@ -24,14 +25,8 @@ import {
 } from '../prompts';
 import type { GameArticleContext, ScoutOutput } from '../types';
 
-// ============================================================================
-// Configuration
-// ============================================================================
-
-export const EDITOR_CONFIG = {
-  TEMPERATURE: 0.4,
-  OVERVIEW_LINES_IN_PROMPT: 10,
-};
+// Re-export config for backwards compatibility
+export { EDITOR_CONFIG } from '../config';
 
 // ============================================================================
 // Types

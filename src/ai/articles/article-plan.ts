@@ -114,7 +114,10 @@ export const ArticlePlanSchema = z.object({
     .string()
     .min(ARTICLE_PLAN_CONSTRAINTS.EXCERPT_MIN_LENGTH)
     .max(ARTICLE_PLAN_CONSTRAINTS.EXCERPT_MAX_LENGTH),
-  tags: z.array(z.string().min(1)).max(ARTICLE_PLAN_CONSTRAINTS.MAX_TAGS).default([]),
+  tags: z
+    .array(z.string().min(1))
+    .min(ARTICLE_PLAN_CONSTRAINTS.MIN_TAGS, `At least ${ARTICLE_PLAN_CONSTRAINTS.MIN_TAGS} tag is required`)
+    .max(ARTICLE_PLAN_CONSTRAINTS.MAX_TAGS, `Maximum ${ARTICLE_PLAN_CONSTRAINTS.MAX_TAGS} tags allowed`),
   sections: z
     .array(ArticleSectionPlanSchema)
     .min(ARTICLE_PLAN_CONSTRAINTS.MIN_SECTIONS)

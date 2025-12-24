@@ -20,21 +20,35 @@ export {
   type ArticleGeneratorOptions,
 } from './generate-game-article';
 
-// Types
-export type {
-  GameArticleContext,
-  GameArticleDraft,
-  ScoutOutput,
-  ResearchPool,
-  CategorizedSearchResult,
-  SearchResultItem,
-  ValidationIssue,
-  CategoryHint,
-  ArticleGenerationMetadata,
-  ArticleProgressCallback,
-  ArticleGenerationPhase,
-  SectionProgressCallback,
+// Types and error classes
+export {
+  ArticleGenerationError,
+  isArticleGenerationError,
+  ARTICLE_GENERATION_PHASES,
+  type ArticleGenerationErrorCode,
+  type GameArticleContext,
+  type GameArticleDraft,
+  type ScoutOutput,
+  type ResearchPool,
+  type CategorizedSearchResult,
+  type SearchResultItem,
+  type ValidationIssue,
+  type CategoryHint,
+  type ArticleGenerationMetadata,
+  type ArticleProgressCallback,
+  type ArticleGenerationPhase,
+  type SectionProgressCallback,
 } from './types';
+
+// Unified configuration
+export {
+  CONFIG,
+  GENERATOR_CONFIG,
+  SCOUT_CONFIG,
+  EDITOR_CONFIG,
+  SPECIALIST_CONFIG,
+  RETRY_CONFIG,
+} from './config';
 
 // Article plan types and utilities
 export {
@@ -83,7 +97,6 @@ export {
   withRetry,
   createRetryWrapper,
   isRetryableError,
-  RETRY_CONFIG,
   type RetryOptions,
 } from './retry';
 
@@ -92,9 +105,6 @@ export {
   runScout,
   runEditor,
   runSpecialist,
-  SCOUT_CONFIG,
-  EDITOR_CONFIG,
-  SPECIALIST_CONFIG,
 } from './agents';
 
 // Prompts (for customization / testing)
