@@ -125,9 +125,9 @@ export async function runEditor(
     safety: rawPlan.safety ?? DEFAULT_ARTICLE_SAFETY,
   };
 
-  // Track token usage
+  // Track token usage (AI SDK v4 uses inputTokens/outputTokens)
   const tokenUsage: TokenUsage = usage
-    ? { input: usage.promptTokens ?? 0, output: usage.completionTokens ?? 0 }
+    ? { input: usage.inputTokens ?? 0, output: usage.outputTokens ?? 0 }
     : createEmptyTokenUsage();
 
   log.debug(

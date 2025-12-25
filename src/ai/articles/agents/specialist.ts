@@ -412,8 +412,9 @@ async function writeSection(
     { context: `Specialist section "${section.headline}"`, signal: deps.signal }
   );
 
+  // AI SDK v4 uses inputTokens/outputTokens instead of promptTokens/completionTokens
   const tokenUsage: TokenUsage = usage
-    ? { input: usage.promptTokens ?? 0, output: usage.completionTokens ?? 0 }
+    ? { input: usage.inputTokens ?? 0, output: usage.outputTokens ?? 0 }
     : createEmptyTokenUsage();
 
   return { text: text.trim(), tokenUsage };

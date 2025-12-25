@@ -2,6 +2,9 @@ import { z } from 'zod';
 
 import { ARTICLE_PLAN_CONSTRAINTS } from './config';
 
+// Re-export for consumers that import from article-plan
+export { ARTICLE_PLAN_CONSTRAINTS } from './config';
+
 // ============================================================================
 // Category Slug Schema
 // ============================================================================

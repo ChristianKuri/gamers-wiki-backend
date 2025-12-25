@@ -529,12 +529,13 @@ export async function runScout(
   const recentBriefing = recentResult.text.trim();
 
   // ===== AGGREGATE TOKEN USAGE =====
+  // AI SDK v4 uses inputTokens/outputTokens instead of promptTokens/completionTokens
   let tokenUsage = createEmptyTokenUsage();
   for (const result of [overviewResult, categoryResult, recentResult]) {
     if (result.usage) {
       tokenUsage = addTokenUsage(tokenUsage, {
-        input: result.usage.promptTokens ?? 0,
-        output: result.usage.completionTokens ?? 0,
+        input: result.usage.inputTokens ?? 0,
+        output: result.usage.outputTokens ?? 0,
       });
     }
   }

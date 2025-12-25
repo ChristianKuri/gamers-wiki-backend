@@ -225,11 +225,20 @@ export default ({ strapi }: { strapi: Core.Strapi }) => ({
     ctx.body = {
       success: true,
       post: created,
-      title: draft.title,
-      categorySlug: draft.categorySlug,
-      author: { documentId: author.documentId, name: author.name },
+      // Full draft data for comprehensive validation and debugging
+      draft: {
+        title: draft.title,
+        categorySlug: draft.categorySlug,
+        excerpt: draft.excerpt,
+        tags: draft.tags,
+        markdown: draft.markdown,
+        sources: draft.sources,
+        plan: draft.plan,
+        metadata: draft.metadata,
+      },
       models: draft.models,
-      sources: draft.sources,
+      game: { documentId: game.documentId, name: game.name, slug: game.slug },
+      author: { documentId: author.documentId, name: author.name },
       published: Boolean(body.publish),
     };
   },
