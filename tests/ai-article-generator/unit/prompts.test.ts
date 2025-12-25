@@ -160,7 +160,9 @@ describe('Scout Prompts', () => {
 
       expect(queries.recent).toContain('Elden Ring');
       expect(queries.recent).toContain(String(currentYear));
-      expect(queries.recent).toContain('news');
+      // For guide-type queries, the recent query focuses on content/features instead of news
+      // to avoid irrelevant patch notes
+      expect(queries.recent).toMatch(/content|features|news|updates/);
     });
 
     it('handles missing genres gracefully', () => {

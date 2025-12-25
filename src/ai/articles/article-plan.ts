@@ -116,6 +116,16 @@ export const ArticlePlanSchema = z.object({
       noScoresUnlessReview: z.boolean(),
     })
     .optional(),
+  /**
+   * Key elements that MUST be covered in the article.
+   * Derived from Scout research, used by Specialist to ensure comprehensive coverage.
+   * Examples: core abilities, key locations, essential items, critical quests.
+   */
+  requiredElements: z
+    .array(z.string().min(1))
+    .min(ARTICLE_PLAN_CONSTRAINTS.MIN_REQUIRED_ELEMENTS)
+    .max(ARTICLE_PLAN_CONSTRAINTS.MAX_REQUIRED_ELEMENTS)
+    .optional(),
 });
 
 /**
@@ -140,4 +150,17 @@ export interface ArticlePlan {
     /** If true, avoid numerical scores/ratings unless this is a review article */
     readonly noScoresUnlessReview: boolean;
   };
+  /**
+   * Key elements that MUST be covered in the article.
+   * Derived from Scout research by the Editor agent.
+   * Used by Specialist to ensure comprehensive coverage and by validation
+   * to warn about missing elements.
+   *
+   * Examples:
+   * - For guides: core abilities, key locations, essential items, critical quests
+   * - For reviews: main strengths, main weaknesses, key mechanics
+   * - For news: who, what, when, where, why
+   * - For lists: the items being ranked/listed
+   */
+  readonly requiredElements?: readonly string[];
 }

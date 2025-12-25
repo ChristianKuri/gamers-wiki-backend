@@ -83,7 +83,7 @@ export const ARTICLE_PLAN_CONSTRAINTS = {
   EXCERPT_MAX_LENGTH: 160,
 
   // Section constraints
-  MIN_SECTIONS: 3,
+  MIN_SECTIONS: 4,
   MAX_SECTIONS: 12,
   MIN_SECTION_LENGTH: 100,
 
@@ -98,6 +98,42 @@ export const ARTICLE_PLAN_CONSTRAINTS = {
 
   // Markdown constraints
   MIN_MARKDOWN_LENGTH: 500,
+
+  // Required elements constraints
+  MIN_REQUIRED_ELEMENTS: 3,
+  MAX_REQUIRED_ELEMENTS: 10,
+} as const;
+
+// ============================================================================
+// Word Count Configuration
+// ============================================================================
+
+/**
+ * Default target word counts by article category.
+ * These can be overridden by passing targetWordCount in GameArticleContext.
+ *
+ * Note: Uses string keys to avoid circular dependency with article-plan.ts.
+ * Keys must match ArticleCategorySlug values.
+ */
+export const WORD_COUNT_DEFAULTS: Record<'news' | 'reviews' | 'guides' | 'lists', number> = {
+  guides: 2500,
+  reviews: 2000,
+  news: 1200,
+  lists: 1800,
+} as const;
+
+/**
+ * Constraints for word count calculations.
+ */
+export const WORD_COUNT_CONSTRAINTS = {
+  /** Minimum allowed word count */
+  MIN_WORD_COUNT: 800,
+  /** Maximum allowed word count */
+  MAX_WORD_COUNT: 5000,
+  /** Average words per section (used to calculate section count) */
+  WORDS_PER_SECTION: 400,
+  /** Average words per paragraph (used to calculate paragraph count) */
+  WORDS_PER_PARAGRAPH: 120,
 } as const;
 
 // ============================================================================
@@ -427,6 +463,34 @@ function validateConfiguration(): void {
     GENERATOR_CONFIG.SPECIALIST_PROGRESS_END,
     'GENERATOR_CONFIG.SPECIALIST_PROGRESS_START',
     'GENERATOR_CONFIG.SPECIALIST_PROGRESS_END'
+  );
+
+  // Word Count Constraints
+  validateMinMax(
+    WORD_COUNT_CONSTRAINTS.MIN_WORD_COUNT,
+    WORD_COUNT_CONSTRAINTS.MAX_WORD_COUNT,
+    'WORD_COUNT_CONSTRAINTS.MIN_WORD_COUNT',
+    'WORD_COUNT_CONSTRAINTS.MAX_WORD_COUNT'
+  );
+  validatePositive(WORD_COUNT_CONSTRAINTS.WORDS_PER_SECTION, 'WORD_COUNT_CONSTRAINTS.WORDS_PER_SECTION');
+  validatePositive(WORD_COUNT_CONSTRAINTS.WORDS_PER_PARAGRAPH, 'WORD_COUNT_CONSTRAINTS.WORDS_PER_PARAGRAPH');
+
+  // Word Count Defaults - ensure all are within constraints
+  for (const [category, wordCount] of Object.entries(WORD_COUNT_DEFAULTS)) {
+    if (wordCount < WORD_COUNT_CONSTRAINTS.MIN_WORD_COUNT || wordCount > WORD_COUNT_CONSTRAINTS.MAX_WORD_COUNT) {
+      throw new ConfigValidationError(
+        `WORD_COUNT_DEFAULTS.${category} (${wordCount}) must be between ` +
+        `${WORD_COUNT_CONSTRAINTS.MIN_WORD_COUNT} and ${WORD_COUNT_CONSTRAINTS.MAX_WORD_COUNT}`
+      );
+    }
+  }
+
+  // Required elements constraints
+  validateMinMax(
+    ARTICLE_PLAN_CONSTRAINTS.MIN_REQUIRED_ELEMENTS,
+    ARTICLE_PLAN_CONSTRAINTS.MAX_REQUIRED_ELEMENTS,
+    'ARTICLE_PLAN_CONSTRAINTS.MIN_REQUIRED_ELEMENTS',
+    'ARTICLE_PLAN_CONSTRAINTS.MAX_REQUIRED_ELEMENTS'
   );
 }
 

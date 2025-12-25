@@ -9,6 +9,7 @@ import type { CategorizedSearchResult, GameArticleContext } from '../types';
 
 /**
  * Gets category-specific tone guidance for the Specialist.
+ * Includes both tone and format rules for each category.
  */
 export function getCategoryToneGuide(categorySlug: ArticleCategorySlug): string {
   const guides: Record<ArticleCategorySlug, string> = {
@@ -17,28 +18,53 @@ export function getCategoryToneGuide(categorySlug: ArticleCategorySlug): string 
 - Attribute all claims to sources ("according to developer", "announced on Twitter")
 - State facts clearly without editorializing or personal opinion
 - Use active voice and concise sentences
-- Lead with what happened, when, and why it matters`,
+- Lead with what happened, when, and why it matters
+
+FORMAT RULES:
+- Short, punchy paragraphs (2-4 sentences each)
+- Bold the key news element in the opening paragraph
+- Include quotes from official sources when available
+- End with context about what this means for players`,
 
     reviews: `Critical but balanced editorial voice.
 - Support all opinions with specific examples from the game
 - Provide balanced analysis: acknowledge both strengths and weaknesses
 - Use concrete details, not vague praise ("tight controls" vs "feels good")
 - Compare to similar games when relevant for context
-- Make clear recommendations based on player preferences`,
+- Make clear recommendations based on player preferences
+
+FORMAT RULES:
+- Longer, more analytical paragraphs (4-6 sentences)
+- Bold key praise or criticism points on first mention
+- Use specific examples: "the boss in Chapter 3" not "the bosses"
+- Structure as: observation → evidence → implication`,
 
     guides: `Instructional and helpful tone using second person ("you").
 - Be specific with numbers, stats, and exact steps
 - Use sequential language: "First," "Next," "Finally"
 - Include precise details: "equip the Fire Sword, not the Ice Blade"
 - Anticipate common mistakes and warn readers
-- Organize information hierarchically: overview → details → advanced tips`,
+- Organize information hierarchically: overview → details → advanced tips
+
+FORMAT RULES:
+- Use **bold** for key terms, item names, and ability names on first mention
+- Consider numbered steps for sequential processes
+- Use subheadings (###) within sections when covering multiple distinct topics
+- End each section with an actionable takeaway
+- Warn about common pitfalls: "Be careful not to..."`,
 
     lists: `Engaging and comparative tone with consistent criteria.
 - Justify each ranking or selection with clear reasoning
 - Use consistent evaluation criteria across all items
 - Provide context: "Best for beginners" vs "Best for endgame"
 - Balance objective facts with subjective assessment
-- End each entry with a clear takeaway or recommendation`,
+- End each entry with a clear takeaway or recommendation
+
+FORMAT RULES:
+- Each list item should follow the same structure
+- Bold the item name/title at the start of each entry
+- Include a brief "why it's here" justification
+- Consider using ### subheadings for each list item`,
   };
 
   return guides[categorySlug];
@@ -57,6 +83,11 @@ export interface SpecialistSectionContext {
   readonly categoryInsights: string;
   readonly isThinResearch: boolean;
   readonly researchContentLength: number;
+  /**
+   * Key elements that MUST be covered in the article.
+   * Only passed to the last section for final verification checklist.
+   */
+  readonly requiredElements?: readonly string[];
 }
 
 /**
@@ -76,6 +107,16 @@ Core writing principles:
 - FLOW & CONTINUITY: Each section should connect naturally to the article's narrative arc
 - VOICE CONSISTENCY: Maintain appropriate tone throughout (see category guide below)
 - INTELLECTUAL HONESTY: Acknowledge uncertainty rather than fabricate details
+
+PRECISION RULES (CRITICAL):
+When stating numbers, durations, or statistics:
+- NEVER invent exact numbers without explicit source verification
+- BAD: "grants twelve minutes and thirty seconds of cold resistance"
+- GOOD: "grants approximately 10-13 minutes of cold resistance"
+- GOOD: "grants several minutes of cold resistance"
+- Use hedging language: "approximately", "around", "typically", "roughly", "about"
+- Exception: Official stats directly from the game's UI or documentation are fine
+- When in doubt, round or use ranges instead of precise numbers
 
 ${localeInstruction}
 
@@ -189,7 +230,17 @@ Content restrictions (STRICT):
 ✗ NO marketing superlatives ("revolutionary", "game-changing") unless directly quoted from sources
 ✗ NO fabricated statistics, dates, or technical specifications
 ✗ NO personal opinions framed as facts ("players will love..." → "early impressions suggest...")
+✗ NO precise numbers (durations, percentages, counts) unless explicitly verified in sources
+${ctx.requiredElements && ctx.requiredElements.length > 0 ? `
+=== REQUIRED ELEMENTS CHECKLIST ===
+The following elements MUST be addressed somewhere in this article.
+If this is the final section and any elements haven't been covered yet, ensure they are mentioned here.
+If you cannot cover an element due to insufficient research, acknowledge it:
+"While details on [element] remain limited, players should explore this on their own."
 
+Required elements to verify coverage:
+${ctx.requiredElements.map((el, i) => `${i + 1}. ${el}`).join('\n')}
+` : ''}
 === OUTPUT FORMAT ===
 Write ONLY the markdown prose for this section.
 - Do NOT include the section heading (system adds it)

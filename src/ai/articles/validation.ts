@@ -189,6 +189,60 @@ function validateStructureWarnings(draft: {
 }
 
 /**
+ * Validates that required elements from the plan are covered in the article.
+ * Uses fuzzy matching to detect coverage - an element is considered covered
+ * if its key terms appear in the markdown content.
+ *
+ * @param plan - The article plan with requiredElements
+ * @param markdown - The generated markdown content
+ * @returns Array of validation issues (warnings for missing elements)
+ */
+function validateRequiredElements(
+  plan: ArticlePlan,
+  markdown: string
+): ValidationIssue[] {
+  const issues: ValidationIssue[] = [];
+
+  if (!plan.requiredElements || plan.requiredElements.length === 0) {
+    return issues;
+  }
+
+  const lowercaseMarkdown = markdown.toLowerCase();
+  const contentMarkdown = stripSourcesSection(lowercaseMarkdown);
+
+  const missingElements: string[] = [];
+
+  for (const element of plan.requiredElements) {
+    // Extract key terms from the element (split on spaces, filter short words)
+    const keyTerms = element
+      .toLowerCase()
+      .split(/\s+/)
+      .filter((term) => term.length > 3); // Skip short words like "the", "and", etc.
+
+    // An element is considered covered if at least one significant term appears
+    // or if the full element phrase appears
+    const fullMatch = contentMarkdown.includes(element.toLowerCase());
+    const termMatch = keyTerms.length > 0 && keyTerms.some((term) => contentMarkdown.includes(term));
+
+    if (!fullMatch && !termMatch) {
+      missingElements.push(element);
+    }
+  }
+
+  if (missingElements.length > 0) {
+    issues.push(
+      issue(
+        'warning',
+        `Article may be missing required elements: ${missingElements.join(', ')}. ` +
+          `These were identified by the Editor as important topics to cover.`
+      )
+    );
+  }
+
+  return issues;
+}
+
+/**
  * Validates content quality and checks for common issues.
  * Articles are always generated in English; translation is a separate process.
  */
@@ -292,6 +346,9 @@ export function validateArticleDraft(draft: {
 
   // Content quality validation
   issues.push(...validateContentQuality(draft.markdown));
+
+  // Required elements coverage validation
+  issues.push(...validateRequiredElements(draft.plan, draft.markdown));
 
   return issues;
 }

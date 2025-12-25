@@ -9,7 +9,7 @@ import type { LanguageModel } from 'ai';
 
 import { createPrefixedLogger, type Logger } from '../../../utils/logger';
 import type { ArticlePlan, ArticleSectionPlan } from '../article-plan';
-import { SPECIALIST_CONFIG } from '../config';
+import { SPECIALIST_CONFIG, WORD_COUNT_CONSTRAINTS } from '../config';
 import { sleep, withRetry } from '../retry';
 import {
   buildResearchContext,
@@ -64,6 +64,11 @@ export interface SpecialistDeps {
   readonly signal?: AbortSignal;
   /** Optional temperature override (default: SPECIALIST_CONFIG.TEMPERATURE) */
   readonly temperature?: number;
+  /**
+   * Target word count for the article.
+   * Used to dynamically adjust paragraph counts per section.
+   */
+  readonly targetWordCount?: number;
 }
 
 export interface SpecialistOutput {
@@ -327,11 +332,53 @@ function ensureUniqueStrings(values: readonly string[], max: number): string[] {
 }
 
 /**
+ * Calculates dynamic paragraph counts based on target word count and section count.
+ * Uses WORD_COUNT_CONSTRAINTS.WORDS_PER_PARAGRAPH as the baseline.
+ *
+ * @param targetWordCount - Target word count for the entire article
+ * @param sectionCount - Number of sections in the article
+ * @returns Object with minParagraphs and maxParagraphs
+ */
+function calculateDynamicParagraphCounts(
+  targetWordCount: number | undefined,
+  sectionCount: number
+): { minParagraphs: number; maxParagraphs: number } {
+  if (!targetWordCount) {
+    // Use default config values
+    return {
+      minParagraphs: SPECIALIST_CONFIG.MIN_PARAGRAPHS,
+      maxParagraphs: SPECIALIST_CONFIG.MAX_PARAGRAPHS,
+    };
+  }
+
+  const targetWordsPerSection = targetWordCount / sectionCount;
+  const wordsPerParagraph = WORD_COUNT_CONSTRAINTS.WORDS_PER_PARAGRAPH;
+
+  // Calculate paragraph range based on target words per section
+  // Allow some flexibility with min/max
+  const idealParagraphs = Math.round(targetWordsPerSection / wordsPerParagraph);
+  const minParagraphs = Math.max(2, idealParagraphs - 1);
+  const maxParagraphs = Math.min(8, idealParagraphs + 2);
+
+  return { minParagraphs, maxParagraphs };
+}
+
+/**
  * Result from writing a single section.
  */
 interface WriteSectionResult {
   readonly text: string;
   readonly tokenUsage: TokenUsage;
+}
+
+/**
+ * Options for writing a single section.
+ */
+interface WriteSectionOptions {
+  readonly minParagraphs: number;
+  readonly maxParagraphs: number;
+  /** Required elements to include in the checklist (only for last section) */
+  readonly requiredElements?: readonly string[];
 }
 
 /**
@@ -346,7 +393,8 @@ async function writeSection(
   sectionIndex: number,
   enrichedPool: ResearchPool,
   deps: Pick<SpecialistDeps, 'generateText' | 'model' | 'logger' | 'signal' | 'temperature'>,
-  previousContext: string
+  previousContext: string,
+  options: WriteSectionOptions
 ): Promise<WriteSectionResult> {
   const log = deps.logger ?? createPrefixedLogger('[Specialist]');
   const temperature = deps.temperature ?? SPECIALIST_CONFIG.TEMPERATURE;
@@ -376,6 +424,9 @@ async function writeSection(
     SPECIALIST_CONFIG.RESEARCH_CONTEXT_PER_RESULT
   );
 
+  // Only pass required elements to the last section for final verification
+  const requiredElementsForSection = isLast ? options.requiredElements : undefined;
+
   const sectionContext: SpecialistSectionContext = {
     sectionIndex,
     totalSections: plan.sections.length,
@@ -389,6 +440,7 @@ async function writeSection(
     categoryInsights: scoutOutput.briefing.categoryInsights,
     isThinResearch,
     researchContentLength,
+    requiredElements: requiredElementsForSection,
   };
 
   log.debug(`Writing section ${sectionIndex + 1}/${plan.sections.length}: ${section.headline}`);
@@ -405,8 +457,8 @@ async function writeSection(
           plan,
           context.gameName,
           SPECIALIST_CONFIG.MAX_SCOUT_OVERVIEW_LENGTH,
-          SPECIALIST_CONFIG.MIN_PARAGRAPHS,
-          SPECIALIST_CONFIG.MAX_PARAGRAPHS
+          options.minParagraphs,
+          options.maxParagraphs
         ),
       }),
     { context: `Specialist section "${section.headline}"`, signal: deps.signal }
@@ -464,6 +516,27 @@ export async function runSpecialist(
     log.info(`Batch research complete: ${successCount} successful, ${failureCount} failed`);
   }
 
+  // ===== CALCULATE DYNAMIC PARAGRAPH COUNTS =====
+  const targetWordCount = deps.targetWordCount ?? context.targetWordCount;
+  const { minParagraphs, maxParagraphs } = calculateDynamicParagraphCounts(
+    targetWordCount,
+    plan.sections.length
+  );
+
+  if (targetWordCount) {
+    log.debug(
+      `Dynamic paragraph range: ${minParagraphs}-${maxParagraphs} ` +
+        `(targeting ~${targetWordCount} words across ${plan.sections.length} sections)`
+    );
+  }
+
+  // Build write options with dynamic paragraph counts and required elements
+  const writeOptions: WriteSectionOptions = {
+    minParagraphs,
+    maxParagraphs,
+    requiredElements: plan.requiredElements,
+  };
+
   // ===== SECTION WRITING PHASE =====
   let sectionTexts: string[];
   let totalTokenUsage = createEmptyTokenUsage();
@@ -493,7 +566,8 @@ export async function runSpecialist(
         i,
         enrichedPool,
         writeDeps,
-        '' // No previous context in parallel mode
+        '', // No previous context in parallel mode
+        writeOptions
       ).then((result) => {
         // Report progress as each section completes
         deps.onSectionProgress?.(i + 1, plan.sections.length, section.headline);
@@ -528,7 +602,8 @@ export async function runSpecialist(
         i,
         enrichedPool,
         writeDeps,
-        previousContext
+        previousContext,
+        writeOptions
       );
 
       sectionTexts.push(result.text);

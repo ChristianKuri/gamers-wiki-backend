@@ -369,6 +369,11 @@ describe('validateArticlePlan', () => {
         goal: 'Show safe early areas to explore',
         researchQueries: ['Elden Ring Limgrave guide'],
       },
+      {
+        headline: 'Combat Basics',
+        goal: 'Teach fundamental combat mechanics',
+        researchQueries: ['Elden Ring combat tips'],
+      },
     ],
     safety: { noScoresUnlessReview: true },
   });

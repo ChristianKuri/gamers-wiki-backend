@@ -19,6 +19,10 @@ export interface EditorPromptContext {
   readonly scoutBriefing: ScoutOutput['briefing'];
   readonly existingResearchSummary: string;
   readonly categoryHintsSection: string;
+  /** Target word count for the article (influences section count) */
+  readonly targetWordCount?: number;
+  /** Recommended number of sections based on word count */
+  readonly targetSectionCount?: number;
 }
 
 /**
@@ -155,11 +159,28 @@ tags: 3-8 short topic tags (no hashtags, no @ symbols)
   - Examples: "action RPG", "PS5 exclusive", "multiplayer guide"
   - Use reader search terms, not marketing jargon
 
-sections: 4-8 sections (3 minimum, 12 maximum allowed by schema)
+sections: ${ctx.targetSectionCount ? `Target ${ctx.targetSectionCount} sections` : '4-8 sections'} (4 minimum, 12 maximum allowed by schema)
   - Each section has: headline, goal, researchQueries[]
   - headline: Section title (2-5 words)
   - goal: Internal note on section purpose (1 sentence)
   - researchQueries: 1-6 specific questions to research
+${ctx.targetWordCount ? `\nTarget word count: ~${ctx.targetWordCount} words total. Plan sections accordingly.` : ''}
+
+=== REQUIRED ELEMENTS ===
+Based on the Scout research, identify 3-8 KEY ELEMENTS that MUST be covered in the article.
+These are critical facts, mechanics, locations, or topics that readers will expect.
+
+Category-specific guidance:
+• guides: Core abilities, key locations, essential items, critical quests, important NPCs
+• reviews: Main strengths, main weaknesses, key mechanics, target audience, comparison points
+• news: Who, what, when, where, why - the key facts of the announcement/event
+• lists: The items being ranked/listed (minimum 5-7 items)
+
+Output these in the "requiredElements" field. The Specialist will verify coverage.
+Missing a required element will trigger a validation warning.
+
+Example for a Zelda guide:
+"requiredElements": ["Ultrahand ability", "Fuse ability", "Ascend ability", "Recall ability", "Great Sky Island", "Temple of Time", "Paraglider"]
 
 === CONTENT POLICY ===
 The Specialist agent will enforce these rules, but plan accordingly:
@@ -181,7 +202,8 @@ Return ONLY valid JSON matching ArticlePlanSchema. Structure:
       "goal": "...",
       "researchQueries": ["...", "..."]
     }
-  ]
+  ],
+  "requiredElements": ["element1", "element2", "..."]
 }
 
 Design your article plan now:`;

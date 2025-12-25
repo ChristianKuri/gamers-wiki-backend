@@ -60,8 +60,8 @@ import {
 } from '../../utils/logger';
 import { runScout, runEditor, runSpecialist, type EditorOutput } from './agents';
 import type { SpecialistOutput } from './agents/specialist';
-import type { ArticlePlan } from './article-plan';
-import { GENERATOR_CONFIG } from './config';
+import type { ArticlePlan, ArticleCategorySlug } from './article-plan';
+import { GENERATOR_CONFIG, WORD_COUNT_DEFAULTS, WORD_COUNT_CONSTRAINTS } from './config';
 import { countContentH2Sections } from './markdown-utils';
 import { withRetry } from './retry';
 import {
@@ -461,6 +461,11 @@ interface PhaseContext {
   readonly progressTracker: ProgressTracker;
   readonly phaseTimer: PhaseTimer;
   readonly temperatureOverrides?: TemperatureOverrides;
+  /**
+   * Target word count for the article.
+   * If provided by context, used directly; otherwise category defaults apply after Editor phase.
+   */
+  readonly targetWordCount?: number;
 }
 
 /**
@@ -521,7 +526,7 @@ async function executeEditorPhase(
   scoutOutput: ScoutOutput,
   editorModel: string
 ): Promise<EditorPhaseResult> {
-  const { context, deps, basePhaseOptions, log, progressTracker, phaseTimer, temperatureOverrides } = phaseContext;
+  const { context, deps, basePhaseOptions, log, progressTracker, phaseTimer, temperatureOverrides, targetWordCount } = phaseContext;
 
   log.info(`Phase 2: Editor - Planning article (model: ${editorModel})...`);
   progressTracker.startPhase('editor');
@@ -537,6 +542,7 @@ async function executeEditorPhase(
         logger: createPrefixedLogger('[Editor]'),
         signal: basePhaseOptions.signal,
         temperature: temperatureOverrides?.editor,
+        targetWordCount,
       }),
     { ...basePhaseOptions, modelName: editorModel }
   );
@@ -570,6 +576,28 @@ async function executeEditorPhase(
 }
 
 /**
+ * Calculates the effective target word count for an article.
+ * Uses the context-provided value if available, otherwise falls back to category defaults.
+ *
+ * @param contextWordCount - Word count from context (may be undefined)
+ * @param categorySlug - The article category (determines default)
+ * @returns Effective target word count, validated against constraints
+ */
+function getEffectiveWordCount(
+  contextWordCount: number | undefined,
+  categorySlug: ArticleCategorySlug
+): number {
+  // Use context-provided value if available, otherwise use category default
+  const targetWordCount = contextWordCount ?? WORD_COUNT_DEFAULTS[categorySlug];
+
+  // Clamp to valid range
+  return Math.max(
+    WORD_COUNT_CONSTRAINTS.MIN_WORD_COUNT,
+    Math.min(WORD_COUNT_CONSTRAINTS.MAX_WORD_COUNT, targetWordCount)
+  );
+}
+
+/**
  * Executes the Specialist phase: writes article sections based on plan.
  */
 async function executeSpecialistPhase(
@@ -577,7 +605,8 @@ async function executeSpecialistPhase(
   scoutOutput: ScoutOutput,
   plan: ArticlePlan,
   specialistModel: string,
-  parallelSections: boolean
+  parallelSections: boolean,
+  effectiveWordCount: number
 ): Promise<PhaseResult<SpecialistOutput>> {
   const { context, deps, basePhaseOptions, log, progressTracker, phaseTimer, temperatureOverrides } = phaseContext;
 
@@ -585,6 +614,7 @@ async function executeSpecialistPhase(
   log.info(
     `Phase 3: Specialist - Batch research + section writing in ${modeLabel} mode (model: ${specialistModel})...`
   );
+  log.info(`Target word count: ~${effectiveWordCount} words`);
   progressTracker.startPhase('specialist');
   phaseTimer.start('specialist');
 
@@ -602,6 +632,7 @@ async function executeSpecialistPhase(
         parallelSections,
         signal: basePhaseOptions.signal,
         temperature: temperatureOverrides?.specialist,
+        targetWordCount: effectiveWordCount,
         onSectionProgress: (current, total, headline) => {
           // Delegate to ProgressTracker for consistent progress calculation
           progressTracker.reportSectionProgress(current, total, headline);
@@ -771,6 +802,7 @@ export async function generateGameArticleDraft(
     progressTracker,
     phaseTimer,
     temperatureOverrides,
+    targetWordCount: context.targetWordCount,
   };
 
   // ===== PHASE 1: SCOUT =====
@@ -788,12 +820,17 @@ export async function generateGameArticleDraft(
   // Use option override if provided, otherwise auto-decide based on category
   // (parallel for 'lists' category where sections are independent)
   const useParallelSections = options?.parallelSections ?? (plan.categorySlug === 'lists');
+
+  // Calculate effective word count based on context or category defaults
+  const effectiveWordCount = getEffectiveWordCount(context.targetWordCount, plan.categorySlug);
+
   const specialistResult = await executeSpecialistPhase(
     phaseContext,
     scoutOutput,
     plan,
     specialistModel,
-    useParallelSections
+    useParallelSections,
+    effectiveWordCount
   );
 
   const { markdown, sources, researchPool: finalResearchPool, tokenUsage: specialistTokenUsage } = specialistResult.output;

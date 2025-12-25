@@ -31,6 +31,11 @@ describe('ArticlePlanSchema', () => {
           goal: 'Teach new players the core stats and early targets.',
           researchQueries: ['Elden Ring vigor early game recommendation'],
         },
+        {
+          headline: 'Early Weapons and Gear',
+          goal: 'Recommend accessible early-game equipment.',
+          researchQueries: ['Elden Ring best early game weapons'],
+        },
       ],
       safety: {
         noPrices: true,
@@ -39,7 +44,7 @@ describe('ArticlePlanSchema', () => {
     });
 
     expect(plan.categorySlug).toBe('guide');
-    expect(plan.sections.length).toBeGreaterThanOrEqual(3);
+    expect(plan.sections.length).toBeGreaterThanOrEqual(4);
   });
 
   describe('tag length validation', () => {
@@ -52,6 +57,7 @@ describe('ArticlePlanSchema', () => {
         { headline: 'Section 1', goal: 'Goal', researchQueries: ['query1'] },
         { headline: 'Section 2', goal: 'Goal', researchQueries: ['query2'] },
         { headline: 'Section 3', goal: 'Goal', researchQueries: ['query3'] },
+        { headline: 'Section 4', goal: 'Goal', researchQueries: ['query4'] },
       ],
       safety: { noScoresUnlessReview: true },
     };
@@ -179,6 +185,7 @@ describe('ArticlePlanSchema safety field', () => {
       { headline: 'Section 1', goal: 'Goal', researchQueries: ['query1'] },
       { headline: 'Section 2', goal: 'Goal', researchQueries: ['query2'] },
       { headline: 'Section 3', goal: 'Goal', researchQueries: ['query3'] },
+      { headline: 'Section 4', goal: 'Goal', researchQueries: ['query4'] },
     ],
   };
 

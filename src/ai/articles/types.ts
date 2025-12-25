@@ -175,6 +175,7 @@ export interface ScoutOutput {
  * @property igdbDescription - Description from IGDB
  * @property instruction - User directive for article focus
  * @property categoryHints - Preferred article categories to consider
+ * @property targetWordCount - Target word count for the article (category defaults apply if not specified)
  */
 export interface GameArticleContext {
   readonly gameName: string;
@@ -187,6 +188,12 @@ export interface GameArticleContext {
   readonly igdbDescription?: string | null;
   readonly instruction?: string | null;
   readonly categoryHints?: readonly CategoryHint[];
+  /**
+   * Target word count for the article.
+   * If not specified, category-specific defaults from WORD_COUNT_DEFAULTS apply.
+   * Must be between WORD_COUNT_CONSTRAINTS.MIN_WORD_COUNT and MAX_WORD_COUNT.
+   */
+  readonly targetWordCount?: number;
 }
 
 /**

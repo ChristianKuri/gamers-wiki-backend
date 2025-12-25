@@ -158,7 +158,67 @@ Brief summary (3-5 bullet points, or state if nothing significant):`;
 }
 
 /**
- * Builds search queries for Scout.
+ * Detects the likely article type from the user instruction.
+ * Used to tailor search queries and avoid irrelevant content.
+ */
+export function detectArticleIntent(instruction: string | null | undefined): 'guide' | 'review' | 'news' | 'list' | 'general' {
+  if (!instruction) return 'general';
+
+  const lowerInstruction = instruction.toLowerCase();
+
+  // Guide indicators
+  if (
+    lowerInstruction.includes('guide') ||
+    lowerInstruction.includes('how to') ||
+    lowerInstruction.includes('walkthrough') ||
+    lowerInstruction.includes('tutorial') ||
+    lowerInstruction.includes('tips') ||
+    lowerInstruction.includes('beginner') ||
+    lowerInstruction.includes('strategy') ||
+    lowerInstruction.includes('build')
+  ) {
+    return 'guide';
+  }
+
+  // Review indicators
+  if (
+    lowerInstruction.includes('review') ||
+    lowerInstruction.includes('opinion') ||
+    lowerInstruction.includes('analysis') ||
+    lowerInstruction.includes('worth') ||
+    lowerInstruction.includes('critique')
+  ) {
+    return 'review';
+  }
+
+  // News indicators
+  if (
+    lowerInstruction.includes('news') ||
+    lowerInstruction.includes('announcement') ||
+    lowerInstruction.includes('update') ||
+    lowerInstruction.includes('release') ||
+    lowerInstruction.includes('launch')
+  ) {
+    return 'news';
+  }
+
+  // List indicators
+  if (
+    lowerInstruction.includes('best') ||
+    lowerInstruction.includes('top') ||
+    lowerInstruction.includes('ranking') ||
+    lowerInstruction.includes('list') ||
+    lowerInstruction.includes('compared')
+  ) {
+    return 'list';
+  }
+
+  return 'general';
+}
+
+/**
+ * Builds search queries for Scout with category-aware filtering.
+ * Tailors queries based on detected article intent to avoid irrelevant content.
  */
 export function buildScoutQueries(context: GameArticleContext): {
   overview: string;
@@ -166,25 +226,81 @@ export function buildScoutQueries(context: GameArticleContext): {
   recent: string;
 } {
   const currentYear = new Date().getFullYear();
+  const intent = detectArticleIntent(context.instruction);
 
+  // Base overview query - always needed
   const overview = `"${context.gameName}" game overview gameplay mechanics ${context.genres?.join(' ') || ''}`;
 
   const categoryQueries: string[] = [];
-  if (context.instruction) {
-    categoryQueries.push(`"${context.gameName}" ${context.instruction}`);
-  } else {
-    categoryQueries.push(`"${context.gameName}" review analysis opinion`);
-    categoryQueries.push(`"${context.gameName}" guide tips strategies`);
+
+  // Category-specific search strategies
+  switch (intent) {
+    case 'guide':
+      // For guides: focus on walkthroughs, tutorials, strategies
+      // Avoid: patch notes, news, reviews, announcements
+      categoryQueries.push(`"${context.gameName}" walkthrough tutorial "how to"`);
+      categoryQueries.push(`"${context.gameName}" tips strategies beginners guide`);
+      if (context.instruction) {
+        // Add the specific instruction query, but filter out news-like terms
+        const cleanedInstruction = context.instruction
+          .replace(/patch|update|news|changelog/gi, '')
+          .trim();
+        if (cleanedInstruction) {
+          categoryQueries.push(`"${context.gameName}" ${cleanedInstruction}`);
+        }
+      }
+      break;
+
+    case 'review':
+      // For reviews: focus on critical analysis, opinions, comparisons
+      categoryQueries.push(`"${context.gameName}" review analysis opinion`);
+      categoryQueries.push(`"${context.gameName}" pros cons verdict`);
+      if (context.instruction) {
+        categoryQueries.push(`"${context.gameName}" ${context.instruction}`);
+      }
+      break;
+
+    case 'news':
+      // For news: focus on recent announcements, official sources
+      categoryQueries.push(`"${context.gameName}" announcement official ${currentYear}`);
+      categoryQueries.push(`"${context.gameName}" news release ${currentYear}`);
+      if (context.instruction) {
+        categoryQueries.push(`"${context.gameName}" ${context.instruction}`);
+      }
+      break;
+
+    case 'list':
+      // For lists: focus on rankings, comparisons, collections
+      categoryQueries.push(`"${context.gameName}" best ranking top`);
+      categoryQueries.push(`"${context.gameName}" compared versus alternatives`);
+      if (context.instruction) {
+        categoryQueries.push(`"${context.gameName}" ${context.instruction}`);
+      }
+      break;
+
+    default:
+      // General: balanced approach
+      if (context.instruction) {
+        categoryQueries.push(`"${context.gameName}" ${context.instruction}`);
+      } else {
+        categoryQueries.push(`"${context.gameName}" review analysis opinion`);
+        categoryQueries.push(`"${context.gameName}" guide tips strategies`);
+      }
   }
 
+  // Add category hints if provided
   if (context.categoryHints?.length) {
     for (const hint of context.categoryHints) {
       categoryQueries.push(`"${context.gameName}" ${hint.systemPrompt || hint.slug}`);
     }
   }
 
-  const recent = `"${context.gameName}" latest news updates patches ${currentYear}`;
+  // Recent query - adjusted based on intent
+  // For evergreen content (guides), de-emphasize patch notes
+  const recentQuery = intent === 'guide'
+    ? `"${context.gameName}" latest content features ${currentYear}`
+    : `"${context.gameName}" latest news updates patches ${currentYear}`;
 
-  return { overview, category: categoryQueries, recent };
+  return { overview, category: categoryQueries, recent: recentQuery };
 }
 
