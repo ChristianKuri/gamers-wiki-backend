@@ -400,15 +400,15 @@ describe('runScout', () => {
   describe('token usage aggregation', () => {
     it('aggregates token usage from all briefing generations', async () => {
       const mockGenerateText = vi.fn()
-        .mockResolvedValueOnce({ text: MOCK_OVERVIEW_BRIEFING, usage: { promptTokens: 100, completionTokens: 50 } })
-        .mockResolvedValueOnce({ text: MOCK_CATEGORY_BRIEFING, usage: { promptTokens: 80, completionTokens: 40 } })
-        .mockResolvedValueOnce({ text: MOCK_RECENT_BRIEFING, usage: { promptTokens: 60, completionTokens: 30 } });
+        .mockResolvedValueOnce({ text: MOCK_OVERVIEW_BRIEFING, usage: { inputTokens: 100, outputTokens: 50 } })
+        .mockResolvedValueOnce({ text: MOCK_CATEGORY_BRIEFING, usage: { inputTokens: 80, outputTokens: 40 } })
+        .mockResolvedValueOnce({ text: MOCK_RECENT_BRIEFING, usage: { inputTokens: 60, outputTokens: 30 } });
 
       const deps = createMockScoutDeps({ generateText: mockGenerateText });
 
       const result = await runScout(createMockGameContext(), deps);
 
-      // Should have accumulated usage
+      // Should have accumulated usage (AI SDK v4 uses inputTokens/outputTokens)
       expect(result.tokenUsage.input).toBeGreaterThan(0);
       expect(result.tokenUsage.output).toBeGreaterThan(0);
     });

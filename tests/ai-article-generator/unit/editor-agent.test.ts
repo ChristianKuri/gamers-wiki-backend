@@ -289,7 +289,7 @@ describe('runEditor', () => {
     it('tracks token usage from API response', async () => {
       const mockGenerateObject = vi.fn().mockResolvedValue({
         object: createMockArticlePlan(),
-        usage: { promptTokens: 1500, completionTokens: 750 },
+        usage: { inputTokens: 1500, outputTokens: 750 },
       });
 
       const deps = createMockEditorDeps({ generateObject: mockGenerateObject });
@@ -315,7 +315,7 @@ describe('runEditor', () => {
     it('handles partial usage data', async () => {
       const mockGenerateObject = vi.fn().mockResolvedValue({
         object: createMockArticlePlan(),
-        usage: { promptTokens: 100 }, // missing completionTokens
+        usage: { inputTokens: 100 }, // missing outputTokens
       });
 
       const deps = createMockEditorDeps({ generateObject: mockGenerateObject });

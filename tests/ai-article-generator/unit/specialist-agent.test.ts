@@ -400,9 +400,9 @@ describe('runSpecialist', () => {
   describe('token usage aggregation', () => {
     it('aggregates token usage from all sections', async () => {
       const mockGenerateText = vi.fn()
-        .mockResolvedValueOnce({ text: 'S1.', usage: { promptTokens: 100, completionTokens: 50 } })
-        .mockResolvedValueOnce({ text: 'S2.', usage: { promptTokens: 150, completionTokens: 75 } })
-        .mockResolvedValueOnce({ text: 'S3.', usage: { promptTokens: 200, completionTokens: 100 } });
+        .mockResolvedValueOnce({ text: 'S1.', usage: { inputTokens: 100, outputTokens: 50 } })
+        .mockResolvedValueOnce({ text: 'S2.', usage: { inputTokens: 150, outputTokens: 75 } })
+        .mockResolvedValueOnce({ text: 'S3.', usage: { inputTokens: 200, outputTokens: 100 } });
 
       const deps = createMockSpecialistDeps({ generateText: mockGenerateText });
 
@@ -419,9 +419,9 @@ describe('runSpecialist', () => {
 
     it('handles missing usage data in responses', async () => {
       const mockGenerateText = vi.fn()
-        .mockResolvedValueOnce({ text: 'S1.', usage: { promptTokens: 100, completionTokens: 50 } })
+        .mockResolvedValueOnce({ text: 'S1.', usage: { inputTokens: 100, outputTokens: 50 } })
         .mockResolvedValueOnce({ text: 'S2.', usage: undefined })
-        .mockResolvedValueOnce({ text: 'S3.', usage: { promptTokens: 200 } }); // missing completionTokens
+        .mockResolvedValueOnce({ text: 'S3.', usage: { inputTokens: 200 } }); // missing outputTokens
 
       const deps = createMockSpecialistDeps({ generateText: mockGenerateText });
 

@@ -469,10 +469,10 @@ function validateSectionOverlap(markdown: string): ValidationIssue[] {
   }
 
   // Extract key terms for each section
-  const sectionTerms: Array<{ headline: string; terms: Set<string> }> = [];
+  const sectionTerms: Array<{ heading: string; terms: Set<string> }> = [];
   for (const section of sections) {
     const terms = extractKeyTerms(section.content);
-    sectionTerms.push({ headline: section.headline, terms });
+    sectionTerms.push({ heading: section.heading, terms });
   }
 
   // Compare each pair of sections
@@ -497,7 +497,7 @@ function validateSectionOverlap(markdown: string): ValidationIssue[] {
         issues.push(
           issue(
             'warning',
-            `Sections "${sectionA.headline}" and "${sectionB.headline}" have ${overlapPercent}% topic overlap. ` +
+            `Sections "${sectionA.heading}" and "${sectionB.heading}" have ${overlapPercent}% topic overlap. ` +
               `Shared concepts: ${displayTerms}${moreCount}. Consider consolidating or differentiating.`
           )
         );
