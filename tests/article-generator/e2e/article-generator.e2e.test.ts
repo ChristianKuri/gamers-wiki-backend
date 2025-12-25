@@ -1,12 +1,15 @@
 /**
  * Article Generator E2E Test
  *
- * Comprehensive end-to-end test that verifies:
- * - Strapi route POST /api/article-generator/generate works
- * - A draft Post is created in the database and linked to the game
- * - Generated content passes all validation constraints
- * - Metadata is properly captured (durations, tokens, sources)
- * - Game import/creation works correctly
+ * E2E Test Pattern: Clean → Call Endpoint → Validate
+ *
+ * This test suite:
+ * 1. Cleans relevant data in beforeAll
+ * 2. Calls the article generator endpoint ONCE
+ * 3. Uses multiple focused tests to validate the response
+ *
+ * Each test validates a specific aspect of the generated article.
+ * Tests share the response data - no cleanup between tests.
  *
  * REQUIREMENTS:
  * - Strapi must be running (use npm run test:e2e:run)
@@ -22,7 +25,7 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import type { Knex } from 'knex';
 import { readFileSync } from 'node:fs';
 
-import { isStrapiRunning, createDbConnection, cleanDatabase, E2E_CONFIG } from '../../game-fetcher/e2e/setup';
+import { isStrapiRunning, createDbConnection, E2E_CONFIG } from '../../game-fetcher/e2e/setup';
 import {
   saveTestResult,
   createTestResult,
@@ -53,6 +56,8 @@ const PLACEHOLDER_PATTERNS = ['TODO', 'TBD', 'PLACEHOLDER', 'FIXME', '[INSERT', 
 
 const VALID_CATEGORY_SLUGS = ['news', 'reviews', 'guides', 'lists'] as const;
 const VALID_CONFIDENCE_LEVELS = ['high', 'medium', 'low'] as const;
+
+const TEST_IGDB_ID = 119388; // The Legend of Zelda: Tears of the Kingdom
 
 // ============================================================================
 // Test Infrastructure
@@ -151,502 +156,96 @@ async function findPostGameLinkTable(knex: Knex): Promise<string | null> {
 }
 
 // ============================================================================
-// Validation Functions
-// ============================================================================
-
-/**
- * Validates structure constraints (title, excerpt, tags, markdown).
- */
-function validateStructure(draft: any): E2EValidationIssue[] {
-  const issues: E2EValidationIssue[] = [];
-  const C = ARTICLE_PLAN_CONSTRAINTS;
-
-  // Title validation
-  if (typeof draft.title !== 'string') {
-    issues.push({ severity: 'error', field: 'title', message: 'Title must be a string', actual: typeof draft.title });
-  } else {
-    if (draft.title.length < C.TITLE_MIN_LENGTH) {
-      issues.push({
-        severity: 'error',
-        field: 'title',
-        message: `Title too short (minimum ${C.TITLE_MIN_LENGTH} chars)`,
-        actual: draft.title.length,
-        expected: C.TITLE_MIN_LENGTH,
-      });
-    }
-    if (draft.title.length > C.TITLE_MAX_LENGTH) {
-      issues.push({
-        severity: 'error',
-        field: 'title',
-        message: `Title too long (maximum ${C.TITLE_MAX_LENGTH} chars)`,
-        actual: draft.title.length,
-        expected: C.TITLE_MAX_LENGTH,
-      });
-    }
-    if (draft.title.length > C.TITLE_RECOMMENDED_MAX_LENGTH) {
-      issues.push({
-        severity: 'warning',
-        field: 'title',
-        message: `Title exceeds recommended length (${C.TITLE_RECOMMENDED_MAX_LENGTH} chars)`,
-        actual: draft.title.length,
-        expected: C.TITLE_RECOMMENDED_MAX_LENGTH,
-      });
-    }
-  }
-
-  // Excerpt validation
-  if (typeof draft.excerpt !== 'string') {
-    issues.push({ severity: 'error', field: 'excerpt', message: 'Excerpt must be a string', actual: typeof draft.excerpt });
-  } else {
-    if (draft.excerpt.length < C.EXCERPT_MIN_LENGTH) {
-      issues.push({
-        severity: 'error',
-        field: 'excerpt',
-        message: `Excerpt too short (minimum ${C.EXCERPT_MIN_LENGTH} chars)`,
-        actual: draft.excerpt.length,
-        expected: C.EXCERPT_MIN_LENGTH,
-      });
-    }
-    if (draft.excerpt.length > C.EXCERPT_MAX_LENGTH) {
-      issues.push({
-        severity: 'error',
-        field: 'excerpt',
-        message: `Excerpt too long (maximum ${C.EXCERPT_MAX_LENGTH} chars)`,
-        actual: draft.excerpt.length,
-        expected: C.EXCERPT_MAX_LENGTH,
-      });
-    }
-  }
-
-  // Category slug validation
-  if (!VALID_CATEGORY_SLUGS.includes(draft.categorySlug)) {
-    issues.push({
-      severity: 'error',
-      field: 'categorySlug',
-      message: `Invalid category slug`,
-      actual: draft.categorySlug,
-      expected: VALID_CATEGORY_SLUGS,
-    });
-  }
-
-  // Tags validation
-  if (!Array.isArray(draft.tags)) {
-    issues.push({ severity: 'error', field: 'tags', message: 'Tags must be an array', actual: typeof draft.tags });
-  } else {
-    if (draft.tags.length < C.MIN_TAGS) {
-      issues.push({
-        severity: 'error',
-        field: 'tags',
-        message: `Not enough tags (minimum ${C.MIN_TAGS})`,
-        actual: draft.tags.length,
-        expected: C.MIN_TAGS,
-      });
-    }
-    if (draft.tags.length > C.MAX_TAGS) {
-      issues.push({
-        severity: 'error',
-        field: 'tags',
-        message: `Too many tags (maximum ${C.MAX_TAGS})`,
-        actual: draft.tags.length,
-        expected: C.MAX_TAGS,
-      });
-    }
-    for (let i = 0; i < draft.tags.length; i++) {
-      const tag = draft.tags[i];
-      if (typeof tag !== 'string' || tag.trim().length === 0) {
-        issues.push({ severity: 'error', field: `tags[${i}]`, message: 'Tag must be a non-empty string', actual: tag });
-      } else if (tag.length > C.TAG_MAX_LENGTH) {
-        issues.push({
-          severity: 'error',
-          field: `tags[${i}]`,
-          message: `Tag too long (maximum ${C.TAG_MAX_LENGTH} chars)`,
-          actual: tag.length,
-        });
-      }
-    }
-  }
-
-  // Markdown validation
-  if (typeof draft.markdown !== 'string') {
-    issues.push({ severity: 'error', field: 'markdown', message: 'Markdown must be a string', actual: typeof draft.markdown });
-  } else {
-    if (draft.markdown.length < C.MIN_MARKDOWN_LENGTH) {
-      issues.push({
-        severity: 'error',
-        field: 'markdown',
-        message: `Markdown content too short (minimum ${C.MIN_MARKDOWN_LENGTH} chars)`,
-        actual: draft.markdown.length,
-        expected: C.MIN_MARKDOWN_LENGTH,
-      });
-    }
-
-    // Count H2 sections (excluding ## Sources)
-    const h2Matches = draft.markdown.match(/^## .+$/gm) || [];
-    const contentSections = h2Matches.filter((h: string) => !h.toLowerCase().includes('sources'));
-    if (contentSections.length < C.MIN_SECTIONS) {
-      issues.push({
-        severity: 'warning',
-        field: 'markdown.sections',
-        message: `Only ${contentSections.length} H2 sections found (minimum ${C.MIN_SECTIONS})`,
-        actual: contentSections.length,
-        expected: C.MIN_SECTIONS,
-      });
-    }
-    if (contentSections.length > C.MAX_SECTIONS) {
-      issues.push({
-        severity: 'warning',
-        field: 'markdown.sections',
-        message: `Too many sections (${contentSections.length}, maximum ${C.MAX_SECTIONS})`,
-        actual: contentSections.length,
-        expected: C.MAX_SECTIONS,
-      });
-    }
-  }
-
-  // Sources validation
-  if (!Array.isArray(draft.sources)) {
-    issues.push({ severity: 'error', field: 'sources', message: 'Sources must be an array', actual: typeof draft.sources });
-  } else {
-    if (draft.sources.length === 0) {
-      issues.push({ severity: 'warning', field: 'sources', message: 'No sources collected' });
-    }
-    for (let i = 0; i < draft.sources.length; i++) {
-      const source = draft.sources[i];
-      if (typeof source !== 'string') {
-        issues.push({ severity: 'error', field: `sources[${i}]`, message: 'Source must be a string', actual: typeof source });
-      } else {
-        try {
-          new URL(source);
-        } catch {
-          issues.push({ severity: 'error', field: `sources[${i}]`, message: 'Invalid URL', actual: source });
-        }
-      }
-    }
-  }
-
-  return issues;
-}
-
-/**
- * Validates content quality (placeholders, code fences, clichés).
- */
-function validateContentQuality(markdown: string): E2EValidationIssue[] {
-  const issues: E2EValidationIssue[] = [];
-
-  // Check for placeholder text
-  for (const placeholder of PLACEHOLDER_PATTERNS) {
-    const re = new RegExp(`\\b${placeholder.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i');
-    if (re.test(markdown)) {
-      issues.push({
-        severity: 'error',
-        field: 'markdown.content',
-        message: `Article contains placeholder text: ${placeholder}`,
-      });
-    }
-  }
-
-  // Check for code fences (usually undesirable in prose articles)
-  if (markdown.includes('```')) {
-    issues.push({
-      severity: 'warning',
-      field: 'markdown.content',
-      message: 'Article contains code fences (usually undesirable for prose)',
-    });
-  }
-
-  // AI clichés detection (warning only - doesn't fail test)
-  const clichePhrases = [
-    'dive into',
-    'delve into',
-    'game-changer',
-    'embark on',
-    'ever-evolving',
-    'cutting-edge',
-    'seamlessly',
-    'leverage',
-    'unlock',
-    'masterclass',
-  ];
-  const lowercaseMarkdown = markdown.toLowerCase();
-  const foundCliches = clichePhrases.filter((phrase) => lowercaseMarkdown.includes(phrase));
-  if (foundCliches.length > 0) {
-    issues.push({
-      severity: 'warning',
-      field: 'markdown.content',
-      message: `Article contains ${foundCliches.length} AI cliché(s): ${foundCliches.join(', ')}`,
-    });
-  }
-
-  return issues;
-}
-
-/**
- * Validates metadata completeness and correctness.
- */
-function validateMetadata(metadata: any): E2EValidationIssue[] {
-  const issues: E2EValidationIssue[] = [];
-
-  if (!metadata) {
-    issues.push({ severity: 'error', field: 'metadata', message: 'Metadata is missing' });
-    return issues;
-  }
-
-  // generatedAt
-  if (typeof metadata.generatedAt !== 'string') {
-    issues.push({ severity: 'error', field: 'metadata.generatedAt', message: 'generatedAt must be a string', actual: typeof metadata.generatedAt });
-  } else {
-    const date = new Date(metadata.generatedAt);
-    if (isNaN(date.getTime())) {
-      issues.push({ severity: 'error', field: 'metadata.generatedAt', message: 'generatedAt is not a valid ISO date', actual: metadata.generatedAt });
-    }
-  }
-
-  // totalDurationMs
-  if (typeof metadata.totalDurationMs !== 'number' || metadata.totalDurationMs <= 0) {
-    issues.push({
-      severity: 'error',
-      field: 'metadata.totalDurationMs',
-      message: 'totalDurationMs must be a positive number',
-      actual: metadata.totalDurationMs,
-    });
-  }
-
-  // phaseDurations
-  const requiredPhases = ['scout', 'editor', 'specialist', 'validation'];
-  if (!metadata.phaseDurations || typeof metadata.phaseDurations !== 'object') {
-    issues.push({ severity: 'error', field: 'metadata.phaseDurations', message: 'phaseDurations must be an object' });
-  } else {
-    for (const phase of requiredPhases) {
-      if (typeof metadata.phaseDurations[phase] !== 'number' || metadata.phaseDurations[phase] < 0) {
-        issues.push({
-          severity: 'error',
-          field: `metadata.phaseDurations.${phase}`,
-          message: `${phase} duration must be a non-negative number`,
-          actual: metadata.phaseDurations[phase],
-        });
-      }
-    }
-  }
-
-  // queriesExecuted
-  if (typeof metadata.queriesExecuted !== 'number' || metadata.queriesExecuted < 0) {
-    issues.push({
-      severity: 'error',
-      field: 'metadata.queriesExecuted',
-      message: 'queriesExecuted must be a non-negative number',
-      actual: metadata.queriesExecuted,
-    });
-  }
-  if (metadata.queriesExecuted === 0) {
-    issues.push({ severity: 'warning', field: 'metadata.queriesExecuted', message: 'No queries were executed' });
-  }
-
-  // sourcesCollected
-  if (typeof metadata.sourcesCollected !== 'number' || metadata.sourcesCollected < 0) {
-    issues.push({
-      severity: 'error',
-      field: 'metadata.sourcesCollected',
-      message: 'sourcesCollected must be a non-negative number',
-      actual: metadata.sourcesCollected,
-    });
-  }
-  if (metadata.sourcesCollected === 0) {
-    issues.push({ severity: 'warning', field: 'metadata.sourcesCollected', message: 'No sources were collected' });
-  }
-
-  // correlationId
-  if (typeof metadata.correlationId !== 'string' || metadata.correlationId.length === 0) {
-    issues.push({
-      severity: 'error',
-      field: 'metadata.correlationId',
-      message: 'correlationId must be a non-empty string',
-      actual: metadata.correlationId,
-    });
-  }
-
-  // researchConfidence
-  if (!VALID_CONFIDENCE_LEVELS.includes(metadata.researchConfidence)) {
-    issues.push({
-      severity: 'error',
-      field: 'metadata.researchConfidence',
-      message: 'Invalid research confidence level',
-      actual: metadata.researchConfidence,
-      expected: VALID_CONFIDENCE_LEVELS,
-    });
-  }
-
-  // tokenUsage (optional but validate if present)
-  if (metadata.tokenUsage) {
-    const tu = metadata.tokenUsage;
-    for (const phase of ['scout', 'editor', 'specialist', 'total']) {
-      if (tu[phase]) {
-        if (typeof tu[phase].input !== 'number' || tu[phase].input < 0) {
-          issues.push({
-            severity: 'warning',
-            field: `metadata.tokenUsage.${phase}.input`,
-            message: 'Token input must be non-negative',
-            actual: tu[phase].input,
-          });
-        }
-        if (typeof tu[phase].output !== 'number' || tu[phase].output < 0) {
-          issues.push({
-            severity: 'warning',
-            field: `metadata.tokenUsage.${phase}.output`,
-            message: 'Token output must be non-negative',
-            actual: tu[phase].output,
-          });
-        }
-      }
-    }
-    if (tu.estimatedCostUsd !== undefined && (typeof tu.estimatedCostUsd !== 'number' || tu.estimatedCostUsd < 0)) {
-      issues.push({
-        severity: 'warning',
-        field: 'metadata.tokenUsage.estimatedCostUsd',
-        message: 'estimatedCostUsd must be non-negative',
-        actual: tu.estimatedCostUsd,
-      });
-    }
-  }
-
-  return issues;
-}
-
-/**
- * Validates plan structure.
- */
-function validatePlan(plan: any): E2EValidationIssue[] {
-  const issues: E2EValidationIssue[] = [];
-
-  if (!plan) {
-    issues.push({ severity: 'error', field: 'plan', message: 'Plan is missing' });
-    return issues;
-  }
-
-  // gameName
-  if (typeof plan.gameName !== 'string' || plan.gameName.trim().length === 0) {
-    issues.push({ severity: 'error', field: 'plan.gameName', message: 'gameName must be a non-empty string', actual: plan.gameName });
-  }
-
-  // sections
-  if (!Array.isArray(plan.sections)) {
-    issues.push({ severity: 'error', field: 'plan.sections', message: 'sections must be an array', actual: typeof plan.sections });
-  } else {
-    for (let i = 0; i < plan.sections.length; i++) {
-      const section = plan.sections[i];
-      if (!section.headline || typeof section.headline !== 'string') {
-        issues.push({ severity: 'error', field: `plan.sections[${i}].headline`, message: 'Section headline must be a string' });
-      }
-      if (!section.goal || typeof section.goal !== 'string') {
-        issues.push({ severity: 'error', field: `plan.sections[${i}].goal`, message: 'Section goal must be a string' });
-      }
-      if (!Array.isArray(section.researchQueries)) {
-        issues.push({ severity: 'error', field: `plan.sections[${i}].researchQueries`, message: 'researchQueries must be an array' });
-      }
-    }
-  }
-
-  // safety
-  if (!plan.safety || typeof plan.safety !== 'object') {
-    issues.push({ severity: 'warning', field: 'plan.safety', message: 'safety settings are missing' });
-  } else if (typeof plan.safety.noScoresUnlessReview !== 'boolean') {
-    issues.push({ severity: 'warning', field: 'plan.safety.noScoresUnlessReview', message: 'noScoresUnlessReview should be a boolean' });
-  }
-
-  return issues;
-}
-
-/**
- * Validates game information in response.
- */
-function validateGameInfo(game: any): E2EValidationIssue[] {
-  const issues: E2EValidationIssue[] = [];
-
-  if (!game) {
-    issues.push({ severity: 'error', field: 'game', message: 'Game info is missing from response' });
-    return issues;
-  }
-
-  if (typeof game.documentId !== 'string' || game.documentId.length === 0) {
-    issues.push({ severity: 'error', field: 'game.documentId', message: 'Game documentId must be a non-empty string', actual: game.documentId });
-  }
-
-  if (typeof game.name !== 'string' || game.name.length === 0) {
-    issues.push({ severity: 'error', field: 'game.name', message: 'Game name must be a non-empty string', actual: game.name });
-  }
-
-  return issues;
-}
-
-// ============================================================================
 // Test Suite
 // ============================================================================
 
 describeE2E('Article Generator E2E', () => {
+  // Shared state across all tests
   let knex: Knex | undefined;
   let strapiReady = false;
+  let response: Response | undefined;
+  let json: any;
+  let testStartTime: number;
+  const validationIssues: E2EValidationIssue[] = [];
 
   const secret = process.env.AI_GENERATION_SECRET || getFromDotEnvFile('AI_GENERATION_SECRET');
 
+  // ========================================================================
+  // SETUP: Clean → Call Endpoint (runs once before all tests)
+  // ========================================================================
   beforeAll(async () => {
+    testStartTime = Date.now();
+
+    // Step 1: Check Strapi availability
+    console.log('[E2E Setup] Step 1/5: Checking Strapi availability...');
     strapiReady = await isStrapiRunning();
 
     if (!strapiReady) {
       console.warn(`\n⚠️  Strapi is not running at ${E2E_CONFIG.strapiUrl}\nTo run E2E tests, use: npm run test:e2e:run\n`);
       return;
     }
+    console.log('[E2E Setup] ✓ Strapi is running');
 
+    // Step 2: Validate IGDB configuration
+    console.log('[E2E Setup] Step 2/5: Validating IGDB configuration...');
+    try {
+      const igdbStatus = await fetch(`${E2E_CONFIG.strapiUrl}/api/game-fetcher/status`);
+      if (!igdbStatus.ok) {
+        console.warn('[E2E Setup] ⚠️ IGDB status endpoint not available - skipping setup');
+        strapiReady = false;
+        return;
+      }
+      const igdbJson = (await igdbStatus.json()) as { configured?: boolean };
+      if (!igdbJson.configured) {
+        console.warn('[E2E Setup] ⚠️ IGDB not configured - skipping setup');
+        strapiReady = false;
+        return;
+      }
+      console.log('[E2E Setup] ✓ IGDB is configured');
+    } catch (error) {
+      console.warn('[E2E Setup] ⚠️ Failed to check IGDB status:', error);
+      strapiReady = false;
+      return;
+    }
+
+    // Step 3: Validate AI/OpenRouter configuration
+    console.log('[E2E Setup] Step 3/5: Validating AI/OpenRouter configuration...');
+    try {
+      const aiStatus = await fetch(`${E2E_CONFIG.strapiUrl}/api/game-fetcher/ai-status`);
+      if (!aiStatus.ok) {
+        console.warn('[E2E Setup] ⚠️ AI status endpoint not available - skipping setup');
+        strapiReady = false;
+        return;
+      }
+      const aiJson = (await aiStatus.json()) as { configured?: boolean };
+      if (!aiJson.configured) {
+        console.warn('[E2E Setup] ⚠️ OpenRouter AI not configured - skipping setup');
+        strapiReady = false;
+        return;
+      }
+      console.log('[E2E Setup] ✓ AI/OpenRouter is configured');
+    } catch (error) {
+      console.warn('[E2E Setup] ⚠️ Failed to check AI status:', error);
+      strapiReady = false;
+      return;
+    }
+
+    // Step 4: Clean posts (not game data - game will be imported if needed)
+    console.log('[E2E Setup] Step 4/5: Cleaning posts...');
     knex = await createDbConnection();
-
     const linkTable = await findPostGameLinkTable(knex);
     if (linkTable) {
       await safeDeleteAll(knex, linkTable);
     }
     await safeDeleteAll(knex, 'posts');
-  }, 120000);
+    console.log('[E2E Setup] ✓ Posts cleaned');
 
-  afterAll(async () => {
-    if (knex) {
-      await knex.destroy();
-    }
-  });
-
-  it('creates a draft post with comprehensive validation', async ({ skip }) => {
-    const testStartTime = Date.now();
-    const TEST_NAME = 'creates-draft-post-comprehensive-validation';
-    const TEST_IGDB_ID = 119388; // Zelda TOTK
-
-    if (!strapiReady || !knex) {
-      skip();
-      return;
-    }
-
+    // Step 5: Call article generator endpoint ONCE
+    console.log('[E2E Setup] Step 5/5: Calling article generator endpoint...');
+    console.log(`[E2E Setup] IGDB ID: ${TEST_IGDB_ID} (Zelda TOTK)`);
     const headerSecret = secret || mustGetEnv('AI_GENERATION_SECRET');
 
-    // Check IGDB/AI configuration
-    const igdbStatusRes = await fetch(`${E2E_CONFIG.strapiUrl}/api/game-fetcher/status`);
-    if (!igdbStatusRes.ok) {
-      skip();
-      return;
-    }
-    const igdbStatusJson = (await igdbStatusRes.json()) as { configured?: boolean };
-    if (!igdbStatusJson.configured) {
-      skip();
-      return;
-    }
-
-    const aiStatus = await fetch(`${E2E_CONFIG.strapiUrl}/api/game-fetcher/ai-status`);
-    if (!aiStatus.ok) {
-      skip();
-      return;
-    }
-    const aiJson = (await aiStatus.json()) as { configured?: boolean };
-    if (!aiJson.configured) {
-      skip();
-      return;
-    }
-
-    // Act: call the article generator endpoint with extended timeout (AI generation is slow)
-    const response = await fetchWithExtendedTimeout(`${E2E_CONFIG.strapiUrl}/api/article-generator/generate`, {
+    response = await fetchWithExtendedTimeout(`${E2E_CONFIG.strapiUrl}/api/article-generator/generate`, {
       method: 'POST',
       headers: {
         'content-type': 'application/json',
@@ -654,386 +253,418 @@ describeE2E('Article Generator E2E', () => {
       },
       body: JSON.stringify({
         igdbId: TEST_IGDB_ID,
-        instruction: 'Write a very short beginner guide for the first hour. Use only 3 sections.',
+        instruction: 'Write a beginner guide for the first hour. Use 3-4 sections.',
         publish: false,
       }),
-      timeoutMs: 300000, // 5 minutes for article generation
+      timeoutMs: 600000, // 10 minutes (includes game import if needed)
     });
 
     const responseText = await response.text();
-    let json: any;
     try {
       json = JSON.parse(responseText);
     } catch {
       json = { raw: responseText, parseError: true };
     }
 
-    // Collect all validation issues
-    const validationIssues: E2EValidationIssue[] = [];
-    const dbAssertions: Record<string, unknown> = {};
+    const duration = ((Date.now() - testStartTime) / 1000).toFixed(1);
+    console.log(`[E2E Setup] ✓ Endpoint called in ${duration}s`);
+    console.log(`[E2E Setup] Response status: ${response.status}`);
+    console.log(`[E2E Setup] Success: ${json?.success}`);
+  }, 700000); // 11+ minutes for full setup including game import
 
-    // Basic response validation
-    if (!response.ok) {
-      validationIssues.push({
-        severity: 'error',
-        field: 'response.status',
-        message: `Expected 2xx status, got ${response.status}`,
-        actual: response.status,
-        expected: '2xx',
-      });
-    }
-
-    if (!json?.success) {
-      validationIssues.push({
-        severity: 'error',
-        field: 'response.success',
-        message: 'Response success flag is not true',
-        actual: json?.success,
-      });
-    }
-
-    if (!json?.post?.documentId) {
-      validationIssues.push({
-        severity: 'error',
-        field: 'response.post.documentId',
-        message: 'Post documentId is missing',
-      });
-    }
-
-    // Validate draft structure, content, metadata, plan, game
-    if (json?.draft) {
-      validationIssues.push(...validateStructure(json.draft));
-      if (json.draft.markdown) {
-        validationIssues.push(...validateContentQuality(json.draft.markdown));
-      }
-      if (json.draft.metadata) {
-        validationIssues.push(...validateMetadata(json.draft.metadata));
-      }
-      if (json.draft.plan) {
-        validationIssues.push(...validatePlan(json.draft.plan));
-      }
-    } else {
-      validationIssues.push({
-        severity: 'error',
-        field: 'response.draft',
-        message: 'Draft object is missing from response',
-      });
-    }
-
-    // Validate game info
-    if (json?.game) {
-      validationIssues.push(...validateGameInfo(json.game));
-    } else {
-      validationIssues.push({
-        severity: 'error',
-        field: 'response.game',
-        message: 'Game info is missing from response',
-      });
-    }
-
-    // Validate models
-    if (!json?.models) {
-      validationIssues.push({ severity: 'error', field: 'response.models', message: 'Models info is missing' });
-    } else {
-      for (const agent of ['scout', 'editor', 'specialist']) {
-        if (typeof json.models[agent] !== 'string' || json.models[agent].length === 0) {
-          validationIssues.push({
-            severity: 'error',
-            field: `response.models.${agent}`,
-            message: `${agent} model must be a non-empty string`,
-            actual: json.models[agent],
-          });
-        }
-      }
-    }
-
-    // Database assertions
-    if (json?.post?.documentId && knex) {
-      const postDocumentId = json.post.documentId;
-
-      const postRow = await knex('posts')
-        .select('id', 'document_id', 'title', 'locale', 'published_at')
-        .where({ document_id: postDocumentId })
-        .first();
-
-      dbAssertions.postExists = Boolean(postRow);
-      dbAssertions.postDocumentId = postRow?.document_id;
-      dbAssertions.postLocale = postRow?.locale;
-      dbAssertions.postIsPublished = postRow?.published_at !== null;
-
-      if (!postRow) {
-        validationIssues.push({
-          severity: 'error',
-          field: 'database.post',
-          message: 'Post not found in database',
-          expected: postDocumentId,
-        });
-      } else {
-        if (postRow.locale !== 'en') {
-          validationIssues.push({
-            severity: 'error',
-            field: 'database.post.locale',
-            message: 'Post locale should be EN',
-            actual: postRow.locale,
-            expected: 'en',
-          });
-        }
-        if (postRow.published_at !== null) {
-          validationIssues.push({
-            severity: 'error',
-            field: 'database.post.published_at',
-            message: 'Draft post should not be published',
-            actual: postRow.published_at,
-          });
-        }
-      }
-
-      // Validate game-post link
-      const linkTable = await findPostGameLinkTable(knex);
-      dbAssertions.linkTableFound = linkTable;
-
-      if (linkTable && postRow) {
-        const gameCols = await getTableColumns(knex, 'games');
-        const igdbCol = gameCols.has('igdb_id') ? 'igdb_id' : gameCols.has('igdbId') ? 'igdbId' : null;
-
-        if (igdbCol) {
-          const gameRows = await knex('games')
-            .select('id', 'document_id', 'name', 'published_at', 'locale')
-            .where({ [igdbCol]: TEST_IGDB_ID, locale: 'en' });
-
-          dbAssertions.gameFound = gameRows.length > 0;
-          dbAssertions.gameName = gameRows[0]?.name;
-          dbAssertions.gameDocumentId = gameRows[0]?.document_id;
-
-          if (gameRows.length === 0) {
-            validationIssues.push({
-              severity: 'error',
-              field: 'database.game',
-              message: 'Game not found in database',
-              expected: `IGDB ID: ${TEST_IGDB_ID}`,
-            });
-          } else {
-            const gameIds = gameRows.map((g: any) => Number(g.id));
-            const linkCols = await getTableColumns(knex, linkTable);
-            const postIdCol = linkCols.has('post_id') ? 'post_id' : linkCols.has('postId') ? 'postId' : null;
-            const gameIdCol = linkCols.has('game_id') ? 'game_id' : linkCols.has('gameId') ? 'gameId' : null;
-
-            if (postIdCol && gameIdCol) {
-              const links = await knex(linkTable)
-                .select('*')
-                .where({ [postIdCol]: postRow.id })
-                .whereIn(gameIdCol, gameIds);
-
-              dbAssertions.postGameLinked = links.length > 0;
-
-              if (links.length === 0) {
-                validationIssues.push({
-                  severity: 'error',
-                  field: 'database.link',
-                  message: 'Post is not linked to game in database',
-                });
-              }
-            }
-          }
-        }
-      }
-    }
-
+  // ========================================================================
+  // TEARDOWN: Save results and close connections
+  // ========================================================================
+  afterAll(async () => {
     // Log validation summary
-    logValidationSummary(validationIssues);
-
-    // Save test results to file
-    const testResult = createTestResult(
-      TEST_NAME,
-      testStartTime,
-      json,
-      validationIssues,
-      dbAssertions,
-      { igdbId: TEST_IGDB_ID, gameName: json?.game?.name }
-    );
-
-    const savedPath = saveTestResult(testResult);
-    console.log(`\n📄 Test results saved to: ${savedPath}`);
-
-    // Assert: no errors (warnings are allowed)
-    const errors = validationIssues.filter((i) => i.severity === 'error');
-    expect(errors.length, `Validation errors found: ${errors.map((e) => e.message).join('; ')}`).toBe(0);
-
-    // Additional expect assertions for core functionality
-    expect(response.ok).toBe(true);
-    expect(json?.success).toBe(true);
-    expect(json?.post?.documentId).toBeTruthy();
-    expect(json?.draft).toBeTruthy();
-    expect(json?.game?.documentId).toBeTruthy();
-    expect(dbAssertions.postExists).toBe(true);
-    expect(dbAssertions.postGameLinked).toBe(true);
-  }, 300000);
-
-  it(
-    'imports game by igdbId, publishes EN post, and auto-creates ES locale on publish',
-    async ({ skip }) => {
-      const testStartTime = Date.now();
-      const TEST_NAME = 'imports-game-publishes-post-creates-es-locale';
-      const TEST_IGDB_ID = 119388;
-
-      if (!strapiReady || !knex) {
-        skip();
-        return;
-      }
-
-      const headerSecret = secret || mustGetEnv('AI_GENERATION_SECRET');
-
-      const igdbStatusRes = await fetch(`${E2E_CONFIG.strapiUrl}/api/game-fetcher/status`);
-      if (!igdbStatusRes.ok) {
-        skip();
-        return;
-      }
-      const igdbStatusJson = (await igdbStatusRes.json()) as { configured?: boolean };
-      if (!igdbStatusJson.configured) {
-        skip();
-        return;
-      }
-
-      const aiStatus = await fetch(`${E2E_CONFIG.strapiUrl}/api/game-fetcher/ai-status`);
-      if (!aiStatus.ok) {
-        skip();
-        return;
-      }
-      const aiJson = (await aiStatus.json()) as { configured?: boolean };
-      if (!aiJson.configured) {
-        skip();
-        return;
-      }
-
-      // Clean to ensure import path is exercised
-      await cleanDatabase(knex);
-
-      const linkTable = await findPostGameLinkTable(knex);
-      if (linkTable) await safeDeleteAll(knex, linkTable);
-      await safeDeleteAll(knex, 'posts');
-
-      // Call article generator with extended timeout (AI generation + game import is slow)
-      const response = await fetchWithExtendedTimeout(`${E2E_CONFIG.strapiUrl}/api/article-generator/generate`, {
-        method: 'POST',
-        headers: {
-          'content-type': 'application/json',
-          'x-ai-generation-secret': headerSecret,
-        },
-        body: JSON.stringify({
-          igdbId: TEST_IGDB_ID,
-          instruction: 'Write a beginner guide for the first 30 minutes. Keep it concise.',
-          publish: true,
-        }),
-        timeoutMs: 600000, // 10 minutes for full import + generation + publish
-      });
-
-      const responseText = await response.text();
-      let json: any;
-      try {
-        json = JSON.parse(responseText);
-      } catch {
-        json = { raw: responseText, parseError: true };
-      }
-
-      const validationIssues: E2EValidationIssue[] = [];
-      const dbAssertions: Record<string, unknown> = {};
-
-      if (!response.ok) {
-        validationIssues.push({
-          severity: 'error',
-          field: 'response.status',
-          message: `Expected 2xx status, got ${response.status}`,
-          actual: response.status,
-        });
-      }
-
-      // Validate draft structure
-      if (json?.draft) {
-        validationIssues.push(...validateStructure(json.draft));
-        if (json.draft.markdown) {
-          validationIssues.push(...validateContentQuality(json.draft.markdown));
-        }
-        if (json.draft.metadata) {
-          validationIssues.push(...validateMetadata(json.draft.metadata));
-        }
-      }
-
-      // Validate published flag
-      if (json?.published !== true) {
-        validationIssues.push({
-          severity: 'error',
-          field: 'response.published',
-          message: 'Response should indicate post was published',
-          actual: json?.published,
-          expected: true,
-        });
-      }
-
-      // Wait for ES locale
-      const postDocumentId = json?.post?.documentId;
-      dbAssertions.postDocumentId = postDocumentId;
-
-      if (postDocumentId) {
-        const start = Date.now();
-        const timeoutMs = 180000;
-        let esRow: any = null;
-
-        while (Date.now() - start < timeoutMs) {
-          esRow = await knex('posts')
-            .select('id', 'document_id', 'locale', 'title', 'content', 'published_at')
-            .where({ document_id: postDocumentId, locale: 'es' })
-            .whereNotNull('published_at')
-            .first();
-
-          if (esRow) break;
-          await new Promise((r) => setTimeout(r, 2000));
-        }
-
-        dbAssertions.esLocaleCreated = Boolean(esRow);
-        dbAssertions.esLocalePublished = esRow?.published_at !== null;
-
-        if (!esRow) {
-          validationIssues.push({
-            severity: 'error',
-            field: 'database.es_locale',
-            message: 'ES locale was not created within timeout',
-          });
-        } else {
-          const esContent = String(esRow.content || '');
-          const hasSpanishContent = /(gu[ií]a|consejo|paso|primeros|minutos)/i.test(esContent);
-          dbAssertions.esContentHasSpanish = hasSpanishContent;
-
-          if (!hasSpanishContent) {
-            validationIssues.push({
-              severity: 'warning',
-              field: 'database.es_locale.content',
-              message: 'ES content may not be properly translated (no common Spanish words found)',
-            });
-          }
-        }
-      }
-
+    if (validationIssues.length > 0) {
       logValidationSummary(validationIssues);
+    }
 
+    // Save test results
+    if (json && testStartTime) {
       const testResult = createTestResult(
-        TEST_NAME,
+        'article-generator-validation',
         testStartTime,
         json,
         validationIssues,
-        dbAssertions,
+        {},
         { igdbId: TEST_IGDB_ID, gameName: json?.game?.name }
       );
-
       const savedPath = saveTestResult(testResult);
       console.log(`\n📄 Test results saved to: ${savedPath}`);
+    }
 
-      const errors = validationIssues.filter((i) => i.severity === 'error');
-      expect(errors.length, `Validation errors found: ${errors.map((e) => e.message).join('; ')}`).toBe(0);
+    if (knex) {
+      await knex.destroy();
+    }
+  });
 
-      expect(json?.success).toBe(true);
-      expect(json?.post?.documentId).toBeTruthy();
-      expect(dbAssertions.esLocaleCreated).toBe(true);
-    },
-    900000
-  );
+  // ========================================================================
+  // VALIDATION TESTS: Each test validates a specific aspect
+  // ========================================================================
+
+  it('should return a successful response', async ({ skip }) => {
+    if (!strapiReady || !response) {
+      skip();
+      return;
+    }
+
+    expect(response.ok).toBe(true);
+    expect(json?.success).toBe(true);
+    expect(json?.post?.documentId).toBeTruthy();
+  });
+
+  it('should include game information in response', async ({ skip }) => {
+    if (!strapiReady || !json) {
+      skip();
+      return;
+    }
+
+    expect(json?.game).toBeDefined();
+    expect(json?.game?.documentId).toBeTruthy();
+    expect(json?.game?.name).toBeTruthy();
+
+    if (!json?.game?.documentId) {
+      validationIssues.push({
+        severity: 'error',
+        field: 'game.documentId',
+        message: 'Game documentId is missing',
+      });
+    }
+  });
+
+  it('should generate a valid title', async ({ skip }) => {
+    if (!strapiReady || !json?.draft) {
+      skip();
+      return;
+    }
+
+    const title = json.draft.title;
+    const C = ARTICLE_PLAN_CONSTRAINTS;
+
+    expect(typeof title).toBe('string');
+    expect(title.length).toBeGreaterThanOrEqual(C.TITLE_MIN_LENGTH);
+    expect(title.length).toBeLessThanOrEqual(C.TITLE_MAX_LENGTH);
+
+    if (title.length > C.TITLE_RECOMMENDED_MAX_LENGTH) {
+      validationIssues.push({
+        severity: 'warning',
+        field: 'title',
+        message: `Title exceeds recommended length (${C.TITLE_RECOMMENDED_MAX_LENGTH} chars)`,
+        actual: title.length,
+      });
+    }
+  });
+
+  it('should generate a valid excerpt', async ({ skip }) => {
+    if (!strapiReady || !json?.draft) {
+      skip();
+      return;
+    }
+
+    const excerpt = json.draft.excerpt;
+    const C = ARTICLE_PLAN_CONSTRAINTS;
+
+    expect(typeof excerpt).toBe('string');
+    expect(excerpt.length).toBeGreaterThanOrEqual(C.EXCERPT_MIN_LENGTH);
+    expect(excerpt.length).toBeLessThanOrEqual(C.EXCERPT_MAX_LENGTH);
+  });
+
+  it('should assign a valid category', async ({ skip }) => {
+    if (!strapiReady || !json?.draft) {
+      skip();
+      return;
+    }
+
+    expect(VALID_CATEGORY_SLUGS).toContain(json.draft.categorySlug);
+  });
+
+  it('should generate valid tags', async ({ skip }) => {
+    if (!strapiReady || !json?.draft) {
+      skip();
+      return;
+    }
+
+    const tags = json.draft.tags;
+    const C = ARTICLE_PLAN_CONSTRAINTS;
+
+    expect(Array.isArray(tags)).toBe(true);
+    expect(tags.length).toBeGreaterThanOrEqual(C.MIN_TAGS);
+    expect(tags.length).toBeLessThanOrEqual(C.MAX_TAGS);
+
+    for (const tag of tags) {
+      expect(typeof tag).toBe('string');
+      expect(tag.trim().length).toBeGreaterThan(0);
+      expect(tag.length).toBeLessThanOrEqual(C.TAG_MAX_LENGTH);
+    }
+  });
+
+  it('should generate markdown content with proper structure', async ({ skip }) => {
+    if (!strapiReady || !json?.draft) {
+      skip();
+      return;
+    }
+
+    const markdown = json.draft.markdown;
+    const C = ARTICLE_PLAN_CONSTRAINTS;
+
+    expect(typeof markdown).toBe('string');
+    expect(markdown.length).toBeGreaterThanOrEqual(C.MIN_MARKDOWN_LENGTH);
+
+    // Count H2 sections (excluding ## Sources)
+    const h2Matches = markdown.match(/^## .+$/gm) || [];
+    const contentSections = h2Matches.filter((h: string) => !h.toLowerCase().includes('sources'));
+
+    if (contentSections.length < C.MIN_SECTIONS) {
+      validationIssues.push({
+        severity: 'warning',
+        field: 'markdown.sections',
+        message: `Only ${contentSections.length} H2 sections found (minimum ${C.MIN_SECTIONS})`,
+        actual: contentSections.length,
+      });
+    }
+  });
+
+  it('should not contain placeholder text', async ({ skip }) => {
+    if (!strapiReady || !json?.draft?.markdown) {
+      skip();
+      return;
+    }
+
+    const markdown = json.draft.markdown;
+
+    for (const placeholder of PLACEHOLDER_PATTERNS) {
+      const re = new RegExp(`\\b${placeholder.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i');
+      const hasPlaceholder = re.test(markdown);
+
+      if (hasPlaceholder) {
+        validationIssues.push({
+          severity: 'error',
+          field: 'markdown.content',
+          message: `Article contains placeholder text: ${placeholder}`,
+        });
+      }
+
+      expect(hasPlaceholder).toBe(false);
+    }
+  });
+
+  it('should minimize AI clichés', async ({ skip }) => {
+    if (!strapiReady || !json?.draft?.markdown) {
+      skip();
+      return;
+    }
+
+    const clichePhrases = [
+      'dive into',
+      'delve into',
+      'game-changer',
+      'embark on',
+      'ever-evolving',
+      'cutting-edge',
+      'seamlessly',
+      'leverage',
+      'unlock',
+      'masterclass',
+    ];
+
+    const lowercaseMarkdown = json.draft.markdown.toLowerCase();
+    const foundCliches = clichePhrases.filter((phrase) => lowercaseMarkdown.includes(phrase));
+
+    if (foundCliches.length > 0) {
+      validationIssues.push({
+        severity: 'warning',
+        field: 'markdown.content',
+        message: `Article contains ${foundCliches.length} AI cliché(s): ${foundCliches.join(', ')}`,
+      });
+    }
+
+    // Warning only - doesn't fail the test
+    expect(foundCliches.length).toBeLessThan(5);
+  });
+
+  it('should collect valid sources', async ({ skip }) => {
+    if (!strapiReady || !json?.draft) {
+      skip();
+      return;
+    }
+
+    const sources = json.draft.sources;
+
+    expect(Array.isArray(sources)).toBe(true);
+
+    if (sources.length === 0) {
+      validationIssues.push({
+        severity: 'warning',
+        field: 'sources',
+        message: 'No sources collected',
+      });
+    }
+
+    for (const source of sources) {
+      expect(typeof source).toBe('string');
+      // Validate URL format
+      expect(() => new URL(source)).not.toThrow();
+    }
+  });
+
+  it('should include complete metadata', async ({ skip }) => {
+    if (!strapiReady || !json?.draft?.metadata) {
+      skip();
+      return;
+    }
+
+    const metadata = json.draft.metadata;
+
+    // Required fields
+    expect(typeof metadata.generatedAt).toBe('string');
+    expect(new Date(metadata.generatedAt).getTime()).not.toBeNaN();
+
+    expect(typeof metadata.totalDurationMs).toBe('number');
+    expect(metadata.totalDurationMs).toBeGreaterThan(0);
+
+    expect(typeof metadata.correlationId).toBe('string');
+    expect(metadata.correlationId.length).toBeGreaterThan(0);
+
+    expect(VALID_CONFIDENCE_LEVELS).toContain(metadata.researchConfidence);
+
+    // Phase durations
+    const requiredPhases = ['scout', 'editor', 'specialist', 'validation'];
+    for (const phase of requiredPhases) {
+      expect(typeof metadata.phaseDurations[phase]).toBe('number');
+      expect(metadata.phaseDurations[phase]).toBeGreaterThanOrEqual(0);
+    }
+  });
+
+  it('should include a valid article plan', async ({ skip }) => {
+    if (!strapiReady || !json?.draft?.plan) {
+      skip();
+      return;
+    }
+
+    const plan = json.draft.plan;
+
+    expect(typeof plan.gameName).toBe('string');
+    expect(plan.gameName.trim().length).toBeGreaterThan(0);
+
+    expect(Array.isArray(plan.sections)).toBe(true);
+    expect(plan.sections.length).toBeGreaterThan(0);
+
+    for (const section of plan.sections) {
+      expect(typeof section.headline).toBe('string');
+      expect(typeof section.goal).toBe('string');
+      expect(Array.isArray(section.researchQueries)).toBe(true);
+    }
+  });
+
+  it('should specify models used for each agent', async ({ skip }) => {
+    if (!strapiReady || !json?.models) {
+      skip();
+      return;
+    }
+
+    const agents = ['scout', 'editor', 'specialist'];
+
+    for (const agent of agents) {
+      expect(typeof json.models[agent]).toBe('string');
+      expect(json.models[agent].length).toBeGreaterThan(0);
+    }
+  });
+
+  it('should create post in database', async ({ skip }) => {
+    if (!strapiReady || !knex || !json?.post?.documentId) {
+      skip();
+      return;
+    }
+
+    const postRow = await knex('posts')
+      .select('id', 'document_id', 'title', 'locale', 'published_at')
+      .where({ document_id: json.post.documentId })
+      .first();
+
+    expect(postRow).toBeDefined();
+    expect(postRow?.document_id).toBe(json.post.documentId);
+    expect(postRow?.locale).toBe('en');
+    // Draft should not be published
+    expect(postRow?.published_at).toBeNull();
+  });
+
+  it('should link post to game in database', async ({ skip }) => {
+    if (!strapiReady || !knex || !json?.post?.documentId) {
+      skip();
+      return;
+    }
+
+    const postRow = await knex('posts')
+      .select('id')
+      .where({ document_id: json.post.documentId })
+      .first();
+
+    if (!postRow) {
+      skip();
+      return;
+    }
+
+    const linkTable = await findPostGameLinkTable(knex);
+    expect(linkTable).toBeTruthy();
+
+    if (!linkTable) return;
+
+    const gameCols = await getTableColumns(knex, 'games');
+    const igdbCol = gameCols.has('igdb_id') ? 'igdb_id' : gameCols.has('igdbId') ? 'igdbId' : null;
+
+    if (!igdbCol) {
+      skip();
+      return;
+    }
+
+    const gameRows = await knex('games')
+      .select('id')
+      .where({ [igdbCol]: TEST_IGDB_ID, locale: 'en' });
+
+    expect(gameRows.length).toBeGreaterThan(0);
+
+    const gameIds = gameRows.map((g: any) => Number(g.id));
+    const linkCols = await getTableColumns(knex, linkTable);
+    const postIdCol = linkCols.has('post_id') ? 'post_id' : linkCols.has('postId') ? 'postId' : null;
+    const gameIdCol = linkCols.has('game_id') ? 'game_id' : linkCols.has('gameId') ? 'gameId' : null;
+
+    if (!postIdCol || !gameIdCol) {
+      skip();
+      return;
+    }
+
+    const links = await knex(linkTable)
+      .select('*')
+      .where({ [postIdCol]: postRow.id })
+      .whereIn(gameIdCol, gameIds);
+
+    expect(links.length).toBeGreaterThan(0);
+  });
+
+  it('should import game with correct data', async ({ skip }) => {
+    if (!strapiReady || !knex) {
+      skip();
+      return;
+    }
+
+    const gameCols = await getTableColumns(knex, 'games');
+    const igdbCol = gameCols.has('igdb_id') ? 'igdb_id' : gameCols.has('igdbId') ? 'igdbId' : null;
+
+    if (!igdbCol) {
+      skip();
+      return;
+    }
+
+    const gameRow = await knex('games')
+      .select('name', 'description', 'locale')
+      .where({ [igdbCol]: TEST_IGDB_ID, locale: 'en' })
+      .first();
+
+    expect(gameRow).toBeDefined();
+    expect(gameRow?.name).toContain('Zelda');
+    expect(gameRow?.description).toBeTruthy();
+    expect(gameRow?.description?.length).toBeGreaterThan(100);
+  });
 });

@@ -40,7 +40,10 @@ describeE2E('Game Import E2E', () => {
 
   // Increased timeout for beforeAll due to many AI description generations
   beforeAll(async () => {
-    // Check if Strapi is running
+    // ========================================================================
+    // STEP 1: Check preconditions FIRST - before any expensive operations
+    // ========================================================================
+    console.log('[E2E Setup] Step 1/5: Checking Strapi availability...');
     strapiReady = await isStrapiRunning();
     
     if (!strapiReady) {
@@ -51,17 +54,78 @@ To run E2E tests, use: npm run test:e2e:run
       `);
       return;
     }
+    console.log('[E2E Setup] ✓ Strapi is running');
 
-    // Create database connection
+    // ========================================================================
+    // STEP 2: Validate IGDB configuration BEFORE expensive operations
+    // ========================================================================
+    console.log('[E2E Setup] Step 2/5: Validating IGDB configuration...');
+    try {
+      const igdbStatus = await fetch(`${E2E_CONFIG.strapiUrl}/api/game-fetcher/status`);
+      if (!igdbStatus.ok) {
+        console.warn('[E2E Setup] ⚠️ IGDB status endpoint not available - skipping setup');
+        strapiReady = false;
+        return;
+      }
+      const igdbJson = (await igdbStatus.json()) as { configured?: boolean };
+      if (!igdbJson.configured) {
+        console.warn('[E2E Setup] ⚠️ IGDB not configured - skipping setup');
+        strapiReady = false;
+        return;
+      }
+      console.log('[E2E Setup] ✓ IGDB is configured');
+    } catch (error) {
+      console.warn('[E2E Setup] ⚠️ Failed to check IGDB status:', error);
+      strapiReady = false;
+      return;
+    }
+
+    // ========================================================================
+    // STEP 3: Validate AI/OpenRouter configuration BEFORE expensive operations
+    // ========================================================================
+    console.log('[E2E Setup] Step 3/5: Validating AI/OpenRouter configuration...');
+    try {
+      const aiStatus = await fetch(`${E2E_CONFIG.strapiUrl}/api/game-fetcher/ai-status`);
+      if (!aiStatus.ok) {
+        console.warn('[E2E Setup] ⚠️ AI status endpoint not available - skipping setup');
+        strapiReady = false;
+        return;
+      }
+      const aiJson = (await aiStatus.json()) as { configured?: boolean };
+      if (!aiJson.configured) {
+        console.warn('[E2E Setup] ⚠️ OpenRouter AI not configured - skipping setup');
+        strapiReady = false;
+        return;
+      }
+      console.log('[E2E Setup] ✓ AI/OpenRouter is configured');
+    } catch (error) {
+      console.warn('[E2E Setup] ⚠️ Failed to check AI status:', error);
+      strapiReady = false;
+      return;
+    }
+
+    // ========================================================================
+    // STEP 4: Create database connection and clean
+    // ========================================================================
+    console.log('[E2E Setup] Step 4/5: Cleaning test database...');
     knex = await createDbConnection();
-
-    // Clean database before test
     await cleanDatabase(knex);
+    console.log('[E2E Setup] ✓ Database cleaned');
 
+    // ========================================================================
+    // STEP 5: Import the test game (this is the expensive operation)
+    // ========================================================================
+    console.log('[E2E Setup] Step 5/5: Importing test game (this may take several minutes)...');
+    console.log(`[E2E Setup] Importing IGDB ID: ${TEST_IGDB_ID} (The Legend of Zelda: Tears of the Kingdom)`);
+    const importStart = Date.now();
+    
     // Import the game ONCE - this is the endpoint under test
     // Lifecycle hooks are now synchronous, so AI generation happens during the import
     // and all ES locale entries are created before the import returns.
     importResult = await api.importGame(TEST_IGDB_ID);
+    
+    const importDuration = ((Date.now() - importStart) / 1000).toFixed(1);
+    console.log(`[E2E Setup] ✓ Game import completed in ${importDuration}s`);
   }, 600000); // 10 minute timeout for import (includes synchronous AI generation for all entities: Platform, Company, Franchise, Collection, Genre, Theme, GameMode, PlayerPerspective, Language)
 
   afterAll(async () => {
