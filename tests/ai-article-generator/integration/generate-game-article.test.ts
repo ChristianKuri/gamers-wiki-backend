@@ -393,6 +393,37 @@ describe('generateGameArticleDraft (integration-ish)', () => {
     ).rejects.toThrow();
   });
 
+  it('throws CANCELLED error code when aborted via AbortSignal', async () => {
+    const controller = new AbortController();
+
+    // Set up a handler that takes time
+    server.use(
+      http.post('https://api.tavily.com/search', async () => {
+        await new Promise((resolve) => setTimeout(resolve, 200));
+        return HttpResponse.json({
+          query: 'test',
+          answer: 'test answer',
+          results: [{ title: 'Test', url: 'https://test.com', content: 'Test', score: 0.9 }],
+        });
+      })
+    );
+
+    // Abort almost immediately
+    setTimeout(() => controller.abort(), 10);
+
+    try {
+      await generateGameArticleDraft(
+        { gameName: 'Test Game', instruction: 'Test' },
+        undefined,
+        { signal: controller.signal }
+      );
+      expect.fail('Should have thrown CANCELLED error');
+    } catch (error) {
+      expect(error).toBeInstanceOf(ArticleGenerationError);
+      expect((error as ArticleGenerationError).code).toBe('CANCELLED');
+    }
+  });
+
   it('respects timeout option', async () => {
     // Set up a handler that takes too long
     server.use(
@@ -441,6 +472,34 @@ describe('generateGameArticleDraft (integration-ish)', () => {
     // Verify query/source counts
     expect(typeof draft.metadata.queriesExecuted).toBe('number');
     expect(typeof draft.metadata.sourcesCollected).toBe('number');
+  });
+
+  it('returns metadata with correlationId for tracing', async () => {
+    const draft = await generateGameArticleDraft({
+      gameName: 'Test Game',
+      instruction: 'Write a beginner guide',
+    });
+
+    // Verify correlationId is present and follows expected format
+    expect(draft.metadata.correlationId).toBeDefined();
+    expect(typeof draft.metadata.correlationId).toBe('string');
+    expect(draft.metadata.correlationId.length).toBeGreaterThan(0);
+    // Correlation IDs follow pattern: 8 alphanumeric chars - 6 alphanumeric chars (e.g., 'mjkoz9pz-igofme')
+    expect(draft.metadata.correlationId).toMatch(/^[a-z0-9]+-[a-z0-9]+$/);
+  });
+
+  it('returns metadata with estimated cost when token usage is available', async () => {
+    const draft = await generateGameArticleDraft({
+      gameName: 'Test Game',
+      instruction: 'Write a beginner guide',
+    });
+
+    // If token usage is reported, estimatedCost should be calculated
+    if (draft.metadata.tokenUsage && draft.metadata.tokenUsage.total.input > 0) {
+      expect(draft.metadata.estimatedCost).toBeDefined();
+      expect(typeof draft.metadata.estimatedCost).toBe('number');
+      expect(draft.metadata.estimatedCost).toBeGreaterThanOrEqual(0);
+    }
   });
 
   describe('progress callbacks', () => {
