@@ -355,10 +355,16 @@ function calculateDynamicParagraphCounts(
   const wordsPerParagraph = WORD_COUNT_CONSTRAINTS.WORDS_PER_PARAGRAPH;
 
   // Calculate paragraph range based on target words per section
-  // Allow some flexibility with min/max
+  // Allow some flexibility with min/max using configured offsets
   const idealParagraphs = Math.round(targetWordsPerSection / wordsPerParagraph);
-  const minParagraphs = Math.max(2, idealParagraphs - 1);
-  const maxParagraphs = Math.min(8, idealParagraphs + 2);
+  const minParagraphs = Math.max(
+    WORD_COUNT_CONSTRAINTS.MIN_PARAGRAPHS_FLOOR,
+    idealParagraphs - WORD_COUNT_CONSTRAINTS.PARAGRAPH_RANGE_LOWER_OFFSET
+  );
+  const maxParagraphs = Math.min(
+    WORD_COUNT_CONSTRAINTS.MAX_PARAGRAPHS_CEILING,
+    idealParagraphs + WORD_COUNT_CONSTRAINTS.PARAGRAPH_RANGE_UPPER_OFFSET
+  );
 
   return { minParagraphs, maxParagraphs };
 }

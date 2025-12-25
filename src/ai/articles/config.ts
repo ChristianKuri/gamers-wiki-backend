@@ -134,6 +134,14 @@ export const WORD_COUNT_CONSTRAINTS = {
   WORDS_PER_SECTION: 400,
   /** Average words per paragraph (used to calculate paragraph count) */
   WORDS_PER_PARAGRAPH: 120,
+  /** Minimum paragraphs per section (floor for dynamic calculation) */
+  MIN_PARAGRAPHS_FLOOR: 2,
+  /** Maximum paragraphs per section (ceiling for dynamic calculation) */
+  MAX_PARAGRAPHS_CEILING: 8,
+  /** Subtracted from ideal paragraph count to get minimum */
+  PARAGRAPH_RANGE_LOWER_OFFSET: 1,
+  /** Added to ideal paragraph count to get maximum */
+  PARAGRAPH_RANGE_UPPER_OFFSET: 2,
 } as const;
 
 // ============================================================================
