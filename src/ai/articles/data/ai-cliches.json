@@ -1,6 +1,6 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "description": "AI clichés and overused phrases to detect in generated content",
+  "description": "AI clichés and overused phrases to detect in generated content. Note: Some phrases have gaming context exceptions in validation.ts that allow them when used literally (e.g., 'unlock an ability').",
   "cliches": [
     { "phrase": "in conclusion", "context": "conclusion cliché" },
     { "phrase": "let's dive into", "context": "conversational filler" },
@@ -21,12 +21,17 @@
     { "phrase": "in this article", "context": "meta reference" },
     { "phrase": "the landscape of", "context": "buzzword phrase" },
     { "phrase": "navigate the", "context": "overused metaphor" },
+    { "phrase": "unlock the potential", "context": "marketing cliché" },
     { "phrase": "unlock the secrets", "context": "clickbait phrase" },
+    { "phrase": "unlock new possibilities", "context": "marketing cliché" },
     { "phrase": "take your experience to the next level", "context": "marketing cliché" },
     { "phrase": "whether you're a", "context": "generic opener" },
     { "phrase": "first and foremost", "context": "filler phrase" },
     { "phrase": "it goes without saying", "context": "redundant phrase" },
-    { "phrase": "in today's gaming landscape", "context": "generic opener" }
+    { "phrase": "in today's gaming landscape", "context": "generic opener" },
+    { "phrase": "embark on", "context": "overused journey metaphor" },
+    { "phrase": "immerse yourself", "context": "marketing cliché" },
+    { "phrase": "elevate your", "context": "marketing cliché" }
   ]
 }
 

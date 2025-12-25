@@ -59,6 +59,63 @@ export const ALLOWED_SENTENCE_START_REPEATS = new Set([
   'with',
 ]);
 
+/**
+ * Gaming-specific terms that are valid in gaming context but might
+ * otherwise be flagged as clichés.
+ *
+ * These terms are commonly used literally in gaming articles:
+ * - "unlock" → you literally unlock abilities, characters, items
+ * - "level up" → core RPG/gaming mechanic
+ * - "power up" → collectibles that enhance abilities
+ * - "dive into" → can refer to actual diving mechanics in games
+ *
+ * When these patterns are found near the flagged cliché, we skip the warning.
+ */
+export const GAMING_CONTEXT_EXCEPTIONS: ReadonlyMap<string, readonly string[]> = new Map([
+  // "unlock" is valid when talking about unlocking game content
+  ['unlock', ['ability', 'skill', 'character', 'item', 'weapon', 'level', 'area', 'mode', 'achievement', 'trophy', 'content', 'feature', 'power', 'upgrade']],
+  // "level up" is a core gaming mechanic
+  ['level up', ['character', 'stats', 'experience', 'xp', 'skill', 'ability']],
+  // "power up" refers to actual power-ups in games
+  ['power up', ['item', 'collectible', 'boost', 'enhancement', 'mushroom', 'star']],
+  // "dive into" can be literal in some games
+  ['dive into', ['water', 'pool', 'ocean', 'lake', 'combat', 'battle']],
+  // "stands out" is sometimes necessary for comparisons
+  ['stands out', ['gameplay', 'mechanic', 'feature', 'combat', 'graphics', 'design']],
+]);
+
+/**
+ * Checks if a cliché phrase should be skipped because it appears
+ * in a valid gaming context.
+ *
+ * @param phrase - The cliché phrase that was matched
+ * @param markdown - The full markdown content (lowercase)
+ * @returns true if the phrase should be skipped (valid gaming context)
+ */
+function isValidGamingContext(phrase: string, markdown: string): boolean {
+  // Check if this phrase has gaming exceptions
+  const gamingTerms = GAMING_CONTEXT_EXCEPTIONS.get(phrase.toLowerCase());
+  if (!gamingTerms) return false;
+
+  // Find all occurrences of the phrase and check context around each
+  const phraseRegex = new RegExp(phrase.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi');
+  let match;
+
+  while ((match = phraseRegex.exec(markdown)) !== null) {
+    const start = Math.max(0, match.index - 50);
+    const end = Math.min(markdown.length, match.index + phrase.length + 50);
+    const context = markdown.slice(start, end).toLowerCase();
+
+    // If ANY gaming term appears near this occurrence, it's valid
+    const hasGamingContext = gamingTerms.some((term) => context.includes(term));
+    if (hasGamingContext) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
 
 // ============================================================================
 // Zod Schemas
@@ -267,12 +324,16 @@ function validateContentQuality(markdown: string): ValidationIssue[] {
     }
   }
 
-  // AI clichés
+  // AI clichés (with gaming context exceptions)
   const lowercaseMarkdown = contentMarkdown.toLowerCase();
   const foundCliches: string[] = [];
 
   for (const { phrase, context } of AI_CLICHES) {
     if (lowercaseMarkdown.includes(phrase)) {
+      // Skip if this phrase is valid in gaming context
+      if (isValidGamingContext(phrase, lowercaseMarkdown)) {
+        continue;
+      }
       foundCliches.push(`"${phrase}" (${context})`);
     }
   }
@@ -303,6 +364,145 @@ function validateContentQuality(markdown: string): ValidationIssue[] {
 
   if (repetitiveStarts.length > 0) {
     issues.push(issue('warning', `Repetitive sentence starts detected: ${repetitiveStarts.join(', ')}`));
+  }
+
+  return issues;
+}
+
+// ============================================================================
+// Content Deduplication
+// ============================================================================
+
+/**
+ * Threshold for section overlap detection.
+ * Sections with Jaccard similarity above this are flagged.
+ */
+const SECTION_OVERLAP_THRESHOLD = 0.4; // 40% term overlap
+
+/**
+ * Minimum number of key terms for meaningful overlap comparison.
+ * Sections with fewer terms than this are skipped.
+ */
+const MIN_TERMS_FOR_COMPARISON = 3;
+
+/**
+ * Extracts key terms from section content for overlap detection.
+ * Focuses on bolded terms (marked with **) and capitalized proper nouns,
+ * as these represent the main concepts of each section.
+ *
+ * @param content - The section content (markdown)
+ * @returns Set of lowercase key terms
+ */
+function extractKeyTerms(content: string): Set<string> {
+  const terms = new Set<string>();
+
+  // Extract bolded terms (these are the key concepts marked by the Specialist)
+  const boldedMatches = content.match(/\*\*([^*]+)\*\*/g);
+  if (boldedMatches) {
+    for (const match of boldedMatches) {
+      const term = match.replace(/\*\*/g, '').toLowerCase().trim();
+      if (term.length > 2) {
+        terms.add(term);
+      }
+    }
+  }
+
+  // Extract capitalized multi-word proper nouns (e.g., "Great Sky Island", "Temple of Time")
+  const properNounMatches = content.match(/[A-Z][a-z]+(?:\s+(?:of|the|and|in|on|at|to)\s+)?[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*/g);
+  if (properNounMatches) {
+    for (const match of properNounMatches) {
+      const term = match.toLowerCase().trim();
+      if (term.length > 3) {
+        terms.add(term);
+      }
+    }
+  }
+
+  return terms;
+}
+
+/**
+ * Calculates Jaccard similarity between two sets.
+ * Returns a value between 0 (no overlap) and 1 (identical sets).
+ *
+ * @param setA - First set of terms
+ * @param setB - Second set of terms
+ * @returns Jaccard similarity coefficient
+ */
+function jaccardSimilarity(setA: Set<string>, setB: Set<string>): number {
+  if (setA.size === 0 && setB.size === 0) return 0;
+
+  const intersection = new Set([...setA].filter((x) => setB.has(x)));
+  const union = new Set([...setA, ...setB]);
+
+  return intersection.size / union.size;
+}
+
+/**
+ * Gets the overlapping terms between two sets.
+ *
+ * @param setA - First set of terms
+ * @param setB - Second set of terms
+ * @returns Array of overlapping terms
+ */
+function getOverlappingTerms(setA: Set<string>, setB: Set<string>): string[] {
+  return [...setA].filter((x) => setB.has(x));
+}
+
+/**
+ * Detects content overlap between article sections.
+ * Helps identify when the same topic is covered redundantly in multiple sections.
+ *
+ * This is a heuristic check that extracts key terms (bolded terms, proper nouns)
+ * and calculates overlap. High overlap suggests potential redundancy.
+ *
+ * @param markdown - The full article markdown
+ * @returns Array of validation issues (warnings for overlapping sections)
+ */
+function validateSectionOverlap(markdown: string): ValidationIssue[] {
+  const issues: ValidationIssue[] = [];
+
+  // Extract sections from markdown
+  const sections = getContentH2Sections(markdown);
+  if (sections.length < 2) {
+    return issues; // Need at least 2 sections to compare
+  }
+
+  // Extract key terms for each section
+  const sectionTerms: Array<{ headline: string; terms: Set<string> }> = [];
+  for (const section of sections) {
+    const terms = extractKeyTerms(section.content);
+    sectionTerms.push({ headline: section.headline, terms });
+  }
+
+  // Compare each pair of sections
+  for (let i = 0; i < sectionTerms.length; i++) {
+    for (let j = i + 1; j < sectionTerms.length; j++) {
+      const sectionA = sectionTerms[i];
+      const sectionB = sectionTerms[j];
+
+      // Skip if either section has too few terms for meaningful comparison
+      if (sectionA.terms.size < MIN_TERMS_FOR_COMPARISON || sectionB.terms.size < MIN_TERMS_FOR_COMPARISON) {
+        continue;
+      }
+
+      const similarity = jaccardSimilarity(sectionA.terms, sectionB.terms);
+
+      if (similarity > SECTION_OVERLAP_THRESHOLD) {
+        const overlapping = getOverlappingTerms(sectionA.terms, sectionB.terms);
+        const overlapPercent = Math.round(similarity * 100);
+        const displayTerms = overlapping.slice(0, 4).join(', ');
+        const moreCount = overlapping.length > 4 ? ` +${overlapping.length - 4} more` : '';
+
+        issues.push(
+          issue(
+            'warning',
+            `Sections "${sectionA.headline}" and "${sectionB.headline}" have ${overlapPercent}% topic overlap. ` +
+              `Shared concepts: ${displayTerms}${moreCount}. Consider consolidating or differentiating.`
+          )
+        );
+      }
+    }
   }
 
   return issues;
@@ -349,6 +549,9 @@ export function validateArticleDraft(draft: {
 
   // Required elements coverage validation
   issues.push(...validateRequiredElements(draft.plan, draft.markdown));
+
+  // Section overlap detection (content deduplication)
+  issues.push(...validateSectionOverlap(draft.markdown));
 
   return issues;
 }
