@@ -3,14 +3,20 @@
  *
  * Responsible for gathering comprehensive research about a game through
  * multiple search queries and generating briefings for other agents.
+ *
+ * Uses two search strategies:
+ * - Tavily: Keyword-based web search for factual queries (overview, recent news)
+ * - Exa: Neural/semantic search for "how does X work" queries (guides only)
  */
 
 import type { LanguageModel } from 'ai';
 
 import { createPrefixedLogger, type Logger } from '../../../utils/logger';
+import { exaSearch, isExaConfigured, type ExaSearchOptions } from '../../tools/exa';
 import { SCOUT_CONFIG } from '../config';
 import { withRetry } from '../retry';
 import {
+  buildExaQueriesForGuides,
   buildScoutQueries,
   getScoutCategorySystemPrompt,
   getScoutCategoryUserPrompt,
@@ -35,6 +41,7 @@ import {
   type ResearchPool,
   type ScoutOutput,
   type SearchFunction,
+  type SearchSource,
   type TokenUsage,
 } from '../types';
 
@@ -76,7 +83,7 @@ export interface ScoutDeps {
 // ============================================================================
 
 /**
- * Options for executing a search operation.
+ * Options for executing a Tavily search operation.
  */
 export interface ExecuteSearchOptions {
   readonly searchDepth: 'basic' | 'advanced';
@@ -85,7 +92,17 @@ export interface ExecuteSearchOptions {
 }
 
 /**
- * Executes a search with retry logic and processes results into a CategorizedSearchResult.
+ * Options for executing an Exa search operation.
+ */
+export interface ExecuteExaSearchOptions {
+  readonly numResults?: number;
+  readonly type?: 'keyword' | 'neural' | 'auto';
+  readonly includeDomains?: readonly string[];
+  readonly signal?: AbortSignal;
+}
+
+/**
+ * Executes a Tavily search with retry logic and processes results into a CategorizedSearchResult.
  * Exported for unit testing.
  *
  * @param search - Search function to use
@@ -111,7 +128,62 @@ export async function executeSearch(
     { context: `Scout search (${category}): "${query.slice(0, 40)}..."`, signal: options.signal }
   );
 
-  return processSearchResults(query, category, result);
+  return processSearchResults(query, category, result, 'tavily');
+}
+
+/**
+ * Executes an Exa semantic search with retry logic.
+ * Exa is best for meaning-based queries like "how does X work".
+ * Exported for unit testing.
+ *
+ * @param query - Semantic query string (natural language works best)
+ * @param category - Category to assign to results
+ * @param options - Exa search options
+ * @returns Processed search results with searchSource='exa'
+ */
+export async function executeExaSearch(
+  query: string,
+  category: CategorizedSearchResult['category'],
+  options: ExecuteExaSearchOptions = {}
+): Promise<CategorizedSearchResult> {
+  const exaOptions: ExaSearchOptions = {
+    numResults: options.numResults ?? SCOUT_CONFIG.CATEGORY_SEARCH_RESULTS,
+    type: options.type ?? 'neural',
+    useAutoprompt: true,
+    ...(options.includeDomains && options.includeDomains.length > 0
+      ? { includeDomains: options.includeDomains }
+      : {}),
+  };
+
+  const result = await withRetry(
+    () => exaSearch(query, exaOptions),
+    { context: `Scout Exa search (${category}): "${query.slice(0, 40)}..."`, signal: options.signal }
+  );
+
+  // Log Exa search result
+  if (result.results.length > 0) {
+    // Logging happens at call site, but we could add more detail here if needed
+  } else {
+    // Empty results - could indicate API issue or no matches
+    // This is logged by withRetry on failure, so we don't need to log here
+  }
+
+  // Convert Exa response to CategorizedSearchResult format
+  return processSearchResults(
+    query,
+    category,
+    {
+      // Exa doesn't provide answer summaries like Tavily
+      answer: null,
+      results: result.results.map((r) => ({
+        title: r.title,
+        url: r.url,
+        content: r.content,
+        score: r.score,
+      })),
+    },
+    'exa' as SearchSource
+  );
 }
 
 /**
@@ -367,6 +439,9 @@ export function assembleScoutOutput(
  * Runs the Scout agent to gather research about a game.
  * Research and briefings are always generated in English.
  *
+ * For guide articles, uses both Tavily (keyword search) and Exa (semantic search)
+ * to get comprehensive research coverage.
+ *
  * @param context - Game context for research
  * @param deps - Dependencies (search, generateText, model)
  * @returns Scout output with briefings and research pool
@@ -380,14 +455,37 @@ export async function runScout(
   const temperature = deps.temperature ?? SCOUT_CONFIG.TEMPERATURE;
   const localeInstruction = 'Write in English.';
 
-  // Build search queries
+  // Build search queries (Tavily keyword-based)
   const queries = buildScoutQueries(context);
   const dedupedCategoryQueries = deduplicateQueries(queries.category);
-
   const categoryQueriesToExecute = dedupedCategoryQueries.slice(0, SCOUT_CONFIG.MAX_CATEGORY_SEARCHES);
-  const totalSearches = 1 + categoryQueriesToExecute.length + 1; // overview + category + recent
 
-  log.debug(`Executing ${totalSearches} parallel searches: overview + ${categoryQueriesToExecute.length} category + recent`);
+  // Build Exa queries for guides (semantic/neural search)
+  const exaConfig = buildExaQueriesForGuides(context);
+  const useExa = exaConfig && isExaConfigured();
+
+  // Log Exa availability
+  if (exaConfig && !isExaConfigured()) {
+    log.debug('Exa API not configured (EXA_API_KEY missing) - skipping semantic search');
+  }
+
+  // Calculate total searches
+  const tavilySearchCount = 1 + categoryQueriesToExecute.length + 1; // overview + category + recent
+  const exaSearchCount = useExa ? exaConfig.semantic.length : 0;
+  const totalSearches = tavilySearchCount + exaSearchCount;
+
+  if (useExa) {
+    log.debug(
+      `Executing ${totalSearches} parallel searches: ` +
+        `${tavilySearchCount} Tavily (overview + ${categoryQueriesToExecute.length} category + recent) + ` +
+        `${exaSearchCount} Exa (semantic)`
+    );
+    log.debug(`Exa semantic queries: ${exaConfig.semantic.map((q) => `"${q.slice(0, 50)}..."`).join(', ')}`);
+  } else {
+    log.debug(
+      `Executing ${totalSearches} parallel searches: ${tavilySearchCount} Tavily (overview + ${categoryQueriesToExecute.length} category + recent)`
+    );
+  }
 
   // Track search completions for progress reporting
   let completedSearches = 0;
@@ -402,7 +500,8 @@ export async function runScout(
   deps.onProgress?.('search', 0, totalSearches);
 
   // ===== PARALLEL SEARCH PHASE =====
-  const searchPromises = [
+  // Tavily searches (keyword-based)
+  const tavilyPromises: Promise<CategorizedSearchResult>[] = [
     trackSearchProgress(
       executeSearch(deps.search, queries.overview, 'overview', {
         searchDepth: SCOUT_CONFIG.OVERVIEW_SEARCH_DEPTH,
@@ -428,20 +527,56 @@ export async function runScout(
     ),
   ];
 
-  const searchResults = await Promise.all(searchPromises);
+  // Exa searches (semantic/neural) - only for guides
+  const exaPromises: Promise<CategorizedSearchResult>[] = useExa
+    ? exaConfig.semantic.map((query) =>
+        trackSearchProgress(
+          executeExaSearch(query, 'category-specific', {
+            numResults: SCOUT_CONFIG.CATEGORY_SEARCH_RESULTS,
+            type: 'neural',
+            // Note: includeDomains is optional - Exa's neural search often finds good results without it
+            signal,
+          })
+        )
+      )
+    : [];
 
-  // Process results: first is overview, last is recent, middle are category
-  const overviewSearch = searchResults[0];
-  const recentSearch = searchResults[searchResults.length - 1];
-  const categorySearches = searchResults.slice(1, -1);
+  // Execute all searches in parallel
+  const [tavilyResults, exaResults] = await Promise.all([
+    Promise.all(tavilyPromises),
+    Promise.all(exaPromises),
+  ]);
+
+  // Process Tavily results: first is overview, last is recent, middle are category
+  const overviewSearch = tavilyResults[0];
+  const recentSearch = tavilyResults[tavilyResults.length - 1];
+  const tavilyCategorySearches = tavilyResults.slice(1, -1);
+
+  // Combine category searches from both sources
+  const allCategorySearches = [...tavilyCategorySearches, ...exaResults];
 
   // Build research pool
   const poolBuilder = new ResearchPoolBuilder()
     .add(overviewSearch)
-    .addAll(categorySearches)
+    .addAll(allCategorySearches)
     .add(recentSearch);
 
   const researchPool = poolBuilder.build();
+
+  // Log Exa usage metrics if enabled
+  if (useExa) {
+    if (exaResults.length > 0) {
+      const exaUrlCount = exaResults.reduce((sum, r) => sum + r.results.length, 0);
+      const successfulQueries = exaResults.filter((r) => r.results.length > 0).length;
+      const successRate = ((successfulQueries / exaResults.length) * 100).toFixed(1);
+      log.debug(
+        `Exa API: ${exaUrlCount} sources from ${exaResults.length} queries ` +
+          `(${successfulQueries}/${exaResults.length} successful, ${successRate}% success rate)`
+      );
+    } else {
+      log.debug('Exa API: No results returned from semantic queries');
+    }
+  }
 
   // ===== BRIEFING GENERATION PHASE =====
   const allSearchResults = [

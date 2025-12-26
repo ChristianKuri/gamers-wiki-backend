@@ -11,6 +11,7 @@ import type {
   ResearchPool,
   SearchCategory,
   SearchResultItem,
+  SearchSource,
 } from './types';
 
 // ============================================================================
@@ -299,6 +300,7 @@ export function extractResearchForQueries(
  * @param query - The search query
  * @param category - The category for this search
  * @param rawResults - Raw results from search API
+ * @param searchSource - The search API used ('tavily' or 'exa'), defaults to 'tavily'
  * @returns Processed categorized result
  */
 export function processSearchResults(
@@ -307,7 +309,8 @@ export function processSearchResults(
   rawResults: {
     answer?: string | null;
     results: readonly { title: string; url: string; content?: string; score?: number }[];
-  }
+  },
+  searchSource: SearchSource = 'tavily'
 ): CategorizedSearchResult {
   const processedResults: SearchResultItem[] = rawResults.results
     .map((r) => {
@@ -328,6 +331,7 @@ export function processSearchResults(
     results: processedResults,
     category,
     timestamp: Date.now(),
+    searchSource,
   };
 }
 

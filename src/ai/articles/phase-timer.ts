@@ -19,6 +19,7 @@ export interface PhaseDurations {
   readonly scout: number;
   readonly editor: number;
   readonly specialist: number;
+  readonly reviewer: number;
   readonly validation: number;
 }
 
@@ -103,6 +104,7 @@ export class PhaseTimer {
       scout: this.getDuration('scout'),
       editor: this.getDuration('editor'),
       specialist: this.getDuration('specialist'),
+      reviewer: this.getDuration('reviewer'),
       validation: this.getDuration('validation'),
     };
   }

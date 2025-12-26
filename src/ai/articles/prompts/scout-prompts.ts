@@ -217,6 +217,90 @@ export function detectArticleIntent(instruction: string | null | undefined): 'gu
 }
 
 /**
+ * Exa semantic query configuration for guide articles.
+ * These queries are designed for Exa's neural search, which understands meaning rather than keywords.
+ */
+export interface ExaQueryConfig {
+  /** Semantic queries for Exa neural search */
+  readonly semantic: string[];
+  /** Domains to prioritize for guide content (wikis, authoritative gaming sites) */
+  readonly preferredDomains: readonly string[];
+}
+
+/**
+ * Builds Exa-specific queries for guide articles.
+ * Exa excels at semantic/meaning-based queries like "how does X work".
+ *
+ * @param context - Game article context
+ * @returns Exa query configuration for guides, or null if not a guide
+ */
+export function buildExaQueriesForGuides(context: GameArticleContext): ExaQueryConfig | null {
+  const intent = detectArticleIntent(context.instruction);
+
+  // Only use Exa for guide articles (for now)
+  if (intent !== 'guide') {
+    return null;
+  }
+
+  const semanticQueries: string[] = [];
+
+  // Core semantic queries for guides - natural language that Exa handles well
+  semanticQueries.push(`how does gameplay work in ${context.gameName}`);
+  semanticQueries.push(`beginner tips and essential mechanics for ${context.gameName}`);
+
+  // Extract specific mechanics from instruction if present
+  if (context.instruction) {
+    const lowerInstruction = context.instruction.toLowerCase();
+
+    // Add instruction-specific semantic queries
+    if (lowerInstruction.includes('first hour') || lowerInstruction.includes('beginner')) {
+      semanticQueries.push(`what to do first when starting ${context.gameName}`);
+      semanticQueries.push(`essential early game tips for ${context.gameName}`);
+    }
+    if (lowerInstruction.includes('build') || lowerInstruction.includes('class')) {
+      semanticQueries.push(`best character builds and loadouts in ${context.gameName}`);
+    }
+    if (lowerInstruction.includes('boss') || lowerInstruction.includes('combat')) {
+      semanticQueries.push(`combat strategies and boss tips for ${context.gameName}`);
+    }
+  }
+
+  // Add genre-specific semantic queries
+  if (context.genres) {
+    const genresLower = context.genres.map((g) => g.toLowerCase());
+    if (genresLower.some((g) => g.includes('rpg') || g.includes('role-playing'))) {
+      semanticQueries.push(`character progression and leveling guide for ${context.gameName}`);
+    }
+    if (genresLower.some((g) => g.includes('open world') || g.includes('adventure'))) {
+      semanticQueries.push(`exploration tips and key locations in ${context.gameName}`);
+    }
+    if (genresLower.some((g) => g.includes('action') || g.includes('souls'))) {
+      semanticQueries.push(`combat mechanics and controls in ${context.gameName}`);
+    }
+  }
+
+  // Limit to 3 Exa queries to balance cost and coverage
+  const limitedQueries = semanticQueries.slice(0, 3);
+
+  // Preferred domains for guide content (wikis and authoritative gaming sites)
+  const preferredDomains = [
+    'fandom.com',
+    'ign.com',
+    'polygon.com',
+    'gamespot.com',
+    'eurogamer.net',
+    'kotaku.com',
+    'pcgamer.com',
+    'rockpapershotgun.com',
+  ] as const;
+
+  return {
+    semantic: limitedQueries,
+    preferredDomains,
+  };
+}
+
+/**
  * Builds search queries for Scout with category-aware filtering.
  * Tailors queries based on detected article intent to avoid irrelevant content.
  */

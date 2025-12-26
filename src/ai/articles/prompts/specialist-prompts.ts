@@ -88,6 +88,12 @@ export interface SpecialistSectionContext {
    * Only passed to the last section for final verification checklist.
    */
   readonly requiredElements?: readonly string[];
+  /**
+   * Cross-section awareness context.
+   * Lists topics already covered in previous sections to prevent redundancy.
+   * Only populated in sequential writing mode.
+   */
+  readonly crossReferenceContext?: string;
 }
 
 /**
@@ -198,7 +204,7 @@ ${ctx.researchContext || '(Using Scout research only for this section)'}
 
 === CONTINUITY CONTEXT ===
 ${continuityText}
-
+${ctx.crossReferenceContext ? `\n${ctx.crossReferenceContext}\n` : ''}
 === WRITING GUIDELINES ===
 
 ${thinResearchWarning}Paragraph structure:

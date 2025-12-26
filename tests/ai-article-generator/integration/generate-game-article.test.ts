@@ -15,9 +15,10 @@ describe('generateGameArticleDraft (integration-ish)', () => {
   const envBackup = { ...process.env };
 
   beforeAll(() => {
-    // Ensure Tavily wrapper actually calls the (mocked) API instead of
-    // short-circuiting due to missing API key.
+    // Ensure Tavily and Exa wrappers actually call the (mocked) APIs instead of
+    // short-circuiting due to missing API keys.
     process.env.TAVILY_API_KEY = 'test-tavily-key';
+    process.env.EXA_API_KEY = 'test-exa-key';
     process.env.OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY || 'test-openrouter-key';
     server.listen();
   });
@@ -112,6 +113,7 @@ describe('generateGameArticleDraft (integration-ish)', () => {
 
         // Only override the Editor plan generation; allow everything else to be generic.
         if (userText.includes('Return ONLY valid JSON')) {
+          // Must have at least 4 sections (MIN_SECTIONS = 4)
           const plan = {
             title: 'Test Plan With Duplicate Queries',
             categorySlug: 'guides',
@@ -122,6 +124,7 @@ describe('generateGameArticleDraft (integration-ish)', () => {
               { headline: 'A', goal: 'g', researchQueries: [duplicateQuery] },
               { headline: 'B', goal: 'g', researchQueries: [duplicateQuery] },
               { headline: 'C', goal: 'g', researchQueries: [duplicateQuery] },
+              { headline: 'D', goal: 'g', researchQueries: [duplicateQuery] },
             ],
             safety: { noPrices: true, noScoresUnlessReview: true },
           };
@@ -174,6 +177,7 @@ describe('generateGameArticleDraft (integration-ish)', () => {
         const userText = messages.find((m) => m.role === 'user')?.content ?? '';
 
         if (userText.includes('Return ONLY valid JSON')) {
+          // Must have at least 4 sections (MIN_SECTIONS = 4)
           const plan = {
             title: 'Test Plan With Duplicate Queries',
             categorySlug: 'guides',
@@ -184,6 +188,7 @@ describe('generateGameArticleDraft (integration-ish)', () => {
               { headline: 'A', goal: 'g', researchQueries: [duplicateQuery] },
               { headline: 'B', goal: 'g', researchQueries: [duplicateQuery] },
               { headline: 'C', goal: 'g', researchQueries: [duplicateQuery] },
+              { headline: 'D', goal: 'g', researchQueries: [duplicateQuery] },
             ],
             safety: { noPrices: true, noScoresUnlessReview: true },
           };
@@ -229,10 +234,15 @@ describe('generateGameArticleDraft (integration-ish)', () => {
       })
     );
 
-    await generateGameArticleDraft({
-      gameName: 'Test Game',
-      instruction: 'Write a beginner guide for the first 5 hours.',
-    });
+    // Disable Reviewer since this test's mock handlers don't support it
+    await generateGameArticleDraft(
+      {
+        gameName: 'Test Game',
+        instruction: 'Write a beginner guide for the first 5 hours.',
+      },
+      undefined,
+      { enableReviewer: false }
+    );
 
     // Scout searches will add additional Tavily calls; we only care that this specific
     // section-specific query is executed once.
@@ -247,6 +257,7 @@ describe('generateGameArticleDraft (integration-ish)', () => {
       'Without this padding, the validation would fail because the article would be too short.';
 
     // Create a lists category plan
+    // Must have at least 4 sections (MIN_SECTIONS = 4)
     const listsPlan = {
       title: 'Top 10 Best Weapons in the Game',
       categorySlug: 'lists',
@@ -257,6 +268,7 @@ describe('generateGameArticleDraft (integration-ish)', () => {
         { headline: 'Sword of Legends', goal: 'desc', researchQueries: ['q1'] },
         { headline: 'Moonlight Greatsword', goal: 'desc', researchQueries: ['q2'] },
         { headline: 'Dragon Halberd', goal: 'desc', researchQueries: ['q3'] },
+        { headline: 'Shadow Dagger', goal: 'desc', researchQueries: ['q4'] },
       ],
       safety: { noPrices: true, noScoresUnlessReview: true },
     };
@@ -351,10 +363,15 @@ describe('generateGameArticleDraft (integration-ish)', () => {
       })
     );
 
-    const draft = await generateGameArticleDraft({
-      gameName: 'Test Game',
-      instruction: 'Write a top 10 weapons list',
-    });
+    // Disable Reviewer since this test's mock handlers don't support it
+    const draft = await generateGameArticleDraft(
+      {
+        gameName: 'Test Game',
+        instruction: 'Write a top 10 weapons list',
+      },
+      undefined,
+      { enableReviewer: false }
+    );
 
     // Verify lists category was selected
     expect(draft.categorySlug).toBe('lists');
@@ -494,11 +511,11 @@ describe('generateGameArticleDraft (integration-ish)', () => {
       instruction: 'Write a beginner guide',
     });
 
-    // If token usage is reported, estimatedCost should be calculated
+    // If token usage is reported, estimatedCostUsd should be calculated
     if (draft.metadata.tokenUsage && draft.metadata.tokenUsage.total.input > 0) {
-      expect(draft.metadata.estimatedCost).toBeDefined();
-      expect(typeof draft.metadata.estimatedCost).toBe('number');
-      expect(draft.metadata.estimatedCost).toBeGreaterThanOrEqual(0);
+      expect(draft.metadata.tokenUsage.estimatedCostUsd).toBeDefined();
+      expect(typeof draft.metadata.tokenUsage.estimatedCostUsd).toBe('number');
+      expect(draft.metadata.tokenUsage.estimatedCostUsd).toBeGreaterThanOrEqual(0);
     }
   });
 
@@ -588,6 +605,7 @@ describe('generateGameArticleDraft (integration-ish)', () => {
         'The content here is deliberately verbose and repetitive to ensure the generated article meets the minimum character requirements.';
 
       // Create a guides category plan (normally sequential)
+      // Must have at least 4 sections (MIN_SECTIONS = 4)
       const guidesPlan = {
         title: 'Beginner Guide for Test Game',
         categorySlug: 'guides',
@@ -598,6 +616,7 @@ describe('generateGameArticleDraft (integration-ish)', () => {
           { headline: 'Getting Started', goal: 'intro', researchQueries: ['q1'] },
           { headline: 'Basic Controls', goal: 'controls', researchQueries: ['q2'] },
           { headline: 'First Mission', goal: 'mission', researchQueries: ['q3'] },
+          { headline: 'Tips and Tricks', goal: 'tips', researchQueries: ['q4'] },
         ],
         safety: { noScoresUnlessReview: true },
       };
@@ -690,13 +709,14 @@ describe('generateGameArticleDraft (integration-ish)', () => {
         })
       );
 
+      // Disable Reviewer since this test's mock handlers don't support it
       const draft = await generateGameArticleDraft(
         {
           gameName: 'Test Game',
           instruction: 'Write a beginner guide',
         },
         undefined,
-        { parallelSections: true } // Force parallel even for guides
+        { parallelSections: true, enableReviewer: false } // Force parallel even for guides
       );
 
       // Verify guides category was selected (not lists)
@@ -714,6 +734,7 @@ describe('generateGameArticleDraft (integration-ish)', () => {
         'The content here is deliberately verbose and repetitive to ensure the generated article meets the minimum character requirements.';
 
       // Create a lists category plan (normally parallel)
+      // Must have at least 4 sections (MIN_SECTIONS = 4)
       const listsPlan = {
         title: 'Top 5 Weapons in Test Game',
         categorySlug: 'lists',
@@ -724,6 +745,7 @@ describe('generateGameArticleDraft (integration-ish)', () => {
           { headline: 'Legendary Sword', goal: 'desc', researchQueries: ['q1'] },
           { headline: 'Dragon Bow', goal: 'desc', researchQueries: ['q2'] },
           { headline: 'Magic Staff', goal: 'desc', researchQueries: ['q3'] },
+          { headline: 'Shadow Dagger', goal: 'desc', researchQueries: ['q4'] },
         ],
         safety: { noScoresUnlessReview: true },
       };
@@ -804,13 +826,14 @@ describe('generateGameArticleDraft (integration-ish)', () => {
         })
       );
 
+      // Disable Reviewer since this test's mock handlers don't support it
       const draft = await generateGameArticleDraft(
         {
           gameName: 'Test Game',
           instruction: 'Write a top 5 weapons list',
         },
         undefined,
-        { parallelSections: false } // Force sequential even for lists
+        { parallelSections: false, enableReviewer: false } // Force sequential even for lists
       );
 
       // Verify lists category was selected
@@ -1040,16 +1063,21 @@ describe('generateGameArticleDraft (integration-ish)', () => {
         expect(draft.metadata.tokenUsage.specialist).toBeDefined();
         expect(draft.metadata.tokenUsage.total).toBeDefined();
 
-        // Total should be sum of phases
+        // Total should be sum of phases (including reviewer if enabled)
+        const reviewerInput = draft.metadata.tokenUsage.reviewer?.input ?? 0;
+        const reviewerOutput = draft.metadata.tokenUsage.reviewer?.output ?? 0;
+
         expect(draft.metadata.tokenUsage.total.input).toBe(
           draft.metadata.tokenUsage.scout.input +
             draft.metadata.tokenUsage.editor.input +
-            draft.metadata.tokenUsage.specialist.input
+            draft.metadata.tokenUsage.specialist.input +
+            reviewerInput
         );
         expect(draft.metadata.tokenUsage.total.output).toBe(
           draft.metadata.tokenUsage.scout.output +
             draft.metadata.tokenUsage.editor.output +
-            draft.metadata.tokenUsage.specialist.output
+            draft.metadata.tokenUsage.specialist.output +
+            reviewerOutput
         );
       }
     });
@@ -1065,6 +1093,7 @@ describe('generateGameArticleDraft (integration-ish)', () => {
 
     it('fails early with EDITOR_FAILED when plan has duplicate headlines', async () => {
       // Override OpenRouter to return a plan with duplicate section headlines
+      // Must have at least 4 sections (MIN_SECTIONS = 4) so Zod passes and custom validation runs
       const invalidPlan = {
         title: 'Test Article With Invalid Plan Structure',
         categorySlug: 'guides',
@@ -1075,6 +1104,7 @@ describe('generateGameArticleDraft (integration-ish)', () => {
           { headline: 'Same Headline', goal: 'Goal 1', researchQueries: ['query 1'] },
           { headline: 'Same Headline', goal: 'Goal 2', researchQueries: ['query 2'] },
           { headline: 'Different', goal: 'Goal 3', researchQueries: ['query 3'] },
+          { headline: 'Another Different', goal: 'Goal 4', researchQueries: ['query 4'] },
         ],
         safety: { noScoresUnlessReview: true },
       };
@@ -1193,6 +1223,7 @@ describe('generateGameArticleDraft (integration-ish)', () => {
 
     it('fails early with EDITOR_FAILED when plan has whitespace-only section goals', async () => {
       // Whitespace-only goals pass Zod's min(1) but fail our custom trim validation
+      // Must have at least 4 sections (MIN_SECTIONS = 4) so Zod passes and custom validation runs
       const invalidPlan = {
         title: 'Test Article With Empty Section Goal',
         categorySlug: 'guides',
@@ -1203,6 +1234,7 @@ describe('generateGameArticleDraft (integration-ish)', () => {
           { headline: 'Section One', goal: '   ', researchQueries: ['query 1'] }, // Whitespace-only
           { headline: 'Section Two', goal: 'Valid goal', researchQueries: ['query 2'] },
           { headline: 'Section Three', goal: 'Another goal', researchQueries: ['query 3'] },
+          { headline: 'Section Four', goal: 'Yet another goal', researchQueries: ['query 4'] },
         ],
         safety: { noScoresUnlessReview: true },
       };
@@ -1313,6 +1345,284 @@ describe('generateGameArticleDraft (integration-ish)', () => {
         expect(error).toBeInstanceOf(ArticleGenerationError);
         expect((error as ArticleGenerationError).code).toBe('EDITOR_FAILED');
         expect((error as ArticleGenerationError).message.toLowerCase()).toContain('empty goal');
+      }
+    });
+  });
+
+  describe('Reviewer Agent Integration', () => {
+    it('runs Reviewer when enableReviewer is true and includes issues in output', async () => {
+      const draft = await generateGameArticleDraft(
+        {
+          gameName: 'The Legend of Zelda: Tears of the Kingdom',
+          gameSlug: 'the-legend-of-zelda-tears-of-the-kingdom',
+          releaseDate: '2023-05-12',
+          genres: ['Adventure', 'Action'],
+          platforms: ['Nintendo Switch'],
+          developer: 'Nintendo',
+          publisher: 'Nintendo',
+          igdbDescription: 'A sequel to Breath of the Wild.',
+          instruction: 'Write a beginner guide for the first 5 hours.',
+          categoryHints: [
+            { slug: 'guides', systemPrompt: 'Step-by-step help and actionable tips.' },
+          ],
+        },
+        undefined,
+        { enableReviewer: true }
+      );
+
+      // Verify Reviewer output is included
+      expect(draft.reviewerIssues).toBeDefined();
+      expect(Array.isArray(draft.reviewerIssues)).toBe(true);
+      expect(draft.reviewerApproved).toBeDefined();
+      expect(typeof draft.reviewerApproved).toBe('boolean');
+
+      // Verify Reviewer model is included in models
+      expect(draft.models.reviewer).toBeDefined();
+      expect(typeof draft.models.reviewer).toBe('string');
+
+      // Verify Reviewer token usage is tracked
+      expect(draft.metadata.tokenUsage?.reviewer).toBeDefined();
+      expect(draft.metadata.tokenUsage?.reviewer?.input).toBeGreaterThanOrEqual(0);
+      expect(draft.metadata.tokenUsage?.reviewer?.output).toBeGreaterThanOrEqual(0);
+
+      // Verify Reviewer phase duration is tracked
+      expect(draft.metadata.phaseDurations.reviewer).toBeGreaterThanOrEqual(0);
+    });
+
+    it('skips Reviewer when enableReviewer is false', async () => {
+      const draft = await generateGameArticleDraft(
+        {
+          gameName: 'Test Game',
+          instruction: 'Write a guide',
+        },
+        undefined,
+        { enableReviewer: false }
+      );
+
+      // Reviewer should not be included
+      expect(draft.reviewerIssues).toBeUndefined();
+      expect(draft.reviewerApproved).toBeUndefined();
+      expect(draft.models.reviewer).toBeUndefined();
+      expect(draft.metadata.tokenUsage?.reviewer).toBeUndefined();
+      expect(draft.metadata.phaseDurations.reviewer).toBe(0);
+    });
+
+    it('handles Reviewer rejection scenario with critical issues', async () => {
+      // Mock responses for different phases
+      const scoutText =
+        'This is a comprehensive mock response for the Scout phase that provides enough content ' +
+        'for the research briefing. It includes general information about the game, its mechanics, ' +
+        'and various tips and strategies that players have discovered.';
+
+      // Must have at least 4 sections (MIN_SECTIONS = 4)
+      const mockArticlePlan = {
+        title: 'Test Article',
+        categorySlug: 'guides',
+        excerpt: 'This is a test excerpt that is deliberately between 120 and 160 characters to satisfy the schema constraints for validation.',
+        tags: ['test'],
+        sections: [
+          { headline: 'Section 1', goal: 'Goal 1', researchQueries: ['query 1'] },
+          { headline: 'Section 2', goal: 'Goal 2', researchQueries: ['query 2'] },
+          { headline: 'Section 3', goal: 'Goal 3', researchQueries: ['query 3'] },
+          { headline: 'Section 4', goal: 'Goal 4', researchQueries: ['query 4'] },
+        ],
+        safety: { noScoresUnlessReview: true },
+      };
+
+      // Override Reviewer handler to return rejection
+      server.use(
+        http.post('https://openrouter.ai/api/v1/responses', async ({ request }) => {
+          const body = (await request.json()) as {
+            input: Array<{ role: string; content: string | Array<{ type: string; text: string }> }>;
+            model: string;
+          };
+
+          const messages = body.input.map((msg) => {
+            const content =
+              typeof msg.content === 'string'
+                ? msg.content
+                : (msg.content as Array<{ type: string; text: string }>)?.[0]?.text || '';
+            return { role: msg.role, content };
+          });
+
+          const userText = messages.find((m) => m.role === 'user')?.content ?? '';
+          const lowerUserText = userText.toLowerCase();
+
+          // Check if this is a Reviewer prompt (check FIRST to avoid false matches)
+          if (
+            lowerUserText.includes('review the following article draft') &&
+            lowerUserText.includes('=== article plan ===') &&
+            lowerUserText.includes('=== article content ===')
+          ) {
+            const rejectionResponse = {
+              approved: false,
+              issues: [
+                {
+                  severity: 'critical',
+                  category: 'factual',
+                  location: 'Section 1',
+                  message: 'Claim contradicts research: Game was released in 2024, not 2023.',
+                  suggestion: 'Verify release date against research sources.',
+                },
+                {
+                  severity: 'major',
+                  category: 'coverage',
+                  location: 'Getting Started',
+                  message: 'Required element "Ultrahand ability" is missing from the article.',
+                },
+              ],
+              suggestions: ['Verify all factual claims against research before publishing.'],
+            };
+
+            return HttpResponse.json({
+              id: 'mock-reviewer',
+              object: 'response',
+              created_at: Date.now(),
+              model: body.model,
+              status: 'completed',
+              output: [
+                {
+                  id: 'mock-reviewer-output',
+                  type: 'message',
+                  role: 'assistant',
+                  status: 'completed',
+                  content: [{ type: 'output_text', text: JSON.stringify(rejectionResponse), annotations: [] }],
+                },
+              ],
+              usage: { input_tokens: 500, output_tokens: 150, total_tokens: 650 },
+            });
+          }
+
+          // Handle ArticlePlan prompts (Editor phase)
+          if (
+            userText.includes('Plan an article about the game') ||
+            userText.includes('Return ONLY valid JSON') ||
+            userText.includes('categorySlug must be one of')
+          ) {
+            return HttpResponse.json({
+              id: 'mock-response-id',
+              object: 'response',
+              created_at: Date.now(),
+              model: body.model,
+              status: 'completed',
+              output: [
+                {
+                  id: 'mock-output-id',
+                  type: 'message',
+                  role: 'assistant',
+                  status: 'completed',
+                  content: [{ type: 'output_text', text: JSON.stringify(mockArticlePlan), annotations: [] }],
+                },
+              ],
+              usage: { input_tokens: 100, output_tokens: 200, total_tokens: 300 },
+            });
+          }
+
+          // Handle Scout briefing prompts
+          if (lowerUserText.includes('briefing document')) {
+            return HttpResponse.json({
+              id: 'mock-response-id',
+              object: 'response',
+              created_at: Date.now(),
+              model: body.model,
+              status: 'completed',
+              output: [
+                {
+                  id: 'mock-output-id',
+                  type: 'message',
+                  role: 'assistant',
+                  status: 'completed',
+                  content: [{ type: 'output_text', text: scoutText, annotations: [] }],
+                },
+              ],
+              usage: { input_tokens: 100, output_tokens: 200, total_tokens: 300 },
+            });
+          }
+
+          // Handle section writing prompts
+          if (userText.includes('Write the next section of a game article')) {
+            return HttpResponse.json({
+              id: 'mock-response-id',
+              object: 'response',
+              created_at: Date.now(),
+              model: body.model,
+              status: 'completed',
+              output: [
+                {
+                  id: 'mock-output-id',
+                  type: 'message',
+                  role: 'assistant',
+                  status: 'completed',
+                  content: [{ type: 'output_text', text: 'This is a sample paragraph with **emphasis** and continuity.', annotations: [] }],
+                },
+              ],
+              usage: { input_tokens: 100, output_tokens: 200, total_tokens: 300 },
+            });
+          }
+
+          // Fall back to Scout text for any other requests
+          return HttpResponse.json({
+            id: 'mock',
+            object: 'response',
+            created_at: Date.now(),
+            model: body.model,
+            status: 'completed',
+            output: [
+              {
+                id: 'mock',
+                type: 'message',
+                role: 'assistant',
+                status: 'completed',
+                content: [{ type: 'output_text', text: scoutText, annotations: [] }],
+              },
+            ],
+            usage: { input_tokens: 100, output_tokens: 200, total_tokens: 300 },
+          });
+        })
+      );
+
+      const draft = await generateGameArticleDraft(
+        {
+          gameName: 'Test Game',
+          instruction: 'Write a guide',
+        },
+        undefined,
+        { enableReviewer: true }
+      );
+
+      // Verify Reviewer found issues
+      expect(draft.reviewerIssues).toBeDefined();
+      expect(draft.reviewerIssues?.length).toBeGreaterThan(0);
+      expect(draft.reviewerApproved).toBe(false);
+
+      // Verify critical issue is present
+      const criticalIssues = draft.reviewerIssues?.filter((i) => i.severity === 'critical') || [];
+      expect(criticalIssues.length).toBeGreaterThan(0);
+      expect(criticalIssues[0].category).toBe('factual');
+    });
+
+    it('tracks Reviewer token usage correctly', async () => {
+      const draft = await generateGameArticleDraft(
+        {
+          gameName: 'Test Game',
+          instruction: 'Write a guide',
+        },
+        undefined,
+        { enableReviewer: true }
+      );
+
+      // Verify token usage is tracked
+      if (draft.metadata.tokenUsage.reviewer) {
+        expect(draft.metadata.tokenUsage.reviewer.input).toBeGreaterThan(0);
+        expect(draft.metadata.tokenUsage.reviewer.output).toBeGreaterThan(0);
+
+        // Verify total token usage includes Reviewer
+        expect(draft.metadata.tokenUsage.total.input).toBeGreaterThanOrEqual(
+          draft.metadata.tokenUsage.reviewer.input
+        );
+        expect(draft.metadata.tokenUsage.total.output).toBeGreaterThanOrEqual(
+          draft.metadata.tokenUsage.reviewer.output
+        );
       }
     });
   });

@@ -58,10 +58,10 @@ import {
   type ContextualLogger,
   type Logger,
 } from '../../utils/logger';
-import { runScout, runEditor, runSpecialist, type EditorOutput } from './agents';
+import { runScout, runEditor, runSpecialist, runReviewer, type EditorOutput, type ReviewerOutput } from './agents';
 import type { SpecialistOutput } from './agents/specialist';
 import type { ArticlePlan, ArticleCategorySlug } from './article-plan';
-import { GENERATOR_CONFIG, WORD_COUNT_DEFAULTS, WORD_COUNT_CONSTRAINTS } from './config';
+import { GENERATOR_CONFIG, WORD_COUNT_DEFAULTS, WORD_COUNT_CONSTRAINTS, REVIEWER_CONFIG } from './config';
 import { countContentH2Sections } from './markdown-utils';
 import { withRetry } from './retry';
 import {
@@ -227,6 +227,38 @@ export interface ArticleGeneratorOptions {
    * });
    */
   readonly correlationId?: string;
+
+  /**
+   * Whether to run the Reviewer agent for quality control.
+   *
+   * Default behavior (when not specified):
+   * - guides: true (enabled by default)
+   * - reviews, news, lists: false (disabled by default)
+   *
+   * The Reviewer checks for:
+   * - Redundancy (repeated explanations)
+   * - Coverage (required elements)
+   * - Factual accuracy (against research)
+   * - Style consistency
+   * - SEO basics
+   *
+   * **Cost implications**: Reviewer adds one additional LLM call per article.
+   * Estimated cost: ~$0.001-0.005 USD per article (varies by model and article length).
+   * Token usage: Typically 500-2000 input tokens, 100-500 output tokens.
+   *
+   * @example
+   * // Force reviewer on for all article types
+   * const draft = await generateGameArticleDraft(context, undefined, {
+   *   enableReviewer: true,
+   * });
+   *
+   * @example
+   * // Disable reviewer for faster generation (even for guides)
+   * const draft = await generateGameArticleDraft(context, undefined, {
+   *   enableReviewer: false,
+   * });
+   */
+  readonly enableReviewer?: boolean;
 }
 
 // ============================================================================
@@ -835,8 +867,61 @@ export async function generateGameArticleDraft(
 
   const { markdown, sources, researchPool: finalResearchPool, tokenUsage: specialistTokenUsage } = specialistResult.output;
 
-  // ===== PHASE 4: VALIDATION =====
-  log.info('Phase 4: Validation - Checking content quality...');
+  // ===== PHASE 4: REVIEWER (optional) =====
+  // Determine if reviewer should run:
+  // 1. If enableReviewer is explicitly set, use that value (takes precedence)
+  // 2. Otherwise, use default from REVIEWER_CONFIG.ENABLED_BY_CATEGORY based on article category
+  const shouldRunReviewer =
+    options?.enableReviewer !== undefined
+      ? options.enableReviewer
+      : REVIEWER_CONFIG.ENABLED_BY_CATEGORY[plan.categorySlug];
+  const reviewerModel = getModel('ARTICLE_REVIEWER');
+
+  let reviewerOutput: ReviewerOutput | undefined;
+  let reviewerTokenUsage: TokenUsage = { input: 0, output: 0 };
+
+  if (shouldRunReviewer) {
+    log.info(`Phase 4: Reviewer - Quality control check (model: ${reviewerModel})...`);
+    progressTracker.startPhase('reviewer');
+    phaseTimer.start('reviewer');
+
+    const reviewerResult = await runPhase(
+      'Reviewer',
+      'VALIDATION_FAILED', // Reviewer failures go through validation error
+      () =>
+        runReviewer(markdown, plan, scoutOutput, {
+          generateObject: resolvedDeps.generateObject,
+          model: resolvedDeps.openrouter(reviewerModel),
+          logger: createPrefixedLogger('[Reviewer]'),
+          signal: basePhaseOptions.signal,
+          temperature: temperatureOverrides?.specialist, // Reuse specialist temp for now
+        }),
+      { ...basePhaseOptions, modelName: reviewerModel }
+    );
+
+    phaseTimer.end('reviewer');
+    reviewerOutput = reviewerResult.output;
+    reviewerTokenUsage = reviewerOutput.tokenUsage;
+
+    const { approved, issues } = reviewerOutput;
+    const criticalCount = issues.filter((i) => i.severity === 'critical').length;
+    const majorCount = issues.filter((i) => i.severity === 'major').length;
+    const minorCount = issues.filter((i) => i.severity === 'minor').length;
+
+    log.info(
+      `Reviewer (${reviewerModel}) complete in ${reviewerResult.durationMs}ms: ` +
+        `${approved ? 'APPROVED' : 'NEEDS ATTENTION'} ` +
+        `(${criticalCount} critical, ${majorCount} major, ${minorCount} minor issues)`
+    );
+    progressTracker.completePhase('reviewer', `${approved ? 'Approved' : 'Issues found'}`);
+  } else {
+    log.debug('Reviewer phase skipped (not enabled for this article type)');
+    phaseTimer.start('reviewer');
+    phaseTimer.end('reviewer'); // Record 0 duration
+  }
+
+  // ===== PHASE 5: VALIDATION =====
+  log.info('Phase 5: Validation - Checking content quality...');
   progressTracker.startPhase('validation');
   phaseTimer.start('validation');
 
@@ -878,10 +963,15 @@ export async function generateGameArticleDraft(
 
   // Aggregate token usage from all phases
   const scoutTokenUsage = scoutOutput.tokenUsage;
-  const totalTokenUsage = addTokenUsage(
+  let totalTokenUsage = addTokenUsage(
     addTokenUsage(scoutTokenUsage, editorTokenUsage),
     specialistTokenUsage
   );
+
+  // Add reviewer token usage if available
+  if (shouldRunReviewer && reviewerTokenUsage) {
+    totalTokenUsage = addTokenUsage(totalTokenUsage, reviewerTokenUsage);
+  }
 
   // Check if any tokens were reported (some APIs may not report usage)
   const hasTokenUsage = totalTokenUsage.input > 0 || totalTokenUsage.output > 0;
@@ -892,6 +982,7 @@ export async function generateGameArticleDraft(
     const scoutPricing = getModelPricing(scoutModel);
     const editorPricing = getModelPricing(editorModel);
     const specialistPricing = getModelPricing(specialistModel);
+    const reviewerPricing = getModelPricing(reviewerModel);
 
     estimatedCostUsd =
       (scoutTokenUsage.input / 1000) * scoutPricing.inputPer1k +
@@ -899,7 +990,9 @@ export async function generateGameArticleDraft(
       (editorTokenUsage.input / 1000) * editorPricing.inputPer1k +
       (editorTokenUsage.output / 1000) * editorPricing.outputPer1k +
       (specialistTokenUsage.input / 1000) * specialistPricing.inputPer1k +
-      (specialistTokenUsage.output / 1000) * specialistPricing.outputPer1k;
+      (specialistTokenUsage.output / 1000) * specialistPricing.outputPer1k +
+      (reviewerTokenUsage.input / 1000) * reviewerPricing.inputPer1k +
+      (reviewerTokenUsage.output / 1000) * reviewerPricing.outputPer1k;
 
     // Round to 6 decimal places for precision
     estimatedCostUsd = Math.round(estimatedCostUsd * 1_000_000) / 1_000_000;
@@ -912,6 +1005,7 @@ export async function generateGameArticleDraft(
         scout: scoutTokenUsage,
         editor: editorTokenUsage,
         specialist: specialistTokenUsage,
+        ...(shouldRunReviewer ? { reviewer: reviewerTokenUsage } : {}),
         total: totalTokenUsage,
         estimatedCostUsd,
       }
@@ -935,7 +1029,14 @@ export async function generateGameArticleDraft(
       scout: scoutModel,
       editor: editorModel,
       specialist: specialistModel,
+      ...(shouldRunReviewer ? { reviewer: reviewerModel } : {}),
     },
     metadata,
+    ...(shouldRunReviewer && reviewerOutput
+      ? {
+          reviewerIssues: reviewerOutput.issues,
+          reviewerApproved: reviewerOutput.approved,
+        }
+      : {}),
   };
 }

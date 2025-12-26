@@ -7,4 +7,5 @@
 export * from './scout-prompts';
 export * from './editor-prompts';
 export * from './specialist-prompts';
+export * from './reviewer-prompts';
 

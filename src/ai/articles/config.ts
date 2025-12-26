@@ -262,6 +262,63 @@ export const SPECIALIST_CONFIG = {
 } as const;
 
 // ============================================================================
+// SEO Constraints
+// ============================================================================
+
+/**
+ * SEO-related constraints for article validation.
+ * Based on search engine best practices for SERP display.
+ */
+export const SEO_CONSTRAINTS = {
+  /** Optimal minimum title length for SERP display */
+  TITLE_OPTIMAL_MIN: 30,
+  /** Optimal maximum title length before truncation */
+  TITLE_OPTIMAL_MAX: 60,
+  /** Optimal minimum excerpt/meta description length */
+  EXCERPT_OPTIMAL_MIN: 120,
+  /** Optimal maximum excerpt/meta description length */
+  EXCERPT_OPTIMAL_MAX: 160,
+  /** Minimum keyword occurrences for SEO */
+  MIN_KEYWORD_OCCURRENCES: 2,
+  /** Maximum keyword occurrences before keyword stuffing concern */
+  MAX_KEYWORD_OCCURRENCES: 8,
+} as const;
+
+// ============================================================================
+// Reviewer Agent Configuration
+// ============================================================================
+
+export const REVIEWER_CONFIG = {
+  /**
+   * Temperature for Reviewer LLM calls.
+   *
+   * Set low (0.3) because Reviewer needs to be analytical and consistent
+   * in identifying issues. Higher temperature could cause inconsistent
+   * issue detection or hallucinated problems.
+   */
+  TEMPERATURE: 0.3,
+  /** Maximum output tokens for review */
+  MAX_OUTPUT_TOKENS: 2000,
+  /** Maximum article content length to include in review (chars) */
+  MAX_ARTICLE_CONTENT_LENGTH: 15000,
+  /** Maximum research context length to include in review (chars) */
+  MAX_RESEARCH_CONTEXT_LENGTH: 5000,
+  /**
+   * Whether Reviewer is enabled by default for each article category.
+   * Can be overridden per-request via `enableReviewer` option.
+   *
+   * All categories default to true for consistent quality control.
+   * Disable per-request if speed is more important than quality.
+   */
+  ENABLED_BY_CATEGORY: {
+    guides: true,
+    reviews: true,
+    news: true,
+    lists: true,
+  } as const satisfies Record<'news' | 'reviews' | 'guides' | 'lists', boolean>,
+} as const;
+
+// ============================================================================
 // Retry Configuration
 // ============================================================================
 
@@ -383,8 +440,10 @@ export const CONFIG = {
   scout: SCOUT_CONFIG,
   editor: EDITOR_CONFIG,
   specialist: SPECIALIST_CONFIG,
+  reviewer: REVIEWER_CONFIG,
   retry: RETRY_CONFIG,
   generator: GENERATOR_CONFIG,
+  seo: SEO_CONSTRAINTS,
 } as const;
 
 // ============================================================================
@@ -453,6 +512,12 @@ function validateConfiguration(): void {
   validateNonNegative(SPECIALIST_CONFIG.BATCH_DELAY_MS, 'SPECIALIST_CONFIG.BATCH_DELAY_MS');
   validatePositive(SPECIALIST_CONFIG.MAX_SOURCES, 'SPECIALIST_CONFIG.MAX_SOURCES');
 
+  // Reviewer Config
+  validateTemperature(REVIEWER_CONFIG.TEMPERATURE, 'REVIEWER_CONFIG.TEMPERATURE');
+  validatePositive(REVIEWER_CONFIG.MAX_OUTPUT_TOKENS, 'REVIEWER_CONFIG.MAX_OUTPUT_TOKENS');
+  validatePositive(REVIEWER_CONFIG.MAX_ARTICLE_CONTENT_LENGTH, 'REVIEWER_CONFIG.MAX_ARTICLE_CONTENT_LENGTH');
+  validatePositive(REVIEWER_CONFIG.MAX_RESEARCH_CONTEXT_LENGTH, 'REVIEWER_CONFIG.MAX_RESEARCH_CONTEXT_LENGTH');
+
   // Retry Config
   validatePositive(RETRY_CONFIG.MAX_RETRIES, 'RETRY_CONFIG.MAX_RETRIES');
   validatePositive(RETRY_CONFIG.INITIAL_DELAY_MS, 'RETRY_CONFIG.INITIAL_DELAY_MS');
@@ -499,6 +564,26 @@ function validateConfiguration(): void {
     ARTICLE_PLAN_CONSTRAINTS.MAX_REQUIRED_ELEMENTS,
     'ARTICLE_PLAN_CONSTRAINTS.MIN_REQUIRED_ELEMENTS',
     'ARTICLE_PLAN_CONSTRAINTS.MAX_REQUIRED_ELEMENTS'
+  );
+
+  // SEO Constraints
+  validateMinMax(
+    SEO_CONSTRAINTS.TITLE_OPTIMAL_MIN,
+    SEO_CONSTRAINTS.TITLE_OPTIMAL_MAX,
+    'SEO_CONSTRAINTS.TITLE_OPTIMAL_MIN',
+    'SEO_CONSTRAINTS.TITLE_OPTIMAL_MAX'
+  );
+  validateMinMax(
+    SEO_CONSTRAINTS.EXCERPT_OPTIMAL_MIN,
+    SEO_CONSTRAINTS.EXCERPT_OPTIMAL_MAX,
+    'SEO_CONSTRAINTS.EXCERPT_OPTIMAL_MIN',
+    'SEO_CONSTRAINTS.EXCERPT_OPTIMAL_MAX'
+  );
+  validateMinMax(
+    SEO_CONSTRAINTS.MIN_KEYWORD_OCCURRENCES,
+    SEO_CONSTRAINTS.MAX_KEYWORD_OCCURRENCES,
+    'SEO_CONSTRAINTS.MIN_KEYWORD_OCCURRENCES',
+    'SEO_CONSTRAINTS.MAX_KEYWORD_OCCURRENCES'
   );
 }
 

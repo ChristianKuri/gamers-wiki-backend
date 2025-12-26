@@ -3,11 +3,15 @@
  *
  * Responsible for writing article sections based on research and Editor's plan.
  * Executes additional research queries and produces final markdown content.
+ *
+ * For guide articles, uses both Tavily (keyword search) and Exa (semantic search)
+ * to get comprehensive section-specific research.
  */
 
 import type { LanguageModel } from 'ai';
 
 import { createPrefixedLogger, type Logger } from '../../../utils/logger';
+import { exaSearch, isExaConfigured, type ExaSearchOptions } from '../../tools/exa';
 import type { ArticlePlan, ArticleSectionPlan } from '../article-plan';
 import { SPECIALIST_CONFIG, WORD_COUNT_CONSTRAINTS } from '../config';
 import { sleep, withRetry } from '../retry';
@@ -25,6 +29,12 @@ import {
   ResearchPoolBuilder,
 } from '../research-pool';
 import {
+  buildCrossReferenceContext,
+  createInitialSectionWriteState,
+  updateSectionWriteState,
+  type SectionWriteState,
+} from '../section-context';
+import {
   addTokenUsage,
   createEmptyTokenUsage,
   type CategorizedSearchResult,
@@ -33,6 +43,7 @@ import {
   type ResearchProgressCallback,
   type ScoutOutput,
   type SearchFunction,
+  type SearchSource,
   type SectionProgressCallback,
   type TokenUsage,
 } from '../types';
@@ -104,7 +115,7 @@ interface FailedSearchResult {
 type SearchOperationResult = SingleSearchResult | FailedSearchResult;
 
 /**
- * Executes a single search with retry logic.
+ * Executes a single Tavily search with retry logic.
  * Separated for use in parallel execution.
  *
  * @param search - Search function to use
@@ -134,7 +145,7 @@ async function executeSingleSearch(
 
     return {
       query,
-      result: processSearchResults(query, 'section-specific', result),
+      result: processSearchResults(query, 'section-specific', result, 'tavily'),
       success: true,
     };
   } catch (error) {
@@ -159,6 +170,106 @@ async function executeSingleSearch(
 }
 
 /**
+ * Executes a single Exa semantic search with retry logic.
+ * Best for "how to" and meaning-based queries in guide articles.
+ *
+ * @param query - Semantic query string (natural language works best)
+ * @param signal - Optional abort signal
+ * @param log - Logger for warnings
+ * @param gracefulDegradation - If true, returns failure info instead of throwing
+ * @returns Search result
+ */
+async function executeSingleExaSearch(
+  query: string,
+  signal?: AbortSignal,
+  log?: Logger,
+  gracefulDegradation = false
+): Promise<SearchOperationResult> {
+  try {
+    const exaOptions: ExaSearchOptions = {
+      numResults: SPECIALIST_CONFIG.MAX_SEARCH_RESULTS,
+      type: 'neural',
+      useAutoprompt: true,
+    };
+
+    const result = await withRetry(
+      () => exaSearch(query, exaOptions),
+      { context: `Specialist Exa search: "${query.slice(0, 50)}..."`, signal }
+    );
+
+    return {
+      query,
+      result: processSearchResults(
+        query,
+        'section-specific',
+        {
+          answer: null,
+          results: result.results.map((r) => ({
+            title: r.title,
+            url: r.url,
+            content: r.content,
+            score: r.score,
+          })),
+        },
+        'exa' as SearchSource
+      ),
+      success: true,
+    };
+  } catch (error) {
+    // Re-throw if cancelled
+    if (signal?.aborted) {
+      throw error;
+    }
+
+    if (gracefulDegradation) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      log?.warn(`Exa search failed for "${query}": ${errorMessage}`);
+      return {
+        query,
+        error: errorMessage,
+        success: false,
+      };
+    }
+
+    throw error;
+  }
+}
+
+/**
+ * Determines if a query is suited for Exa semantic search.
+ * Guide-specific "how to" queries work best with Exa's neural search.
+ *
+ * @param query - The search query
+ * @returns true if the query should use Exa
+ */
+function isSemanticQuery(query: string): boolean {
+  const lowerQuery = query.toLowerCase();
+
+  // "How to" and explanation queries are ideal for Exa
+  if (
+    lowerQuery.includes('how to') ||
+    lowerQuery.includes('how does') ||
+    lowerQuery.includes('best way to') ||
+    lowerQuery.includes('tips for') ||
+    lowerQuery.includes('strategies for') ||
+    lowerQuery.includes('guide to')
+  ) {
+    return true;
+  }
+
+  // Questions about mechanics and systems
+  if (
+    lowerQuery.includes('what is the') ||
+    lowerQuery.includes('explain') ||
+    lowerQuery.includes('understanding')
+  ) {
+    return true;
+  }
+
+  return false;
+}
+
+/**
  * Result from batch research execution.
  */
 interface BatchResearchResult {
@@ -174,6 +285,8 @@ interface BatchResearchResult {
 interface BatchResearchOptions {
   readonly signal?: AbortSignal;
   readonly onProgress?: ResearchProgressCallback;
+  /** If true, use Exa for semantic queries (guide articles) */
+  readonly useExaForSemanticQueries?: boolean;
 }
 
 /**
@@ -195,7 +308,7 @@ async function batchResearchForSections(
   log: Logger,
   options?: BatchResearchOptions
 ): Promise<BatchResearchResult> {
-  const { signal, onProgress } = options ?? {};
+  const { signal, onProgress, useExaForSemanticQueries } = options ?? {};
   // Collect ALL research queries from all sections
   const allQueries = plan.sections.flatMap((section) => section.researchQueries);
 
@@ -216,6 +329,39 @@ async function batchResearchForSections(
     };
   }
 
+  // Determine if we should use Exa for semantic queries (only for guides with Exa configured)
+  const useExa = useExaForSemanticQueries && isExaConfigured();
+
+  // Log Exa availability
+  if (useExaForSemanticQueries && !isExaConfigured()) {
+    log.debug('Exa API not configured (EXA_API_KEY missing) - using Tavily for all queries');
+  }
+
+  // Partition queries into Tavily (keyword) and Exa (semantic) if Exa is enabled
+  let tavilyQueries: string[];
+  let exaQueries: string[];
+
+  if (useExa) {
+    tavilyQueries = [];
+    exaQueries = [];
+    for (const query of newQueries) {
+      if (isSemanticQuery(query)) {
+        exaQueries.push(query);
+      } else {
+        tavilyQueries.push(query);
+      }
+    }
+    log.debug(
+      `Query distribution: ${tavilyQueries.length} Tavily (keyword) + ${exaQueries.length} Exa (semantic)`
+    );
+    if (exaQueries.length > 0) {
+      log.debug(`Exa semantic queries: ${exaQueries.slice(0, 3).map((q) => `"${q.slice(0, 50)}..."`).join(', ')}${exaQueries.length > 3 ? ` (+${exaQueries.length - 3} more)` : ''}`);
+    }
+  } else {
+    tavilyQueries = newQueries;
+    exaQueries = [];
+  }
+
   const alreadySatisfiedCount = allQueries.length - newQueriesRaw.length;
   const duplicatesRemovedCount = newQueriesRaw.length - newQueries.length;
   const concurrency = SPECIALIST_CONFIG.BATCH_CONCURRENCY;
@@ -225,37 +371,25 @@ async function batchResearchForSections(
     `Executing ${newQueries.length} new research queries with concurrency ${concurrency} ` +
       `(${alreadySatisfiedCount} already in pool` +
       (duplicatesRemovedCount > 0 ? `, ${duplicatesRemovedCount} duplicate(s) removed` : '') +
+      (useExa ? `, using Exa for ${exaQueries.length} semantic queries` : '') +
       `)`
   );
 
   let successCount = 0;
   const failedQueries: string[] = [];
   let completedQueries = 0;
+  const totalQueries = tavilyQueries.length + exaQueries.length;
 
   // Report initial progress
-  onProgress?.(0, newQueries.length);
+  onProgress?.(0, totalQueries);
 
-  // Process queries in batches with controlled concurrency
-  for (let batchStart = 0; batchStart < newQueries.length; batchStart += concurrency) {
-    // Check for cancellation before each batch
-    if (signal?.aborted) {
-      throw new Error('Batch research cancelled');
-    }
+  // Helper to process a batch of queries
+  const processBatch = async (
+    batch: string[],
+    executeFunc: (query: string) => Promise<SearchOperationResult>
+  ): Promise<void> => {
+    const batchResults = await Promise.all(batch.map(executeFunc));
 
-    const batchEnd = Math.min(batchStart + concurrency, newQueries.length);
-    const batch = newQueries.slice(batchStart, batchEnd);
-
-    log.debug(
-      `Processing batch ${Math.floor(batchStart / concurrency) + 1}/${Math.ceil(newQueries.length / concurrency)}: ` +
-        `queries ${batchStart + 1}-${batchEnd} of ${newQueries.length}`
-    );
-
-    // Execute batch in parallel with graceful degradation
-    const batchResults = await Promise.all(
-      batch.map((query) => executeSingleSearch(search, query, signal, log, true))
-    );
-
-    // Add successful results to pool, track failures
     for (const searchResult of batchResults) {
       if (searchResult.success) {
         poolBuilder.add(searchResult.result);
@@ -265,14 +399,58 @@ async function batchResearchForSections(
       }
     }
 
-    // Report progress after each batch
     completedQueries += batch.length;
-    onProgress?.(completedQueries, newQueries.length);
+    onProgress?.(completedQueries, totalQueries);
+  };
 
-    // Add delay between batches (but not after the last batch)
-    if (batchDelay > 0 && batchEnd < newQueries.length) {
+  // Process Tavily queries in batches with controlled concurrency
+  for (let batchStart = 0; batchStart < tavilyQueries.length; batchStart += concurrency) {
+    if (signal?.aborted) {
+      throw new Error('Batch research cancelled');
+    }
+
+    const batchEnd = Math.min(batchStart + concurrency, tavilyQueries.length);
+    const batch = tavilyQueries.slice(batchStart, batchEnd);
+
+    log.debug(
+      `Processing Tavily batch ${Math.floor(batchStart / concurrency) + 1}/${Math.ceil(tavilyQueries.length / concurrency)}: ` +
+        `queries ${batchStart + 1}-${batchEnd} of ${tavilyQueries.length}`
+    );
+
+    await processBatch(batch, (query) => executeSingleSearch(search, query, signal, log, true));
+
+    if (batchDelay > 0 && batchEnd < tavilyQueries.length) {
       await sleep(batchDelay);
     }
+  }
+
+  // Process Exa queries in batches (if any)
+  for (let batchStart = 0; batchStart < exaQueries.length; batchStart += concurrency) {
+    if (signal?.aborted) {
+      throw new Error('Batch research cancelled');
+    }
+
+    const batchEnd = Math.min(batchStart + concurrency, exaQueries.length);
+    const batch = exaQueries.slice(batchStart, batchEnd);
+
+    log.debug(
+      `Processing Exa batch ${Math.floor(batchStart / concurrency) + 1}/${Math.ceil(exaQueries.length / concurrency)}: ` +
+        `queries ${batchStart + 1}-${batchEnd} of ${exaQueries.length}`
+    );
+
+    await processBatch(batch, (query) => executeSingleExaSearch(query, signal, log, true));
+
+    if (batchDelay > 0 && batchEnd < exaQueries.length) {
+      await sleep(batchDelay);
+    }
+  }
+
+  // Log Exa usage metrics if Exa was used
+  if (useExa && exaQueries.length > 0) {
+    // Count successful Exa queries (those that added results to pool)
+    // Note: We can't easily track this without modifying processBatch, but we log the attempt
+    const exaAttempts = exaQueries.length;
+    log.debug(`Exa API: Attempted ${exaAttempts} semantic queries for section-specific research`);
   }
 
   if (failedQueries.length > 0) {
@@ -385,6 +563,8 @@ interface WriteSectionOptions {
   readonly maxParagraphs: number;
   /** Required elements to include in the checklist (only for last section) */
   readonly requiredElements?: readonly string[];
+  /** Cross-reference context from previous sections (sequential mode only) */
+  readonly crossReferenceContext?: string;
 }
 
 /**
@@ -447,6 +627,7 @@ async function writeSection(
     isThinResearch,
     researchContentLength,
     requiredElements: requiredElementsForSection,
+    crossReferenceContext: options.crossReferenceContext,
   };
 
   log.debug(`Writing section ${sectionIndex + 1}/${plan.sections.length}: ${section.headline}`);
@@ -509,13 +690,15 @@ export async function runSpecialist(
   const { signal } = deps;
 
   // ===== BATCH RESEARCH PHASE =====
+  // Use Exa for semantic queries in guide articles
+  const useExaForSemanticQueries = plan.categorySlug === 'guides';
   log.info('Starting batch research for all sections...');
   const { pool: enrichedPool, successCount, failureCount } = await batchResearchForSections(
     plan,
     scoutOutput.researchPool,
     deps.search,
     log,
-    { signal, onProgress: deps.onResearchProgress }
+    { signal, onProgress: deps.onResearchProgress, useExaForSemanticQueries }
   );
 
   if (successCount > 0 || failureCount > 0) {
@@ -589,16 +772,23 @@ export async function runSpecialist(
       totalTokenUsage = addTokenUsage(totalTokenUsage, result.tokenUsage);
     }
   } else {
-    // Sequential mode: Write sections in order with context flow
-    log.info(`Writing ${plan.sections.length} sections in SEQUENTIAL mode...`);
+    // Sequential mode: Write sections in order with context flow and cross-section awareness
+    log.info(`Writing ${plan.sections.length} sections in SEQUENTIAL mode with cross-section awareness...`);
     sectionTexts = [];
     let previousContext = '';
+    let sectionWriteState: SectionWriteState = createInitialSectionWriteState();
 
     for (let i = 0; i < plan.sections.length; i++) {
       const section = plan.sections[i];
 
       // Report progress before writing each section
       deps.onSectionProgress?.(i + 1, plan.sections.length, section.headline);
+
+      // Build cross-reference context from previous sections (only for guides)
+      const crossReferenceContext =
+        plan.categorySlug === 'guides'
+          ? buildCrossReferenceContext(sectionWriteState)
+          : undefined;
 
       const result = await writeSection(
         context,
@@ -609,12 +799,25 @@ export async function runSpecialist(
         enrichedPool,
         writeDeps,
         previousContext,
-        writeOptions
+        { ...writeOptions, crossReferenceContext }
       );
 
       sectionTexts.push(result.text);
       totalTokenUsage = addTokenUsage(totalTokenUsage, result.tokenUsage);
       previousContext = result.text.slice(-SPECIALIST_CONFIG.CONTEXT_TAIL_LENGTH);
+
+      // Update section write state for cross-section awareness (guides only)
+      if (plan.categorySlug === 'guides') {
+        sectionWriteState = updateSectionWriteState(
+          sectionWriteState,
+          result.text,
+          section.headline
+        );
+        log.debug(
+          `Cross-section tracking: ${sectionWriteState.coveredTopics.size} topics, ` +
+            `${sectionWriteState.definedTerms.size} defined terms after section "${section.headline}"`
+        );
+      }
     }
   }
 

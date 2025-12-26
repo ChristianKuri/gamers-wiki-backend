@@ -72,7 +72,7 @@ async function fetchWithExtendedTimeout(
   options: RequestInit & { timeoutMs?: number }
 ): Promise<Response> {
   const { Agent, fetch: undiciFetch } = await import('undici');
-  const timeoutMs = options.timeoutMs ?? 600000; // 10 minutes default
+  const timeoutMs = options.timeoutMs ?? 900000; // 15 minutes default (AI generation can be slow)
 
   const agent = new Agent({
     headersTimeout: timeoutMs,
@@ -167,6 +167,7 @@ describeE2E('Article Generator E2E', () => {
   let json: any;
   let testStartTime: number;
   const validationIssues: E2EValidationIssue[] = [];
+  const databaseAssertions: Record<string, unknown> = {};
 
   const secret = process.env.AI_GENERATION_SECRET || getFromDotEnvFile('AI_GENERATION_SECRET');
 
@@ -256,7 +257,7 @@ describeE2E('Article Generator E2E', () => {
         instruction: 'Write a beginner guide for the first hour. Use 3-4 sections.',
         publish: false,
       }),
-      timeoutMs: 600000, // 10 minutes (includes game import if needed)
+      timeoutMs: 900000, // 15 minutes (AI generation can take 10+ minutes)
     });
 
     const responseText = await response.text();
@@ -270,7 +271,7 @@ describeE2E('Article Generator E2E', () => {
     console.log(`[E2E Setup] ✓ Endpoint called in ${duration}s`);
     console.log(`[E2E Setup] Response status: ${response.status}`);
     console.log(`[E2E Setup] Success: ${json?.success}`);
-  }, 700000); // 11+ minutes for full setup including game import
+  }, 1080000); // 18 minutes for full setup including game import + AI generation
 
   // ========================================================================
   // TEARDOWN: Save results and close connections
@@ -288,7 +289,7 @@ describeE2E('Article Generator E2E', () => {
         testStartTime,
         json,
         validationIssues,
-        {},
+        databaseAssertions,
         { igdbId: TEST_IGDB_ID, gameName: json?.game?.name }
       );
       const savedPath = saveTestResult(testResult);
@@ -583,6 +584,12 @@ describeE2E('Article Generator E2E', () => {
       .where({ document_id: json.post.documentId })
       .first();
 
+    // Capture database assertions for results file
+    databaseAssertions.postExists = Boolean(postRow);
+    databaseAssertions.postDocumentId = postRow?.document_id;
+    databaseAssertions.postLocale = postRow?.locale;
+    databaseAssertions.postIsPublished = postRow?.published_at !== null;
+
     expect(postRow).toBeDefined();
     expect(postRow?.document_id).toBe(json.post.documentId);
     expect(postRow?.locale).toBe('en');
@@ -607,6 +614,7 @@ describeE2E('Article Generator E2E', () => {
     }
 
     const linkTable = await findPostGameLinkTable(knex);
+    databaseAssertions.linkTableFound = linkTable;
     expect(linkTable).toBeTruthy();
 
     if (!linkTable) return;
@@ -640,6 +648,7 @@ describeE2E('Article Generator E2E', () => {
       .where({ [postIdCol]: postRow.id })
       .whereIn(gameIdCol, gameIds);
 
+    databaseAssertions.postGameLinked = links.length > 0;
     expect(links.length).toBeGreaterThan(0);
   });
 
@@ -658,9 +667,14 @@ describeE2E('Article Generator E2E', () => {
     }
 
     const gameRow = await knex('games')
-      .select('name', 'description', 'locale')
+      .select('name', 'description', 'locale', 'document_id')
       .where({ [igdbCol]: TEST_IGDB_ID, locale: 'en' })
       .first();
+
+    // Capture database assertions for results file
+    databaseAssertions.gameFound = Boolean(gameRow);
+    databaseAssertions.gameName = gameRow?.name;
+    databaseAssertions.gameDocumentId = gameRow?.document_id;
 
     expect(gameRow).toBeDefined();
     expect(gameRow?.name).toContain('Zelda');

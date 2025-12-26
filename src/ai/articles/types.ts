@@ -15,7 +15,7 @@ import type { ArticleCategorySlug, ArticlePlan } from './article-plan';
  * All phases of article generation as a const array.
  * Used to derive the ArticleGenerationPhase type.
  */
-export const ARTICLE_GENERATION_PHASES = ['scout', 'editor', 'specialist', 'validation'] as const;
+export const ARTICLE_GENERATION_PHASES = ['scout', 'editor', 'specialist', 'reviewer', 'validation'] as const;
 
 // ============================================================================
 // Error Types
@@ -98,6 +98,11 @@ export interface SearchResultItem {
 export type SearchCategory = 'overview' | 'category-specific' | 'recent' | 'section-specific';
 
 /**
+ * Source of a search result, indicating which search API was used.
+ */
+export type SearchSource = 'tavily' | 'exa';
+
+/**
  * A categorized search result with metadata.
  */
 export interface CategorizedSearchResult {
@@ -106,6 +111,13 @@ export interface CategorizedSearchResult {
   readonly results: readonly SearchResultItem[];
   readonly category: SearchCategory;
   readonly timestamp: number;
+  /**
+   * The search API used to obtain this result.
+   * - 'tavily': Keyword-based web search (factual queries)
+   * - 'exa': Neural/semantic search (meaning-based queries)
+   * Defaults to 'tavily' for backwards compatibility if not specified.
+   */
+  readonly searchSource?: SearchSource;
 }
 
 // ============================================================================
@@ -225,6 +237,8 @@ export interface AggregatedTokenUsage {
   readonly scout: TokenUsage;
   readonly editor: TokenUsage;
   readonly specialist: TokenUsage;
+  /** Reviewer token usage (may be empty if reviewer was disabled) */
+  readonly reviewer?: TokenUsage;
   readonly total: TokenUsage;
   /** Estimated total cost in USD (if pricing data is available) */
   readonly estimatedCostUsd?: number;
@@ -264,6 +278,8 @@ export interface ArticleGenerationMetadata {
     readonly scout: number;
     readonly editor: number;
     readonly specialist: number;
+    /** Reviewer phase duration (0 if reviewer was disabled) */
+    readonly reviewer: number;
     readonly validation: number;
   };
   /** Number of search queries executed */
@@ -276,6 +292,19 @@ export interface ArticleGenerationMetadata {
   readonly correlationId: string;
   /** Research confidence level from Scout phase */
   readonly researchConfidence: ResearchConfidence;
+}
+
+/**
+ * A single issue identified by the Reviewer agent.
+ * Imported here to avoid circular dependency with reviewer.ts.
+ */
+export interface ReviewIssue {
+  readonly severity: 'critical' | 'major' | 'minor';
+  readonly category: 'redundancy' | 'coverage' | 'factual' | 'style' | 'seo';
+  /** Section headline or "title", "excerpt", etc. */
+  readonly location?: string;
+  readonly message: string;
+  readonly suggestion?: string;
 }
 
 /**
@@ -293,9 +322,18 @@ export interface GameArticleDraft {
     readonly scout: string;
     readonly editor: string;
     readonly specialist: string;
+    /** Reviewer model (may be undefined if reviewer was disabled) */
+    readonly reviewer?: string;
   };
   /** Generation metadata for debugging and analytics */
   readonly metadata: ArticleGenerationMetadata;
+  /**
+   * Issues identified by the Reviewer agent.
+   * Empty array if reviewer was disabled or no issues found.
+   */
+  readonly reviewerIssues?: readonly ReviewIssue[];
+  /** Whether the Reviewer approved the article */
+  readonly reviewerApproved?: boolean;
 }
 
 // ============================================================================

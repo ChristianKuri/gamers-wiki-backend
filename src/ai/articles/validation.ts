@@ -8,7 +8,7 @@
 import { z } from 'zod';
 
 import { ArticleCategorySlugSchema, type ArticlePlan } from './article-plan';
-import { ARTICLE_PLAN_CONSTRAINTS } from './config';
+import { ARTICLE_PLAN_CONSTRAINTS, SEO_CONSTRAINTS } from './config';
 import aiClichesData from './data/ai-cliches.json';
 import { countContentH2Sections, getContentH2Sections, stripSourcesSection } from './markdown-utils';
 import type { ValidationIssue, ValidationSeverity } from './types';
@@ -509,6 +509,190 @@ function validateSectionOverlap(markdown: string): ValidationIssue[] {
 }
 
 // ============================================================================
+// SEO Validation
+// ============================================================================
+
+/**
+ * Counts occurrences of a keyword in text (case-insensitive).
+ * Uses word boundary matching to avoid partial matches.
+ *
+ * @param text - The text to search
+ * @param keyword - The keyword to count
+ * @returns Number of occurrences
+ */
+function countKeywordOccurrences(text: string, keyword: string): number {
+  // Escape special regex characters in keyword
+  const escapedKeyword = keyword.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const regex = new RegExp(`\\b${escapedKeyword}\\b`, 'gi');
+  const matches = text.match(regex);
+  return matches?.length ?? 0;
+}
+
+/**
+ * Validates heading hierarchy in markdown.
+ * Checks for:
+ * - H3 appearing before any H2
+ * - Skipped levels (H1 → H3 without H2)
+ * - Multiple H1 tags
+ *
+ * @param markdown - The markdown content
+ * @returns Array of validation issues
+ */
+export function validateHeadingHierarchy(markdown: string): ValidationIssue[] {
+  const issues: ValidationIssue[] = [];
+
+  // Find all headings
+  const headingRegex = /^(#{1,6})\s+(.+)$/gm;
+  const headings: Array<{ level: number; text: string; line: number }> = [];
+  let match;
+  let lineNumber = 1;
+
+  const lines = markdown.split('\n');
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const headingMatch = /^(#{1,6})\s+(.+)$/.exec(line);
+    if (headingMatch) {
+      headings.push({
+        level: headingMatch[1].length,
+        text: headingMatch[2],
+        line: i + 1,
+      });
+    }
+  }
+
+  if (headings.length === 0) {
+    return issues;
+  }
+
+  // Check for multiple H1 tags
+  const h1Count = headings.filter((h) => h.level === 1).length;
+  if (h1Count > 1) {
+    issues.push(issue('warning', `Multiple H1 tags found (${h1Count}). Articles should have only one H1 (the title).`));
+  }
+
+  // Check for H3 appearing before any H2
+  let foundH2 = false;
+  for (const heading of headings) {
+    if (heading.level === 2) {
+      foundH2 = true;
+    }
+    if (heading.level === 3 && !foundH2) {
+      issues.push(
+        issue('warning', `H3 heading "${heading.text}" appears before any H2 heading. Consider proper hierarchy.`)
+      );
+      break; // Only report once
+    }
+  }
+
+  // Check for skipped levels
+  for (let i = 1; i < headings.length; i++) {
+    const prev = headings[i - 1];
+    const curr = headings[i];
+
+    // Going to deeper level (e.g., H2 → H4) skipping a level
+    if (curr.level > prev.level + 1) {
+      issues.push(
+        issue(
+          'warning',
+          `Skipped heading level: "${prev.text}" (H${prev.level}) → "${curr.text}" (H${curr.level}). ` +
+            `Consider adding H${prev.level + 1} between them.`
+        )
+      );
+    }
+  }
+
+  return issues;
+}
+
+/**
+ * Validates SEO aspects of an article.
+ * Checks title length, keyword presence, and heading hierarchy.
+ *
+ * @param draft - The draft to validate
+ * @param gameName - The game name (should appear in title)
+ * @returns Array of validation issues
+ */
+export function validateSEO(
+  draft: {
+    title: string;
+    excerpt: string;
+    markdown: string;
+    tags: readonly string[];
+  },
+  gameName: string
+): ValidationIssue[] {
+  const issues: ValidationIssue[] = [];
+  const SEO = SEO_CONSTRAINTS;
+
+  // 1. Title length (optimal: 50-60 chars for SERP)
+  if (draft.title.length < SEO.TITLE_OPTIMAL_MIN) {
+    issues.push(
+      issue(
+        'warning',
+        `Title may be too short for SEO (${draft.title.length} chars, optimal: ${SEO.TITLE_OPTIMAL_MIN}-${SEO.TITLE_OPTIMAL_MAX})`
+      )
+    );
+  }
+  if (draft.title.length > SEO.TITLE_OPTIMAL_MAX) {
+    issues.push(
+      issue(
+        'warning',
+        `Title may be truncated in search results (${draft.title.length} chars, optimal: ${SEO.TITLE_OPTIMAL_MIN}-${SEO.TITLE_OPTIMAL_MAX})`
+      )
+    );
+  }
+
+  // 2. Excerpt/meta description (120-160 chars)
+  if (draft.excerpt.length < SEO.EXCERPT_OPTIMAL_MIN) {
+    issues.push(
+      issue(
+        'warning',
+        `Excerpt below optimal length (${draft.excerpt.length} chars, optimal: ${SEO.EXCERPT_OPTIMAL_MIN}-${SEO.EXCERPT_OPTIMAL_MAX})`
+      )
+    );
+  }
+
+  // 3. Heading hierarchy
+  const headingIssues = validateHeadingHierarchy(draft.markdown);
+  issues.push(...headingIssues);
+
+  // 4. Game name in title
+  // Extract the base game name (before any subtitle/colon)
+  const baseGameName = gameName.split(':')[0].trim().toLowerCase();
+  if (!draft.title.toLowerCase().includes(baseGameName)) {
+    issues.push(issue('warning', `Title should include game name "${baseGameName}" for SEO`));
+  }
+
+  // 5. Keyword density (primary tag should appear 2-8 times)
+  const primaryKeyword = draft.tags[0];
+  if (primaryKeyword) {
+    const contentMarkdown = stripSourcesSection(draft.markdown);
+    const keywordCount = countKeywordOccurrences(contentMarkdown, primaryKeyword);
+
+    if (keywordCount < SEO.MIN_KEYWORD_OCCURRENCES) {
+      issues.push(
+        issue(
+          'warning',
+          `Primary tag "${primaryKeyword}" appears only ${keywordCount} time(s) in content ` +
+            `(optimal: ${SEO.MIN_KEYWORD_OCCURRENCES}-${SEO.MAX_KEYWORD_OCCURRENCES})`
+        )
+      );
+    }
+    if (keywordCount > SEO.MAX_KEYWORD_OCCURRENCES) {
+      issues.push(
+        issue(
+          'warning',
+          `Primary tag "${primaryKeyword}" appears ${keywordCount} times (may be keyword stuffing, ` +
+            `optimal: ${SEO.MIN_KEYWORD_OCCURRENCES}-${SEO.MAX_KEYWORD_OCCURRENCES})`
+        )
+      );
+    }
+  }
+
+  return issues;
+}
+
+// ============================================================================
 // Main Validation Function
 // ============================================================================
 
@@ -520,22 +704,26 @@ function validateSectionOverlap(markdown: string): ValidationIssue[] {
  * for warnings (advisory issues that don't block publication).
  *
  * @param draft - The draft to validate
+ * @param gameName - The game name for SEO validation (optional for backwards compatibility)
  * @returns Array of validation issues (empty if valid)
  *
  * @example
- * const issues = validateArticleDraft(draft);
+ * const issues = validateArticleDraft(draft, 'Elden Ring');
  * const errors = getErrors(issues);
  * if (errors.length > 0) throw new Error(errors.map(e => e.message).join('; '));
  */
-export function validateArticleDraft(draft: {
-  title: string;
-  categorySlug: string;
-  excerpt: string;
-  tags: readonly string[];
-  markdown: string;
-  sources: readonly string[];
-  plan: ArticlePlan;
-}): ValidationIssue[] {
+export function validateArticleDraft(
+  draft: {
+    title: string;
+    categorySlug: string;
+    excerpt: string;
+    tags: readonly string[];
+    markdown: string;
+    sources: readonly string[];
+    plan: ArticlePlan;
+  },
+  gameName?: string
+): ValidationIssue[] {
   const issues: ValidationIssue[] = [];
 
   // Zod schema validation (errors)
@@ -552,6 +740,11 @@ export function validateArticleDraft(draft: {
 
   // Section overlap detection (content deduplication)
   issues.push(...validateSectionOverlap(draft.markdown));
+
+  // SEO validation (if game name provided)
+  if (gameName) {
+    issues.push(...validateSEO(draft, gameName));
+  }
 
   return issues;
 }
