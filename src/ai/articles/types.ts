@@ -281,6 +281,8 @@ export interface ArticleGenerationMetadata {
     /** Reviewer phase duration (0 if reviewer was disabled) */
     readonly reviewer: number;
     readonly validation: number;
+    /** Fixer phase duration (0 if no fixes were needed) */
+    readonly fixer?: number;
   };
   /** Number of search queries executed */
   readonly queriesExecuted: number;
@@ -292,6 +294,8 @@ export interface ArticleGenerationMetadata {
   readonly correlationId: string;
   /** Research confidence level from Scout phase */
   readonly researchConfidence: ResearchConfidence;
+  /** Recovery metadata (present when any retries or fixes were applied) */
+  readonly recovery?: RecoveryMetadata;
 }
 
 /**
@@ -305,6 +309,23 @@ export interface ReviewIssue {
   readonly location?: string;
   readonly message: string;
   readonly suggestion?: string;
+  /**
+   * Recommended fix strategy for autonomous recovery.
+   * - direct_edit: Minor text replacement (clichés, typos)
+   * - regenerate: Rewrite entire section
+   * - add_section: Create new section for coverage gaps
+   * - expand: Add content to existing section
+   * - no_action: Minor issue, skip fixing
+   */
+  readonly fixStrategy: FixStrategy;
+  /**
+   * Specific instruction for the Fixer agent.
+   * For direct_edit: what text to find and what to replace with
+   * For regenerate: feedback on what went wrong and what to improve
+   * For add_section: topic and key points to cover
+   * For expand: what aspects need more depth
+   */
+  readonly fixInstruction?: string;
 }
 
 /**
@@ -388,6 +409,89 @@ export type ValidationSeverity = 'error' | 'warning';
 export interface ValidationIssue {
   readonly severity: ValidationSeverity;
   readonly message: string;
+}
+
+// ============================================================================
+// Fixer Types (Autonomous Article Recovery)
+// ============================================================================
+
+/**
+ * Available fix strategies for the autonomous Fixer.
+ *
+ * - direct_edit: Minor text replacement (clichés, typos, style fixes)
+ * - regenerate: Rewrite entire section with feedback
+ * - add_section: Create new section for coverage gaps
+ * - expand: Add content to existing section (preserves existing content)
+ * - no_action: Minor issue that doesn't warrant a fix
+ */
+export type FixStrategy =
+  | 'direct_edit'
+  | 'regenerate'
+  | 'add_section'
+  | 'expand'
+  | 'no_action';
+
+/**
+ * Record of a fix that was applied during article recovery.
+ */
+export interface FixApplied {
+  /** Which Fixer iteration this fix was applied in (1-indexed) */
+  readonly iteration: number;
+  /** The strategy used to fix the issue */
+  readonly strategy: FixStrategy;
+  /** Target of the fix: section headline or "global" for article-wide fixes */
+  readonly target: string;
+  /** Reason the fix was applied (from Reviewer issue message) */
+  readonly reason: string;
+  /** Whether the fix was successfully applied */
+  readonly success: boolean;
+}
+
+/**
+ * Record of a plan that was rejected during validation.
+ * Used for debugging and comparing original vs final plans.
+ */
+export interface RejectedPlan {
+  /** The plan that was rejected */
+  readonly plan: ArticlePlan;
+  /** Validation errors that caused rejection */
+  readonly validationErrors: readonly string[];
+  /** Timestamp when rejection occurred */
+  readonly timestamp: string;
+}
+
+/**
+ * Metadata about recovery attempts during article generation.
+ * Tracks all retries and fixes applied to produce the final article.
+ * Includes original content for comparison with final output.
+ */
+export interface RecoveryMetadata {
+  /** Number of times the Editor phase was retried due to plan validation failures */
+  readonly planRetries: number;
+  /** Map of section headline to retry count for sections that failed during Specialist phase */
+  readonly sectionRetries: Record<string, number>;
+  /** Number of Fixer loop iterations (0 if no fixes were needed) */
+  readonly fixerIterations: number;
+  /** List of all fixes applied during recovery */
+  readonly fixesApplied: readonly FixApplied[];
+  /**
+   * Plans that were rejected during validation, with their errors.
+   * Allows comparison of original plan structure vs final plan.
+   * Only present if planRetries > 0.
+   */
+  readonly rejectedPlans?: readonly RejectedPlan[];
+  /**
+   * Original markdown content before Fixer modifications.
+   * Allows comparison of before/after content.
+   * Only present if fixerIterations > 0.
+   */
+  readonly originalMarkdown?: string;
+  /**
+   * Markdown content after each Fixer iteration.
+   * Allows tracking incremental improvements.
+   * Only present if fixerIterations > 1.
+   */
+  readonly markdownHistory?: readonly string[];
 }
 
 // ============================================================================

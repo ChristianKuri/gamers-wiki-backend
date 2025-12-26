@@ -61,20 +61,24 @@ import {
 import { runScout, runEditor, runSpecialist, runReviewer, type EditorOutput, type ReviewerOutput } from './agents';
 import type { SpecialistOutput } from './agents/specialist';
 import type { ArticlePlan, ArticleCategorySlug } from './article-plan';
-import { GENERATOR_CONFIG, WORD_COUNT_DEFAULTS, WORD_COUNT_CONSTRAINTS, REVIEWER_CONFIG } from './config';
+import { GENERATOR_CONFIG, WORD_COUNT_DEFAULTS, WORD_COUNT_CONSTRAINTS, REVIEWER_CONFIG, FIXER_CONFIG } from './config';
+import { runFixer, type FixerContext, type FixerDeps } from './fixer';
 import { countContentH2Sections } from './markdown-utils';
 import { withRetry } from './retry';
 import {
   addTokenUsage,
   ArticleGenerationError,
+  createEmptyTokenUsage,
   systemClock,
   type AggregatedTokenUsage,
   type ArticleGenerationErrorCode,
   type ArticleGenerationMetadata,
   type ArticleProgressCallback,
   type Clock,
+  type FixApplied,
   type GameArticleContext,
   type GameArticleDraft,
+  type RecoveryMetadata,
   type ScoutOutput,
   type TokenUsage,
 } from './types';
@@ -608,6 +612,150 @@ async function executeEditorPhase(
 }
 
 /**
+ * A plan that was rejected during validation, captured for debugging.
+ */
+interface RejectedPlanRecord {
+  readonly plan: ArticlePlan;
+  readonly validationErrors: readonly string[];
+  readonly timestamp: string;
+}
+
+/**
+ * Result from Editor phase with retry, including retry count.
+ */
+interface EditorPhaseWithRetryResult extends EditorPhaseResult {
+  /** Number of retries performed (0 if succeeded on first attempt) */
+  readonly planRetries: number;
+  /** Total token usage including all retry attempts */
+  readonly totalTokenUsage: TokenUsage;
+  /** Plans that were rejected during validation (for comparison) */
+  readonly rejectedPlans: readonly RejectedPlanRecord[];
+}
+
+/**
+ * Executes the Editor phase with retry on validation failure.
+ * Passes validation error messages as feedback on retry attempts.
+ *
+ * @param phaseContext - Shared phase context
+ * @param scoutOutput - Research from Scout phase
+ * @param editorModel - Model to use for Editor
+ * @param maxRetries - Maximum retry attempts (default: FIXER_CONFIG.MAX_PLAN_RETRIES)
+ * @returns Editor phase result with retry metadata
+ */
+async function executeEditorPhaseWithRetry(
+  phaseContext: PhaseContext,
+  scoutOutput: ScoutOutput,
+  editorModel: string,
+  maxRetries: number = FIXER_CONFIG.MAX_PLAN_RETRIES
+): Promise<EditorPhaseWithRetryResult> {
+  const { context, deps, basePhaseOptions, log, progressTracker, phaseTimer, temperatureOverrides, targetWordCount } = phaseContext;
+
+  let lastErrors: string[] = [];
+  let totalTokenUsage = createEmptyTokenUsage();
+  let attempt = 0;
+  const rejectedPlans: RejectedPlanRecord[] = [];
+
+  while (attempt <= maxRetries) {
+    const isRetry = attempt > 0;
+
+    if (isRetry) {
+      log.warn(`Editor phase retry ${attempt}/${maxRetries} with validation feedback...`);
+    } else {
+      log.info(`Phase 2: Editor - Planning article (model: ${editorModel})...`);
+      progressTracker.startPhase('editor');
+      phaseTimer.start('editor');
+    }
+
+    try {
+      const result = await runPhase(
+        'Editor',
+        'EDITOR_FAILED',
+        () =>
+          runEditor(context, scoutOutput, {
+            generateObject: deps.generateObject,
+            model: deps.openrouter(editorModel),
+            logger: createPrefixedLogger('[Editor]'),
+            signal: basePhaseOptions.signal,
+            temperature: temperatureOverrides?.editor,
+            targetWordCount,
+            validationFeedback: isRetry ? lastErrors : undefined,
+          }),
+        { ...basePhaseOptions, modelName: editorModel }
+      );
+
+      const { plan, tokenUsage } = result.output;
+      totalTokenUsage = addTokenUsage(totalTokenUsage, tokenUsage);
+
+      // Only end timer and report progress on first attempt
+      // (retry attempts are internal, not user-visible)
+      if (!isRetry) {
+        phaseTimer.end('editor');
+        log.info(
+          `Editor (${editorModel}) complete in ${result.durationMs}ms: ` +
+            `${plan.categorySlug} article with ${plan.sections.length} sections`
+        );
+        progressTracker.completePhase('editor', `Planned ${plan.sections.length} sections`);
+      } else {
+        log.info(`Editor retry ${attempt} produced plan with ${plan.sections.length} sections`);
+      }
+
+      // Validate plan structure before expensive Specialist phase
+      const planIssues = validateArticlePlan(plan);
+      const planErrors = getErrors(planIssues);
+      const planWarnings = getWarnings(planIssues);
+
+      if (planWarnings.length > 0) {
+        log.warn(`Plan validation warnings: ${planWarnings.map((w) => w.message).join('; ')}`);
+      }
+
+      if (planErrors.length === 0) {
+        // Success! Return with retry metadata
+        return {
+          result,
+          plan,
+          tokenUsage,
+          planRetries: attempt,
+          totalTokenUsage,
+          rejectedPlans,
+        };
+      }
+
+      // Validation failed - capture the rejected plan for debugging
+      const errorMessages = planErrors.map((e) => e.message);
+      rejectedPlans.push({
+        plan,
+        validationErrors: errorMessages,
+        timestamp: new Date().toISOString(),
+      });
+      log.error(`Plan validation errors (attempt ${attempt + 1}): ${errorMessages.join('; ')}`);
+
+      // Prepare for retry
+      lastErrors = errorMessages;
+      attempt++;
+    } catch (error) {
+      // If error is timeout/cancelled, don't retry
+      if (
+        error instanceof ArticleGenerationError &&
+        (error.code === 'TIMEOUT' || error.code === 'CANCELLED')
+      ) {
+        throw error;
+      }
+
+      // Other errors during Editor phase - could be transient, try retry
+      lastErrors = [error instanceof Error ? error.message : String(error)];
+      log.error(`Editor phase error (attempt ${attempt + 1}): ${lastErrors[0]}`);
+      attempt++;
+    }
+  }
+
+  // Exhausted all retries
+  throw new ArticleGenerationError(
+    'EDITOR_FAILED',
+    `Article plan validation failed after ${maxRetries} retries: ${lastErrors.join('; ')}`
+  );
+}
+
+/**
  * Calculates the effective target word count for an article.
  * Uses the context-provided value if available, otherwise falls back to category defaults.
  *
@@ -841,12 +989,15 @@ export async function generateGameArticleDraft(
   const scoutResult = await executeScoutPhase(phaseContext, scoutModel);
   const scoutOutput = scoutResult.output;
 
-  // ===== PHASE 2: EDITOR =====
-  const { result: editorResult, plan, tokenUsage: editorTokenUsage } = await executeEditorPhase(
-    phaseContext,
-    scoutOutput,
-    editorModel
-  );
+  // ===== PHASE 2: EDITOR (with retry) =====
+  const {
+    result: editorResult,
+    plan,
+    tokenUsage: editorTokenUsage,
+    planRetries,
+    totalTokenUsage: editorTotalTokenUsage,
+    rejectedPlans,
+  } = await executeEditorPhaseWithRetry(phaseContext, scoutOutput, editorModel);
 
   // ===== PHASE 3: SPECIALIST =====
   // Use option override if provided, otherwise auto-decide based on category
@@ -865,9 +1016,21 @@ export async function generateGameArticleDraft(
     effectiveWordCount
   );
 
-  const { markdown, sources, researchPool: finalResearchPool, tokenUsage: specialistTokenUsage } = specialistResult.output;
+  // Track markdown as mutable for Fixer phase
+  let currentMarkdown = specialistResult.output.markdown;
+  const { sources, researchPool: finalResearchPool, tokenUsage: specialistTokenUsage } = specialistResult.output;
 
-  // ===== PHASE 4: REVIEWER (optional) =====
+  // Recovery tracking
+  const allFixesApplied: FixApplied[] = [];
+  let fixerIterations = 0;
+  let fixerTokenUsage = createEmptyTokenUsage();
+  const sectionRetries: Record<string, number> = {}; // Track section-level retries (future use)
+
+  // Capture original markdown before any Fixer modifications (for comparison)
+  let originalMarkdownBeforeFixer: string | undefined;
+  const markdownHistory: string[] = [];
+
+  // ===== PHASE 4: REVIEWER + FIXER LOOP =====
   // Determine if reviewer should run:
   // 1. If enableReviewer is explicitly set, use that value (takes precedence)
   // 2. Otherwise, use default from REVIEWER_CONFIG.ENABLED_BY_CATEGORY based on article category
@@ -885,35 +1048,142 @@ export async function generateGameArticleDraft(
     progressTracker.startPhase('reviewer');
     phaseTimer.start('reviewer');
 
-    const reviewerResult = await runPhase(
+    // Build Fixer context (used if Fixer loop is needed)
+    const fixerContext: FixerContext = {
+      gameContext: context,
+      scoutOutput,
+      plan,
+      enrichedPool: finalResearchPool,
+    };
+
+    const fixerDeps: FixerDeps = {
+      generateText: resolvedDeps.generateText,
+      generateObject: resolvedDeps.generateObject,
+      model: resolvedDeps.openrouter(reviewerModel), // Reuse reviewer model for fixer
+      logger: createPrefixedLogger('[Fixer]'),
+      signal: basePhaseOptions.signal,
+      temperature: FIXER_CONFIG.TEMPERATURE,
+    };
+
+    // Initial review
+    let reviewerResult = await runPhase(
       'Reviewer',
-      'VALIDATION_FAILED', // Reviewer failures go through validation error
+      'VALIDATION_FAILED',
       () =>
-        runReviewer(markdown, plan, scoutOutput, {
+        runReviewer(currentMarkdown, plan, scoutOutput, {
           generateObject: resolvedDeps.generateObject,
           model: resolvedDeps.openrouter(reviewerModel),
           logger: createPrefixedLogger('[Reviewer]'),
           signal: basePhaseOptions.signal,
-          temperature: temperatureOverrides?.specialist, // Reuse specialist temp for now
+          temperature: temperatureOverrides?.specialist,
         }),
       { ...basePhaseOptions, modelName: reviewerModel }
     );
 
-    phaseTimer.end('reviewer');
     reviewerOutput = reviewerResult.output;
-    reviewerTokenUsage = reviewerOutput.tokenUsage;
+    reviewerTokenUsage = addTokenUsage(reviewerTokenUsage, reviewerOutput.tokenUsage);
 
-    const { approved, issues } = reviewerOutput;
-    const criticalCount = issues.filter((i) => i.severity === 'critical').length;
-    const majorCount = issues.filter((i) => i.severity === 'major').length;
-    const minorCount = issues.filter((i) => i.severity === 'minor').length;
+    const logIssueCounts = (issues: readonly { severity: string }[]) => {
+      const critical = issues.filter((i) => i.severity === 'critical').length;
+      const major = issues.filter((i) => i.severity === 'major').length;
+      const minor = issues.filter((i) => i.severity === 'minor').length;
+      return `${critical} critical, ${major} major, ${minor} minor`;
+    };
 
     log.info(
       `Reviewer (${reviewerModel}) complete in ${reviewerResult.durationMs}ms: ` +
-        `${approved ? 'APPROVED' : 'NEEDS ATTENTION'} ` +
-        `(${criticalCount} critical, ${majorCount} major, ${minorCount} minor issues)`
+        `${reviewerOutput.approved ? 'APPROVED' : 'NEEDS ATTENTION'} ` +
+        `(${logIssueCounts(reviewerOutput.issues)} issues)`
     );
-    progressTracker.completePhase('reviewer', `${approved ? 'Approved' : 'Issues found'}`);
+
+    // ===== FIXER LOOP =====
+    // Run Fixer if there are actionable issues and we haven't exceeded max iterations
+    const actionableIssues = reviewerOutput.issues.filter((i) => i.fixStrategy !== 'no_action');
+
+    // Capture original markdown before any fixes (only if we'll actually fix)
+    if (!reviewerOutput.approved && actionableIssues.length > 0) {
+      originalMarkdownBeforeFixer = currentMarkdown;
+    }
+
+    while (
+      !reviewerOutput.approved &&
+      actionableIssues.length > 0 &&
+      fixerIterations < FIXER_CONFIG.MAX_FIXER_ITERATIONS
+    ) {
+      fixerIterations++;
+      log.info(`Fixer iteration ${fixerIterations}/${FIXER_CONFIG.MAX_FIXER_ITERATIONS}...`);
+
+      // Apply fixes
+      const fixerResult = await runFixer(
+        currentMarkdown,
+        reviewerOutput.issues,
+        fixerContext,
+        fixerDeps,
+        fixerIterations
+      );
+
+      currentMarkdown = fixerResult.markdown;
+      allFixesApplied.push(...fixerResult.fixesApplied);
+      fixerTokenUsage = addTokenUsage(fixerTokenUsage, fixerResult.tokenUsage);
+
+      // Track markdown after this iteration (for history)
+      markdownHistory.push(currentMarkdown);
+
+      const successfulFixes = fixerResult.fixesApplied.filter((f) => f.success).length;
+      log.info(
+        `Fixer iteration ${fixerIterations}: ${successfulFixes}/${fixerResult.fixesApplied.length} fixes applied`
+      );
+
+      // Re-review after fixes
+      if (successfulFixes > 0) {
+        log.info('Re-reviewing article after fixes...');
+        reviewerResult = await runPhase(
+          'Reviewer',
+          'VALIDATION_FAILED',
+          () =>
+            runReviewer(currentMarkdown, plan, scoutOutput, {
+              generateObject: resolvedDeps.generateObject,
+              model: resolvedDeps.openrouter(reviewerModel),
+              logger: createPrefixedLogger('[Reviewer]'),
+              signal: basePhaseOptions.signal,
+              temperature: temperatureOverrides?.specialist,
+            }),
+          { ...basePhaseOptions, modelName: reviewerModel }
+        );
+
+        reviewerOutput = reviewerResult.output;
+        reviewerTokenUsage = addTokenUsage(reviewerTokenUsage, reviewerOutput.tokenUsage);
+
+        log.info(
+          `Re-review complete: ${reviewerOutput.approved ? 'APPROVED' : 'NEEDS ATTENTION'} ` +
+            `(${logIssueCounts(reviewerOutput.issues)} issues)`
+        );
+
+        // Update actionable issues for next iteration check
+        actionableIssues.length = 0;
+        actionableIssues.push(...reviewerOutput.issues.filter((i) => i.fixStrategy !== 'no_action'));
+      } else {
+        // No successful fixes, stop iterating
+        log.warn('No fixes were successful, stopping Fixer loop');
+        break;
+      }
+    }
+
+    phaseTimer.end('reviewer');
+
+    if (fixerIterations > 0) {
+      log.info(
+        `Fixer complete: ${fixerIterations} iteration(s), ${allFixesApplied.length} total fixes ` +
+          `(${allFixesApplied.filter((f) => f.success).length} successful)`
+      );
+    }
+
+    progressTracker.completePhase(
+      'reviewer',
+      reviewerOutput.approved
+        ? 'Approved'
+        : `${fixerIterations} fix iterations, ${reviewerOutput.issues.length} remaining issues`
+    );
   } else {
     log.debug('Reviewer phase skipped (not enabled for this article type)');
     phaseTimer.start('reviewer');
@@ -930,7 +1200,7 @@ export async function generateGameArticleDraft(
     categorySlug: plan.categorySlug,
     excerpt: plan.excerpt,
     tags: plan.tags,
-    markdown,
+    markdown: currentMarkdown,
     sources,
     plan,
   };
@@ -961,16 +1231,21 @@ export async function generateGameArticleDraft(
   );
   progressTracker.completePhase('validation', 'Article validated successfully');
 
-  // Aggregate token usage from all phases
+  // Aggregate token usage from all phases (use total editor usage for retries)
   const scoutTokenUsage = scoutOutput.tokenUsage;
   let totalTokenUsage = addTokenUsage(
-    addTokenUsage(scoutTokenUsage, editorTokenUsage),
+    addTokenUsage(scoutTokenUsage, editorTotalTokenUsage),
     specialistTokenUsage
   );
 
-  // Add reviewer token usage if available
+  // Add reviewer token usage if available (includes Fixer re-reviews)
   if (shouldRunReviewer && reviewerTokenUsage) {
     totalTokenUsage = addTokenUsage(totalTokenUsage, reviewerTokenUsage);
+  }
+
+  // Add fixer token usage if any fixes were applied
+  if (fixerTokenUsage.input > 0 || fixerTokenUsage.output > 0) {
+    totalTokenUsage = addTokenUsage(totalTokenUsage, fixerTokenUsage);
   }
 
   // Check if any tokens were reported (some APIs may not report usage)
@@ -987,12 +1262,15 @@ export async function generateGameArticleDraft(
     estimatedCostUsd =
       (scoutTokenUsage.input / 1000) * scoutPricing.inputPer1k +
       (scoutTokenUsage.output / 1000) * scoutPricing.outputPer1k +
-      (editorTokenUsage.input / 1000) * editorPricing.inputPer1k +
-      (editorTokenUsage.output / 1000) * editorPricing.outputPer1k +
+      (editorTotalTokenUsage.input / 1000) * editorPricing.inputPer1k +
+      (editorTotalTokenUsage.output / 1000) * editorPricing.outputPer1k +
       (specialistTokenUsage.input / 1000) * specialistPricing.inputPer1k +
       (specialistTokenUsage.output / 1000) * specialistPricing.outputPer1k +
       (reviewerTokenUsage.input / 1000) * reviewerPricing.inputPer1k +
-      (reviewerTokenUsage.output / 1000) * reviewerPricing.outputPer1k;
+      (reviewerTokenUsage.output / 1000) * reviewerPricing.outputPer1k +
+      // Fixer uses reviewer model, so use same pricing
+      (fixerTokenUsage.input / 1000) * reviewerPricing.inputPer1k +
+      (fixerTokenUsage.output / 1000) * reviewerPricing.outputPer1k;
 
     // Round to 6 decimal places for precision
     estimatedCostUsd = Math.round(estimatedCostUsd * 1_000_000) / 1_000_000;
@@ -1003,11 +1281,28 @@ export async function generateGameArticleDraft(
   const tokenUsage: AggregatedTokenUsage | undefined = hasTokenUsage
     ? {
         scout: scoutTokenUsage,
-        editor: editorTokenUsage,
+        editor: editorTotalTokenUsage,
         specialist: specialistTokenUsage,
         ...(shouldRunReviewer ? { reviewer: reviewerTokenUsage } : {}),
         total: totalTokenUsage,
         estimatedCostUsd,
+      }
+    : undefined;
+
+  // Build recovery metadata if any retries or fixes were applied
+  const hasRecovery = planRetries > 0 || fixerIterations > 0 || Object.keys(sectionRetries).length > 0;
+  const recovery: RecoveryMetadata | undefined = hasRecovery
+    ? {
+        planRetries,
+        sectionRetries,
+        fixerIterations,
+        fixesApplied: allFixesApplied,
+        // Include rejected plans for comparison (only if there were plan retries)
+        ...(rejectedPlans.length > 0 ? { rejectedPlans } : {}),
+        // Include original markdown before Fixer (only if Fixer was applied)
+        ...(originalMarkdownBeforeFixer ? { originalMarkdown: originalMarkdownBeforeFixer } : {}),
+        // Include markdown history if multiple Fixer iterations (for incremental comparison)
+        ...(markdownHistory.length > 1 ? { markdownHistory } : {}),
       }
     : undefined;
 
@@ -1021,6 +1316,7 @@ export async function generateGameArticleDraft(
     tokenUsage,
     correlationId,
     researchConfidence: scoutOutput.confidence,
+    ...(recovery ? { recovery } : {}),
   };
 
   return {

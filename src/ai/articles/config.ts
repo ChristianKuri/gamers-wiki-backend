@@ -319,6 +319,57 @@ export const REVIEWER_CONFIG = {
 } as const;
 
 // ============================================================================
+// Fixer Agent Configuration (Autonomous Article Recovery)
+// ============================================================================
+
+export const FIXER_CONFIG = {
+  /**
+   * Maximum number of Editor phase retries when plan validation fails.
+   * Each retry includes validation feedback in the prompt.
+   */
+  MAX_PLAN_RETRIES: 2,
+  /**
+   * Maximum number of retries for a single section during Specialist phase.
+   * Applied when a section write fails due to transient errors.
+   */
+  MAX_SECTION_RETRIES: 2,
+  /**
+   * Maximum number of Fixer iterations (Reviewer → Fix → Reviewer cycles).
+   * Each iteration can apply multiple fixes, then re-reviews.
+   */
+  MAX_FIXER_ITERATIONS: 2,
+  /**
+   * Temperature for Fixer LLM calls (direct edit, expand).
+   * Moderate value to balance accuracy with stylistic flexibility.
+   */
+  TEMPERATURE: 0.4,
+  /**
+   * Maximum number of direct edits to apply in a single iteration.
+   * Prevents runaway token usage when many minor issues exist.
+   */
+  MAX_DIRECT_EDITS_PER_ITERATION: 5,
+  /**
+   * Maximum output tokens for direct edit operations.
+   * Should be enough for a few paragraph replacements.
+   */
+  MAX_OUTPUT_TOKENS_DIRECT_EDIT: 1000,
+  /**
+   * Maximum output tokens for expand operations.
+   * Should be enough for 2-3 paragraphs of new content.
+   */
+  MAX_OUTPUT_TOKENS_EXPAND: 1500,
+  /**
+   * Priority order for fix strategies when a section has multiple issues.
+   * Higher priority strategies are applied first (leftmost = highest priority).
+   * - regenerate: Complete rewrite fixes multiple issues at once
+   * - add_section: Coverage gaps need new content
+   * - expand: Thin sections need more depth
+   * - direct_edit: Minor fixes last (may be obviated by other fixes)
+   */
+  STRATEGY_PRIORITY: ['regenerate', 'add_section', 'expand', 'direct_edit'] as const,
+} as const;
+
+// ============================================================================
 // Retry Configuration
 // ============================================================================
 
@@ -441,6 +492,7 @@ export const CONFIG = {
   editor: EDITOR_CONFIG,
   specialist: SPECIALIST_CONFIG,
   reviewer: REVIEWER_CONFIG,
+  fixer: FIXER_CONFIG,
   retry: RETRY_CONFIG,
   generator: GENERATOR_CONFIG,
   seo: SEO_CONSTRAINTS,
@@ -517,6 +569,15 @@ function validateConfiguration(): void {
   validatePositive(REVIEWER_CONFIG.MAX_OUTPUT_TOKENS, 'REVIEWER_CONFIG.MAX_OUTPUT_TOKENS');
   validatePositive(REVIEWER_CONFIG.MAX_ARTICLE_CONTENT_LENGTH, 'REVIEWER_CONFIG.MAX_ARTICLE_CONTENT_LENGTH');
   validatePositive(REVIEWER_CONFIG.MAX_RESEARCH_CONTEXT_LENGTH, 'REVIEWER_CONFIG.MAX_RESEARCH_CONTEXT_LENGTH');
+
+  // Fixer Config
+  validateNonNegative(FIXER_CONFIG.MAX_PLAN_RETRIES, 'FIXER_CONFIG.MAX_PLAN_RETRIES');
+  validateNonNegative(FIXER_CONFIG.MAX_SECTION_RETRIES, 'FIXER_CONFIG.MAX_SECTION_RETRIES');
+  validateNonNegative(FIXER_CONFIG.MAX_FIXER_ITERATIONS, 'FIXER_CONFIG.MAX_FIXER_ITERATIONS');
+  validateTemperature(FIXER_CONFIG.TEMPERATURE, 'FIXER_CONFIG.TEMPERATURE');
+  validatePositive(FIXER_CONFIG.MAX_DIRECT_EDITS_PER_ITERATION, 'FIXER_CONFIG.MAX_DIRECT_EDITS_PER_ITERATION');
+  validatePositive(FIXER_CONFIG.MAX_OUTPUT_TOKENS_DIRECT_EDIT, 'FIXER_CONFIG.MAX_OUTPUT_TOKENS_DIRECT_EDIT');
+  validatePositive(FIXER_CONFIG.MAX_OUTPUT_TOKENS_EXPAND, 'FIXER_CONFIG.MAX_OUTPUT_TOKENS_EXPAND');
 
   // Retry Config
   validatePositive(RETRY_CONFIG.MAX_RETRIES, 'RETRY_CONFIG.MAX_RETRIES');

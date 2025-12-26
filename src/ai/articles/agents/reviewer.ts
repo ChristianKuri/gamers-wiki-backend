@@ -23,6 +23,7 @@ import {
 } from '../prompts/reviewer-prompts';
 import {
   createEmptyTokenUsage,
+  type FixStrategy,
   type ScoutOutput,
   type TokenUsage,
 } from '../types';
@@ -54,6 +55,23 @@ export interface ReviewIssue {
   readonly location?: string;
   readonly message: string;
   readonly suggestion?: string;
+  /**
+   * Recommended fix strategy for autonomous recovery.
+   * - direct_edit: Minor text replacement (clichés, typos)
+   * - regenerate: Rewrite entire section
+   * - add_section: Create new section for coverage gaps
+   * - expand: Add content to existing section
+   * - no_action: Minor issue, skip fixing
+   */
+  readonly fixStrategy: FixStrategy;
+  /**
+   * Specific instruction for the Fixer agent.
+   * For direct_edit: what text to find and what to replace with
+   * For regenerate: feedback on what went wrong and what to improve
+   * For add_section: topic and key points to cover
+   * For expand: what aspects need more depth
+   */
+  readonly fixInstruction?: string;
 }
 
 /**
@@ -87,12 +105,20 @@ export interface ReviewerDeps {
 // Zod Schema for Reviewer Output
 // ============================================================================
 
+/**
+ * All valid fix strategy values as a const array.
+ * Used to create the Zod enum for AI SDK schema.
+ */
+const FIX_STRATEGY_VALUES = ['direct_edit', 'regenerate', 'add_section', 'expand', 'no_action'] as const;
+
 const ReviewIssueSchema = z.object({
   severity: z.enum(['critical', 'major', 'minor']),
   category: z.enum(['redundancy', 'coverage', 'factual', 'style', 'seo']),
   location: z.string().optional(),
   message: z.string(),
   suggestion: z.string().optional(),
+  fixStrategy: z.enum(FIX_STRATEGY_VALUES),
+  fixInstruction: z.string().optional(),
 });
 
 const ReviewerOutputSchema = z.object({

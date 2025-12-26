@@ -47,6 +47,12 @@ export interface EditorDeps {
    * If not provided, category defaults will be applied later.
    */
   readonly targetWordCount?: number;
+  /**
+   * Validation feedback from a previous plan attempt.
+   * Present when retrying after plan validation failed.
+   * Contains error messages to help the Editor fix issues.
+   */
+  readonly validationFeedback?: readonly string[];
 }
 
 /**
@@ -122,6 +128,7 @@ export async function runEditor(
     categoryHintsSection,
     targetWordCount,
     targetSectionCount,
+    validationFeedback: deps.validationFeedback,
   };
 
   log.debug('Generating article plan...');

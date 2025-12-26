@@ -148,6 +148,12 @@ export interface EditorPromptContext {
   readonly targetWordCount?: number;
   /** Recommended number of sections based on word count */
   readonly targetSectionCount?: number;
+  /**
+   * Validation feedback from a previous plan attempt.
+   * Present when retrying after plan validation failed.
+   * Contains error messages to help the Editor fix issues.
+   */
+  readonly validationFeedback?: readonly string[];
 }
 
 /**
@@ -206,7 +212,19 @@ ${localeInstruction}`;
  * User prompt for the Editor agent.
  */
 export function getEditorUserPrompt(ctx: EditorPromptContext): string {
+  // Build validation feedback section if present (retry scenario)
+  const validationFeedbackSection = ctx.validationFeedback?.length
+    ? `
+=== ⚠️ VALIDATION FEEDBACK (FIX THESE ISSUES) ===
+Your previous plan failed validation. Fix these specific issues:
+${ctx.validationFeedback.map((msg, i) => `${i + 1}. ${msg}`).join('\n')}
+
+IMPORTANT: Address each issue above. Do not repeat the same mistakes.
+`
+    : '';
+
   return `Design an article plan for "${ctx.gameName}".
+${validationFeedbackSection}
 
 === USER DIRECTIVE ===
 ${ctx.instruction?.trim() || '(No specific directive — determine best article type from context)'}

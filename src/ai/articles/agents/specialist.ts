@@ -841,3 +841,131 @@ export async function runSpecialist(
   };
 }
 
+// ============================================================================
+// Fixer Support: Single Section Writing
+// ============================================================================
+
+/**
+ * Dependencies for writing a single section.
+ * Subset of SpecialistDeps focused on section writing.
+ */
+export interface SingleSectionDeps {
+  readonly generateText: typeof import('ai').generateText;
+  readonly model: LanguageModel;
+  readonly logger?: Logger;
+  /** Optional AbortSignal for cancellation support */
+  readonly signal?: AbortSignal;
+  /** Optional temperature override (default: SPECIALIST_CONFIG.TEMPERATURE) */
+  readonly temperature?: number;
+}
+
+/**
+ * Options for writing a single section (Fixer use case).
+ */
+export interface WriteSingleSectionOptions {
+  /**
+   * Feedback from the Reviewer about what was wrong with the section.
+   * Included in the prompt to guide regeneration.
+   */
+  readonly feedback?: string;
+  /**
+   * Target word count for the entire article.
+   * Used to calculate paragraph range.
+   */
+  readonly targetWordCount?: number;
+  /**
+   * Required elements that must be covered (passed to last section only).
+   */
+  readonly requiredElements?: readonly string[];
+}
+
+/**
+ * Result from writing a single section via Fixer.
+ */
+export interface SingleSectionResult {
+  /** The generated section markdown (without ## heading) */
+  readonly text: string;
+  /** Token usage for this section */
+  readonly tokenUsage: TokenUsage;
+}
+
+/**
+ * Writes a single section for the Fixer agent.
+ * Used for regenerating failed/poor-quality sections without re-running the entire Specialist.
+ *
+ * This is a wrapper around the internal `writeSection` function that:
+ * 1. Accepts a simpler interface suitable for Fixer use
+ * 2. Optionally incorporates Reviewer feedback into the prompt
+ * 3. Calculates dynamic paragraph counts based on target word count
+ *
+ * @param context - Game context
+ * @param scoutOutput - Research from Scout agent
+ * @param plan - Article plan from Editor agent
+ * @param sectionIndex - Index of the section to write (0-indexed)
+ * @param enrichedPool - Research pool (from Specialist batch research)
+ * @param deps - Dependencies (generateText, model, etc.)
+ * @param options - Optional feedback and configuration
+ * @returns The written section text and token usage
+ */
+export async function writeSingleSection(
+  context: GameArticleContext,
+  scoutOutput: ScoutOutput,
+  plan: ArticlePlan,
+  sectionIndex: number,
+  enrichedPool: ResearchPool,
+  deps: SingleSectionDeps,
+  options?: WriteSingleSectionOptions
+): Promise<SingleSectionResult> {
+  const log = deps.logger ?? createPrefixedLogger('[Specialist]');
+  const section = plan.sections[sectionIndex];
+
+  if (!section) {
+    throw new Error(`Invalid section index: ${sectionIndex} (plan has ${plan.sections.length} sections)`);
+  }
+
+  log.info(`Regenerating section "${section.headline}" (index ${sectionIndex}) with Fixer feedback`);
+
+  // Calculate dynamic paragraph counts
+  const { minParagraphs, maxParagraphs } = calculateDynamicParagraphCounts(
+    options?.targetWordCount,
+    plan.sections.length
+  );
+
+  // Only pass required elements to the last section
+  const isLast = sectionIndex === plan.sections.length - 1;
+  const requiredElements = isLast ? options?.requiredElements : undefined;
+
+  // If feedback is provided, modify the section's goal to include it
+  let effectiveSection = section;
+  if (options?.feedback) {
+    log.debug(`Incorporating Reviewer feedback: "${options.feedback.slice(0, 100)}..."`);
+    effectiveSection = {
+      ...section,
+      goal: `${section.goal}\n\nFEEDBACK FROM REVIEW: ${options.feedback}`,
+    };
+  }
+
+  const result = await writeSection(
+    context,
+    scoutOutput,
+    plan,
+    effectiveSection,
+    sectionIndex,
+    enrichedPool,
+    deps,
+    '', // No previous context for regeneration
+    {
+      minParagraphs,
+      maxParagraphs,
+      requiredElements,
+    }
+  );
+
+  log.info(`Section "${section.headline}" regenerated: ${result.text.length} chars`);
+
+  return {
+    text: result.text,
+    tokenUsage: result.tokenUsage,
+  };
+}
+

@@ -15,7 +15,7 @@ const E2E_RESULTS_DIR = join(__dirname, '..', '..', 'e2e-results', 'article-gene
  * Validation issue found during E2E testing.
  */
 export interface E2EValidationIssue {
-  readonly severity: 'error' | 'warning';
+  readonly severity: 'error' | 'warning' | 'info';
   readonly field: string;
   readonly message: string;
   readonly actual?: unknown;
@@ -145,6 +145,7 @@ export function createTestResult(
 export function logValidationSummary(issues: readonly E2EValidationIssue[]): void {
   const errors = issues.filter((i) => i.severity === 'error');
   const warnings = issues.filter((i) => i.severity === 'warning');
+  const info = issues.filter((i) => i.severity === 'info');
 
   if (errors.length > 0) {
     console.error('\n❌ Validation Errors:');
@@ -163,6 +164,13 @@ export function logValidationSummary(issues: readonly E2EValidationIssue[]): voi
     console.warn('\n⚠️ Validation Warnings:');
     for (const warning of warnings) {
       console.warn(`  - [${warning.field}] ${warning.message}`);
+    }
+  }
+
+  if (info.length > 0) {
+    console.log('\nℹ️ Info:');
+    for (const item of info) {
+      console.log(`  - [${item.field}] ${item.message}`);
     }
   }
 
