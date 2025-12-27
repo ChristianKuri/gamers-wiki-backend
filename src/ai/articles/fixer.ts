@@ -280,7 +280,7 @@ export async function applyDirectEdit(
           model: deps.model,
           schema: DirectEditOutputSchema,
           temperature,
-          maxOutputTokens: FIXER_CONFIG.MAX_OUTPUT_TOKENS_DIRECT_EDIT,
+          maxOutputTokens: 4000, // Increased to support full-article edits for long drafts
           system: `You are a precise text editor. Your task is to apply specific edits to text while preserving all other content exactly as-is.
 
 Rules:
@@ -303,6 +303,25 @@ Return the edited text with the change applied.`,
     const tokenUsage: TokenUsage = usage
       ? { input: usage.inputTokens ?? 0, output: usage.outputTokens ?? 0 }
       : createEmptyTokenUsage();
+
+    // Safety check: Ensure the edited text is not drastically shorter than the original
+    // (which usually indicates a truncation error or hallucination by the LLM)
+    const originalLength = targetText.length;
+    const editedLength = object.editedText.length;
+    const lengthRatio = editedLength / originalLength;
+
+    if (originalLength > 500 && lengthRatio < 0.5) {
+      log.warn(
+        `Direct edit rejected: Potential truncation detected. ` +
+          `(Original: ${originalLength} chars, Edited: ${editedLength} chars, Ratio: ${lengthRatio.toFixed(2)})`
+      );
+      return {
+        markdown,
+        success: false,
+        tokenUsage,
+        description: 'Edit rejected due to suspected truncation',
+      };
+    }
 
     // If we edited a section, replace it in the full markdown
     let resultMarkdown: string;

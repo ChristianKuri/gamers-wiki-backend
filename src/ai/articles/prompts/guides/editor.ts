@@ -43,6 +43,10 @@ Suggested Flow:
 4. Advanced Tips / Optimization (How to do it better)
 5. Troubleshooting / FAQ (Common issues)
 
+Negative Constraints:
+- DO NOT repeat the section headline as a subheading (e.g., if H2 is "Combat", do not start with H3 "Combat").
+- DO NOT plan overlapping topics (e.g., don't cover "Shrine 4" in "First 3 Shrines").
+
 === RESEARCH QUERIES ===
 Create specific queries to fill gaps.
 Examples:

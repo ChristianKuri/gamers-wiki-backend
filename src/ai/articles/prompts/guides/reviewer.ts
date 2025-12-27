@@ -24,7 +24,10 @@ REVIEW CRITERIA (GUIDES):
 
 OUTPUT FORMAT:
 Return JSON with 'approved' status and 'issues'.
-For every issue, you MUST provide a 'fixStrategy' and 'fixInstruction'.`;
+For every issue, you MUST provide:
+- location: MUST match an EXACT headline from the PLAN or be "global".
+- fixStrategy: Choose the best recovery method.
+- fixInstruction: CLEAR step-by-step for the Fixer.`;
   },
 
   getUserPrompt(ctx: ReviewerPromptContext): string {
@@ -42,11 +45,16 @@ VERIFICATION CRITERIA:
 □ ACTIONABLE (How to use it)`
       : '';
 
+    // Build list of valid headlines for location matching
+    const validHeadlines = ctx.plan.sections.map(s => s.headline);
+
     return `Review this GUIDE article draft.
 
 === PLAN ===
 Title: ${ctx.plan.title}
-Sections: ${ctx.plan.sections.length} planned
+Sections:
+${validHeadlines.map(h => `- ${h}`).join('\n')}
+
 ${requiredElementsChecklist}
 
 === CONTENT ===
@@ -62,10 +70,14 @@ Identify issues specific to GUIDES:
 3. Unclear instructions
 4. Missing required elements
 
+CRITICAL: For the 'location' field in your JSON output, you MUST use one of the exact headlines listed above.
+If an issue spans multiple sections or the whole article, use "global".
+DO NOT invent location names or combine headlines.
+
 Decide fixStrategy:
-- direct_edit: For vague names, missing locations, typos
-- expand: For missing details/explanations
-- regenerate: For completely failed sections
+- direct_edit: For vague names, missing locations, typos, or minor factual errors
+- expand: For missing details/explanations within a section
+- regenerate: For sections that are fundamentally broken or outdated
 
 Return JSON`;
   }

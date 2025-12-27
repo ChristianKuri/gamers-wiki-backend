@@ -66,11 +66,17 @@ ${ctx.researchContext || '(Using general context only)'}
 General Overview:
 ${truncatedOverview}
 
+=== PREVIOUSLY COVERED (DO NOT REPEAT) ===
+${ctx.crossReferenceContext || '(None)'}
+
 === WRITING INSTRUCTIONS ===
 - Write ${minParagraphs}-${maxParagraphs} paragraphs (unless research is thin).
 - Focus on "How-To". Use imperative verbs ("Go here", "Press X").
 - **Bold** important item names or locations.
-- If you lack specific steps, describe the *strategy* rather than guessing steps.
+- **CRITICAL:** For every key item, ability, or NPC, you MUST state the EXACT LOCATION (e.g., "in the chest behind the waterfall", "at coordinates 0250, 0145").
+- **ANTI-REDUNDANCY:** Check the "PREVIOUSLY COVERED" list above. Do NOT re-explain mechanics or locations already covered. Reference them briefly if needed ("As mentioned in the previous section...").
+- Do NOT repeat the section headline as a subheading.
+
 ${ctx.requiredElements ? `
 Ensure you cover: ${ctx.requiredElements.join(', ')}` : ''}
 
