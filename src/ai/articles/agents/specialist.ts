@@ -825,7 +825,18 @@ export async function runSpecialist(
   let markdown = `# ${plan.title}\n\n`;
   for (let i = 0; i < plan.sections.length; i++) {
     const section = plan.sections[i];
-    markdown += `## ${section.headline}\n\n${sectionTexts[i]}\n\n`;
+    const sectionText = sectionTexts[i];
+    
+    // Safety check: if Specialist already included an H2 heading, don't add another
+    const alreadyHasH2 = sectionText.trimStart().startsWith('## ');
+    
+    if (alreadyHasH2) {
+      // Specialist included H2 - use as-is
+      markdown += `${sectionText}\n\n`;
+    } else {
+      // No H2 - add the planned headline
+      markdown += `## ${section.headline}\n\n${sectionText}\n\n`;
+    }
   }
 
   // Collect all sources from research pool

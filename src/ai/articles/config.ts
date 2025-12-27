@@ -337,7 +337,7 @@ export const FIXER_CONFIG = {
    * Maximum number of Fixer iterations (Reviewer → Fix → Reviewer cycles).
    * Each iteration can apply multiple fixes, then re-reviews.
    */
-  MAX_FIXER_ITERATIONS: 3,
+  MAX_FIXER_ITERATIONS: 0, // TEMP: Disabled for debugging
   /**
    * Temperature for Fixer LLM calls (direct edit, expand).
    * Moderate value to balance accuracy with stylistic flexibility.
