@@ -142,8 +142,11 @@ function buildMockReviewerResponse() {
       {
         severity: 'minor',
         category: 'style',
+        location: 'Common Mistakes',
         message: 'Consider adding more specific examples in the "Common Mistakes" section.',
         suggestion: 'Add concrete examples of common mistakes players make.',
+        fixStrategy: 'expand',
+        fixInstruction: 'Add 2-3 concrete examples of common mistakes players make, such as "forgetting to save before boss fights" or "selling unique items".',
       },
     ],
     suggestions: [

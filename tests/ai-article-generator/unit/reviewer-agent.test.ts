@@ -15,11 +15,11 @@ describe('Reviewer Agent', () => {
   describe('countIssuesBySeverity', () => {
     it('counts issues by severity correctly', () => {
       const issues: ReviewIssue[] = [
-        { severity: 'critical', category: 'factual', message: 'Incorrect claim' },
-        { severity: 'critical', category: 'coverage', message: 'Missing element' },
-        { severity: 'major', category: 'redundancy', message: 'Repeated explanation' },
-        { severity: 'minor', category: 'seo', message: 'Title could be longer' },
-        { severity: 'minor', category: 'style', message: 'Inconsistent voice' },
+        { severity: 'critical', category: 'factual', message: 'Incorrect claim', fixStrategy: 'regenerate' },
+        { severity: 'critical', category: 'coverage', message: 'Missing element', fixStrategy: 'add_section' },
+        { severity: 'major', category: 'redundancy', message: 'Repeated explanation', fixStrategy: 'direct_edit' },
+        { severity: 'minor', category: 'seo', message: 'Title could be longer', fixStrategy: 'no_action' },
+        { severity: 'minor', category: 'style', message: 'Inconsistent voice', fixStrategy: 'no_action' },
       ];
 
       const counts = countIssuesBySeverity(issues);
@@ -39,8 +39,8 @@ describe('Reviewer Agent', () => {
 
     it('handles single severity', () => {
       const issues: ReviewIssue[] = [
-        { severity: 'major', category: 'redundancy', message: 'Issue 1' },
-        { severity: 'major', category: 'style', message: 'Issue 2' },
+        { severity: 'major', category: 'redundancy', message: 'Issue 1', fixStrategy: 'direct_edit' },
+        { severity: 'major', category: 'style', message: 'Issue 2', fixStrategy: 'direct_edit' },
       ];
 
       const counts = countIssuesBySeverity(issues);
@@ -54,8 +54,8 @@ describe('Reviewer Agent', () => {
   describe('shouldRejectArticle', () => {
     it('returns true when there are critical issues', () => {
       const issues: ReviewIssue[] = [
-        { severity: 'critical', category: 'factual', message: 'Incorrect claim' },
-        { severity: 'minor', category: 'seo', message: 'Minor SEO issue' },
+        { severity: 'critical', category: 'factual', message: 'Incorrect claim', fixStrategy: 'regenerate' },
+        { severity: 'minor', category: 'seo', message: 'Minor SEO issue', fixStrategy: 'no_action' },
       ];
 
       expect(shouldRejectArticle(issues)).toBe(true);
@@ -63,8 +63,8 @@ describe('Reviewer Agent', () => {
 
     it('returns false when only major and minor issues', () => {
       const issues: ReviewIssue[] = [
-        { severity: 'major', category: 'redundancy', message: 'Repeated content' },
-        { severity: 'minor', category: 'seo', message: 'Minor SEO issue' },
+        { severity: 'major', category: 'redundancy', message: 'Repeated content', fixStrategy: 'direct_edit' },
+        { severity: 'minor', category: 'seo', message: 'Minor SEO issue', fixStrategy: 'no_action' },
       ];
 
       expect(shouldRejectArticle(issues)).toBe(false);
@@ -78,10 +78,10 @@ describe('Reviewer Agent', () => {
   describe('getIssuesByCategory', () => {
     it('filters issues by category', () => {
       const issues: ReviewIssue[] = [
-        { severity: 'critical', category: 'factual', message: 'Factual issue 1' },
-        { severity: 'major', category: 'redundancy', message: 'Redundancy issue' },
-        { severity: 'minor', category: 'factual', message: 'Factual issue 2' },
-        { severity: 'minor', category: 'seo', message: 'SEO issue' },
+        { severity: 'critical', category: 'factual', message: 'Factual issue 1', fixStrategy: 'regenerate' },
+        { severity: 'major', category: 'redundancy', message: 'Redundancy issue', fixStrategy: 'direct_edit' },
+        { severity: 'minor', category: 'factual', message: 'Factual issue 2', fixStrategy: 'expand' },
+        { severity: 'minor', category: 'seo', message: 'SEO issue', fixStrategy: 'no_action' },
       ];
 
       const factualIssues = getIssuesByCategory(issues, 'factual');
@@ -93,7 +93,7 @@ describe('Reviewer Agent', () => {
 
     it('returns empty array when no matching category', () => {
       const issues: ReviewIssue[] = [
-        { severity: 'major', category: 'redundancy', message: 'Redundancy issue' },
+        { severity: 'major', category: 'redundancy', message: 'Redundancy issue', fixStrategy: 'direct_edit' },
       ];
 
       const coverageIssues = getIssuesByCategory(issues, 'coverage');
@@ -106,4 +106,3 @@ describe('Reviewer Agent', () => {
     });
   });
 });
-

@@ -111,21 +111,91 @@ export interface ReviewerDeps {
  */
 const FIX_STRATEGY_VALUES = ['direct_edit', 'regenerate', 'add_section', 'expand', 'no_action'] as const;
 
-const ReviewIssueSchema = z.object({
+/**
+ * Schema for review issues.
+ *
+ * Notes:
+ * - fixStrategy defaults to 'no_action' if LLM omits it (graceful degradation)
+ * - fixInstruction is optional; we validate in filterValidIssues() and filter out
+ *   issues with actionable strategies but missing fixInstruction
+ *
+ * This approach is more resilient than requiring fields and failing when the LLM
+ * doesn't comply - instead, we accept the response and handle missing values.
+ */
+const ReviewIssueBaseSchema = z.object({
   severity: z.enum(['critical', 'major', 'minor']),
   category: z.enum(['redundancy', 'coverage', 'factual', 'style', 'seo']),
   location: z.string().optional(),
   message: z.string(),
   suggestion: z.string().optional(),
-  fixStrategy: z.enum(FIX_STRATEGY_VALUES),
+  // Default to 'no_action' if LLM omits fixStrategy - these get filtered anyway
+  fixStrategy: z.enum(FIX_STRATEGY_VALUES).default('no_action'),
   fixInstruction: z.string().optional(),
 });
 
+/**
+ * Schema for AI SDK generation (uses base schema without refine).
+ * AI SDK doesn't support Zod .refine() - validation happens post-generation.
+ */
 const ReviewerOutputSchema = z.object({
   approved: z.boolean(),
-  issues: z.array(ReviewIssueSchema).default([]),
+  issues: z.array(ReviewIssueBaseSchema).default([]),
   suggestions: z.array(z.string()).default([]),
 });
+
+/**
+ * Validates and filters review issues, removing those with invalid fix configurations.
+ * Issues without required fixInstruction are logged as warnings and filtered out.
+ *
+ * @param issues - Raw issues from LLM
+ * @param log - Logger instance
+ * @returns Filtered array of valid issues
+ */
+function filterValidIssues(
+  issues: z.infer<typeof ReviewIssueBaseSchema>[],
+  log: Logger
+): ReviewIssue[] {
+  const validIssues: ReviewIssue[] = [];
+  const skippedCount = { missingFixInstruction: 0, invalidLocation: 0 };
+
+  for (const issue of issues) {
+    // Skip issues with actionable strategy but no fixInstruction
+    if (issue.fixStrategy !== 'no_action') {
+      if (!issue.fixInstruction || issue.fixInstruction.trim().length === 0) {
+        log.warn(
+          `Skipping issue (missing fixInstruction): "${issue.message.slice(0, 60)}..." ` +
+            `[strategy: ${issue.fixStrategy}]`
+        );
+        skippedCount.missingFixInstruction++;
+        continue;
+      }
+    }
+
+    // Skip issues with invalid locations (can't target these)
+    const invalidLocations = ['throughout article', 'multiple sections', 'various', 'general'];
+    if (
+      issue.location &&
+      invalidLocations.some((invalid) => issue.location!.toLowerCase().includes(invalid))
+    ) {
+      log.warn(
+        `Skipping issue (invalid location "${issue.location}"): "${issue.message.slice(0, 60)}..."`
+      );
+      skippedCount.invalidLocation++;
+      continue;
+    }
+
+    validIssues.push(issue as ReviewIssue);
+  }
+
+  if (skippedCount.missingFixInstruction > 0 || skippedCount.invalidLocation > 0) {
+    log.info(
+      `Filtered out ${skippedCount.missingFixInstruction + skippedCount.invalidLocation} invalid issues ` +
+        `(${skippedCount.missingFixInstruction} missing fixInstruction, ${skippedCount.invalidLocation} invalid location)`
+    );
+  }
+
+  return validIssues;
+}
 
 // ============================================================================
 // Helper Functions
@@ -243,22 +313,25 @@ export async function runReviewer(
     ? { input: usage.inputTokens ?? 0, output: usage.outputTokens ?? 0 }
     : createEmptyTokenUsage();
 
-  const counts = countIssuesBySeverity(object.issues);
+  // Filter out invalid issues (missing fixInstruction, invalid locations)
+  const validIssues = filterValidIssues(object.issues, log);
+
+  const counts = countIssuesBySeverity(validIssues);
   log.info(
     `Review complete: ${object.approved ? 'APPROVED' : 'NEEDS REVISION'} ` +
       `(${counts.critical} critical, ${counts.major} major, ${counts.minor} minor issues)`
   );
 
-  if (object.issues.length > 0) {
-    log.debug('Issues found:');
-    for (const issue of object.issues) {
+  if (validIssues.length > 0) {
+    log.debug('Valid issues found:');
+    for (const issue of validIssues) {
       log.debug(`  [${issue.severity}/${issue.category}] ${issue.message}`);
     }
   }
 
   return {
     approved: object.approved,
-    issues: object.issues,
+    issues: validIssues,
     suggestions: object.suggestions,
     tokenUsage,
   };

@@ -349,10 +349,17 @@ export interface GameArticleDraft {
   /** Generation metadata for debugging and analytics */
   readonly metadata: ArticleGenerationMetadata;
   /**
-   * Issues identified by the Reviewer agent.
+   * Issues identified by the Reviewer agent after all fixes.
    * Empty array if reviewer was disabled or no issues found.
+   * These are the REMAINING issues that could not be fixed.
    */
   readonly reviewerIssues?: readonly ReviewIssue[];
+  /**
+   * Issues found during the INITIAL review before any fixes.
+   * Only present if some issues were fixed (i.e., different from reviewerIssues).
+   * Use this to see the complete history of what was found and fixed.
+   */
+  readonly reviewerInitialIssues?: readonly ReviewIssue[];
   /** Whether the Reviewer approved the article */
   readonly reviewerApproved?: boolean;
 }

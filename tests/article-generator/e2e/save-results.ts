@@ -3,6 +3,17 @@
  *
  * Writes test results to JSON files for analysis.
  * Results are stored in tests/e2e-results/article-generator/
+ *
+ * Structure designed for easy analysis:
+ * - metadata: Test run info
+ * - input: What was requested
+ * - game: Game information
+ * - generation: Timing, tokens, models, research stats
+ * - article: The generated content analysis
+ * - plan: Editor's article plan
+ * - quality: Validation, reviewer, recovery stats
+ * - database: Database persistence checks
+ * - rawContent: Full markdown (at end for easy skipping)
  */
 
 import { mkdirSync, writeFileSync, existsSync } from 'node:fs';
@@ -11,38 +22,253 @@ import { join } from 'node:path';
 /** Directory for storing E2E test results */
 const E2E_RESULTS_DIR = join(__dirname, '..', '..', 'e2e-results', 'article-generator');
 
-/**
- * Validation issue found during E2E testing.
- */
-export interface E2EValidationIssue {
-  readonly severity: 'error' | 'warning' | 'info';
-  readonly field: string;
-  readonly message: string;
-  readonly actual?: unknown;
-  readonly expected?: unknown;
-}
+// ============================================================================
+// Result Structure Types
+// ============================================================================
 
-/**
- * Metadata about the test run.
- */
-export interface TestRunMetadata {
+/** Test run metadata */
+export interface TestMetadata {
   readonly testName: string;
   readonly timestamp: string;
   readonly durationMs: number;
   readonly passed: boolean;
-  readonly igdbId?: number;
-  readonly gameName?: string;
+}
+
+/** Test input parameters */
+export interface TestInput {
+  readonly igdbId: number;
+  readonly instruction: string;
+  readonly publish: boolean;
+}
+
+/** Game information */
+export interface GameInfo {
+  readonly documentId: string;
+  readonly name: string;
+  readonly slug?: string;
+}
+
+/** Phase timing breakdown */
+export interface PhaseDurations {
+  readonly scout: number;
+  readonly editor: number;
+  readonly specialist: number;
+  readonly reviewer: number;
+  readonly validation: number;
+}
+
+/** Token usage by phase */
+export interface TokenUsageByPhase {
+  readonly scout: { input: number; output: number };
+  readonly editor: { input: number; output: number };
+  readonly specialist: { input: number; output: number };
+  readonly reviewer?: { input: number; output: number };
+}
+
+/** Generation statistics */
+export interface GenerationStats {
+  readonly success: boolean;
+  readonly correlationId: string;
+  readonly timing: {
+    readonly totalMs: number;
+    readonly byPhase: PhaseDurations;
+  };
+  readonly tokens: {
+    readonly byPhase: TokenUsageByPhase;
+    readonly total: { input: number; output: number };
+    readonly estimatedCostUsd: number;
+  };
+  readonly models: {
+    readonly scout: string;
+    readonly editor: string;
+    readonly specialist: string;
+    readonly reviewer?: string;
+  };
+  readonly research: {
+    readonly queriesExecuted: number;
+    readonly sourcesCollected: number;
+    readonly confidence: 'high' | 'medium' | 'low';
+  };
+}
+
+/** Section statistics from markdown */
+export interface SectionStats {
+  readonly total: number;
+  readonly content: number;
+  readonly hasSourcesSection: boolean;
+  readonly headlines: readonly string[];
+}
+
+/** Content statistics from markdown */
+export interface ContentStats {
+  readonly markdownLength: number;
+  readonly wordCount: number;
+  readonly paragraphCount: number;
+  readonly sections: SectionStats;
+  readonly lists: {
+    readonly bulletItems: number;
+    readonly numberedItems: number;
+    readonly total: number;
+  };
+  readonly linkCount: number;
+}
+
+/** Source analysis */
+export interface SourcesAnalysis {
+  readonly count: number;
+  readonly uniqueDomains: number;
+  readonly topDomains: readonly string[];
+  readonly domainBreakdown: Record<string, number>;
+  readonly urls: readonly string[];
+}
+
+/** Article analysis */
+export interface ArticleAnalysis {
+  readonly post: {
+    readonly documentId: string;
+    readonly locale: string;
+    readonly published: boolean;
+  };
+  readonly title: {
+    readonly value: string;
+    readonly length: number;
+    readonly withinRecommended: boolean;
+  };
+  readonly excerpt: {
+    readonly value: string;
+    readonly length: number;
+    readonly withinLimits: boolean;
+  };
+  readonly categorySlug: string;
+  readonly tags: readonly string[];
+  readonly content: ContentStats;
+  readonly sources: SourcesAnalysis;
+}
+
+/** Plan section */
+export interface PlanSection {
+  readonly headline: string;
+  readonly goal: string;
+  readonly researchQueries: readonly string[];
+}
+
+/** Article plan from Editor */
+export interface ArticlePlanAnalysis {
+  readonly title: string;
+  readonly categorySlug: string;
+  readonly sectionCount: number;
+  readonly sections: readonly PlanSection[];
+  readonly requiredElements: readonly string[];
+  readonly totalResearchQueries: number;
+}
+
+/** Validation issue */
+export interface ValidationIssue {
+  readonly severity: 'error' | 'warning' | 'info';
+  readonly field: string;
+  readonly message: string;
+  readonly actual?: unknown;
+}
+
+/** Reviewer issue from AI reviewer */
+export interface ReviewerIssue {
+  readonly severity: 'critical' | 'major' | 'minor';
+  readonly category: string;
+  readonly message: string;
+  readonly fixStrategy?: string;
+}
+
+/** Quality checks */
+export interface QualityChecks {
+  readonly placeholders: {
+    readonly passed: boolean;
+    readonly found: readonly string[];
+  };
+  readonly aiCliches: {
+    readonly passed: boolean;
+    readonly found: readonly string[];
+    readonly totalOccurrences: number;
+  };
+}
+
+/** Recovery metadata */
+export interface RecoveryStats {
+  readonly applied: boolean;
+  readonly planRetries: number;
+  readonly fixerIterations: number;
+  readonly fixesAttempted: number;
+  readonly fixesSuccessful: number;
+}
+
+/** Quality analysis */
+export interface QualityAnalysis {
+  readonly passed: boolean;
+  readonly issues: readonly ValidationIssue[];
+  readonly reviewer: {
+    readonly ran: boolean;
+    readonly approved: boolean | null;
+    /** Final remaining issues after all fixes */
+    readonly issues: readonly ReviewerIssue[];
+    /** Initial issues found before any fixes (only if different from final) */
+    readonly initialIssues?: readonly ReviewerIssue[];
+    readonly bySeverity: {
+      readonly critical: number;
+      readonly major: number;
+      readonly minor: number;
+    };
+    /** Count of issues that were fixed (initialIssues.length - issues.length) */
+    readonly issuesFixed?: number;
+  };
+  readonly recovery: RecoveryStats;
+  readonly checks: QualityChecks;
+}
+
+/** Database verification */
+export interface DatabaseVerification {
+  readonly post: {
+    readonly exists: boolean;
+    readonly linkedToGame: boolean;
+  };
+  readonly game: {
+    readonly exists: boolean;
+    readonly hasDescription: boolean;
+  };
 }
 
 /**
- * Complete test result to be saved.
+ * Complete E2E test result - redesigned for clarity.
+ *
+ * Structure:
+ * - Grouped by concern (not by data source)
+ * - No duplication (data appears once)
+ * - Easy to navigate for analysis
+ * - Full content at end (easy to skip when scanning)
  */
 export interface E2ETestResult {
-  readonly metadata: TestRunMetadata;
-  readonly apiResponse: unknown;
-  readonly validationIssues: readonly E2EValidationIssue[];
-  readonly databaseAssertions: Record<string, unknown>;
+  readonly metadata: TestMetadata;
+  readonly input: TestInput;
+  readonly game: GameInfo;
+  readonly generation: GenerationStats;
+  readonly article: ArticleAnalysis;
+  readonly plan: ArticlePlanAnalysis;
+  readonly quality: QualityAnalysis;
+  readonly database: DatabaseVerification;
+  /** Full markdown content - placed at end for easy skipping */
+  readonly rawContent: {
+    readonly markdown: string;
+  };
 }
+
+// ============================================================================
+// Legacy Interface (for backward compatibility during migration)
+// ============================================================================
+
+/** @deprecated Use ValidationIssue instead */
+export type E2EValidationIssue = ValidationIssue;
+
+// ============================================================================
+// Utility Functions
+// ============================================================================
 
 /**
  * Ensures the results directory exists.
@@ -55,38 +281,20 @@ function ensureResultsDir(): void {
 
 /**
  * Generates a filename for the test result.
- *
- * @param testName - Name of the test (sanitized for filesystem)
- * @param timestamp - ISO timestamp
- * @returns Filename in format: {test-name}-{timestamp}.json
  */
 function generateFilename(testName: string, timestamp: string): string {
-  // Sanitize test name for filesystem
   const sanitized = testName
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-|-$/g, '')
     .slice(0, 50);
 
-  // Format timestamp for filename: 2025-12-24T10-30-00
   const formattedTime = timestamp.replace(/[:.]/g, '-').slice(0, 19);
-
   return `${sanitized}-${formattedTime}.json`;
 }
 
 /**
- * Saves E2E test results to a JSON file for later analysis.
- *
- * @param result - The test result to save
- * @returns The path to the saved file
- *
- * @example
- * const filePath = saveTestResult({
- *   metadata: { testName: 'creates draft post', timestamp: '2025-12-24T10:30:00Z', ... },
- *   apiResponse: response,
- *   validationIssues: [],
- *   databaseAssertions: { postExists: true, ... },
- * });
+ * Saves E2E test result to a JSON file.
  */
 export function saveTestResult(result: E2ETestResult): string {
   ensureResultsDir();
@@ -94,7 +302,6 @@ export function saveTestResult(result: E2ETestResult): string {
   const filename = generateFilename(result.metadata.testName, result.metadata.timestamp);
   const filePath = join(E2E_RESULTS_DIR, filename);
 
-  // Convert to JSON with pretty formatting
   const json = JSON.stringify(result, null, 2);
   writeFileSync(filePath, json, 'utf-8');
 
@@ -102,47 +309,9 @@ export function saveTestResult(result: E2ETestResult): string {
 }
 
 /**
- * Creates a test result object for saving.
- *
- * @param testName - Name of the test
- * @param startTime - Start time in milliseconds
- * @param apiResponse - Full API response
- * @param validationIssues - Issues found during validation
- * @param databaseAssertions - Results of database checks
- * @param extraMetadata - Additional metadata to include
- * @returns Complete test result object
- */
-export function createTestResult(
-  testName: string,
-  startTime: number,
-  apiResponse: unknown,
-  validationIssues: readonly E2EValidationIssue[],
-  databaseAssertions: Record<string, unknown>,
-  extraMetadata?: { igdbId?: number; gameName?: string }
-): E2ETestResult {
-  const endTime = Date.now();
-  const errors = validationIssues.filter((i) => i.severity === 'error');
-
-  return {
-    metadata: {
-      testName,
-      timestamp: new Date().toISOString(),
-      durationMs: endTime - startTime,
-      passed: errors.length === 0,
-      ...extraMetadata,
-    },
-    apiResponse,
-    validationIssues,
-    databaseAssertions,
-  };
-}
-
-/**
  * Logs a summary of validation issues to the console.
- *
- * @param issues - Validation issues to summarize
  */
-export function logValidationSummary(issues: readonly E2EValidationIssue[]): void {
+export function logValidationSummary(issues: readonly ValidationIssue[]): void {
   const errors = issues.filter((i) => i.severity === 'error');
   const warnings = issues.filter((i) => i.severity === 'warning');
   const info = issues.filter((i) => i.severity === 'info');
@@ -153,9 +322,6 @@ export function logValidationSummary(issues: readonly E2EValidationIssue[]): voi
       console.error(`  - [${error.field}] ${error.message}`);
       if (error.actual !== undefined) {
         console.error(`    Actual: ${JSON.stringify(error.actual)}`);
-      }
-      if (error.expected !== undefined) {
-        console.error(`    Expected: ${JSON.stringify(error.expected)}`);
       }
     }
   }
@@ -180,4 +346,3 @@ export function logValidationSummary(issues: readonly E2EValidationIssue[]): voi
     console.log(`\n📊 Summary: ${errors.length} error(s), ${warnings.length} warning(s)`);
   }
 }
-

@@ -17,6 +17,8 @@ MAX_WAIT=120  # seconds
 # Prefer Node 22 (project .nvmrc) when available.
 NODE_VERSION=${NODE_VERSION:-22}
 if [ -s "$HOME/.nvm/nvm.sh" ]; then
+  # nvm doesn't work with npm_config_prefix (set by Homebrew/linuxbrew)
+  unset npm_config_prefix
   # shellcheck disable=SC1090
   . "$HOME/.nvm/nvm.sh"
 fi

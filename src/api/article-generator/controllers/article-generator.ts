@@ -237,6 +237,16 @@ export default ({ strapi }: { strapi: Core.Strapi }) => ({
         metadata: draft.metadata,
       },
       models: draft.models,
+      // Reviewer output (only present if reviewer ran)
+      ...(draft.reviewerApproved !== undefined && {
+        reviewerApproved: draft.reviewerApproved,
+        reviewerIssues: draft.reviewerIssues ?? [],
+        // Include initial issues if some were fixed (complete history)
+        ...(draft.reviewerInitialIssues &&
+          draft.reviewerInitialIssues.length > 0 && {
+            reviewerInitialIssues: draft.reviewerInitialIssues,
+          }),
+      }),
       game: { documentId: game.documentId, name: game.name, slug: game.slug },
       author: { documentId: author.documentId, name: author.name },
       published: Boolean(body.publish),

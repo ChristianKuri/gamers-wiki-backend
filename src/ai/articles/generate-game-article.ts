@@ -1042,6 +1042,8 @@ export async function generateGameArticleDraft(
 
   let reviewerOutput: ReviewerOutput | undefined;
   let reviewerTokenUsage: TokenUsage = { input: 0, output: 0 };
+  // Track all issues found across all iterations (not just final remaining issues)
+  let initialReviewerIssues: ReviewerOutput['issues'] | undefined;
 
   if (shouldRunReviewer) {
     log.info(`Phase 4: Reviewer - Quality control check (model: ${reviewerModel})...`);
@@ -1066,6 +1068,8 @@ export async function generateGameArticleDraft(
     };
 
     // Initial review
+    // Note: Reviewer uses its own config temperature, NOT specialist override.
+    // Reviewer should be consistent and analytical, not creative.
     let reviewerResult = await runPhase(
       'Reviewer',
       'VALIDATION_FAILED',
@@ -1075,13 +1079,15 @@ export async function generateGameArticleDraft(
           model: resolvedDeps.openrouter(reviewerModel),
           logger: createPrefixedLogger('[Reviewer]'),
           signal: basePhaseOptions.signal,
-          temperature: temperatureOverrides?.specialist,
+          // Don't pass temperature override - let Reviewer use its default (REVIEWER_CONFIG.TEMPERATURE)
         }),
       { ...basePhaseOptions, modelName: reviewerModel }
     );
 
     reviewerOutput = reviewerResult.output;
     reviewerTokenUsage = addTokenUsage(reviewerTokenUsage, reviewerOutput.tokenUsage);
+    // Capture initial issues before any fixes (for complete history in output)
+    initialReviewerIssues = [...reviewerOutput.issues];
 
     const logIssueCounts = (issues: readonly { severity: string }[]) => {
       const critical = issues.filter((i) => i.severity === 'critical').length;
@@ -1097,16 +1103,17 @@ export async function generateGameArticleDraft(
     );
 
     // ===== FIXER LOOP =====
-    // Run Fixer if there are actionable issues and we haven't exceeded max iterations
+    // Run Fixer if there are ANY actionable issues (even minor ones for quality polish)
+    // This allows the article to go from 9/10 → 10/10, not just fix critical failures
+    // Limited to MAX_FIXER_ITERATIONS (default: 2) to avoid infinite loops
     const actionableIssues = reviewerOutput.issues.filter((i) => i.fixStrategy !== 'no_action');
 
-    // Capture original markdown before any fixes (only if we'll actually fix)
-    if (!reviewerOutput.approved && actionableIssues.length > 0) {
+    // Capture original markdown before any fixes (if we have improvements to make)
+    if (actionableIssues.length > 0) {
       originalMarkdownBeforeFixer = currentMarkdown;
     }
 
     while (
-      !reviewerOutput.approved &&
       actionableIssues.length > 0 &&
       fixerIterations < FIXER_CONFIG.MAX_FIXER_ITERATIONS
     ) {
@@ -1146,7 +1153,7 @@ export async function generateGameArticleDraft(
               model: resolvedDeps.openrouter(reviewerModel),
               logger: createPrefixedLogger('[Reviewer]'),
               signal: basePhaseOptions.signal,
-              temperature: temperatureOverrides?.specialist,
+              // Don't pass temperature override - let Reviewer use its default
             }),
           { ...basePhaseOptions, modelName: reviewerModel }
         );
@@ -1205,7 +1212,8 @@ export async function generateGameArticleDraft(
     plan,
   };
 
-  const validationIssues = validateArticleDraft(draft);
+  // Pass gameName to enable SEO validation (game name in title, keyword density, etc.)
+  const validationIssues = validateArticleDraft(draft, context.gameName);
   const errors = getErrors(validationIssues);
   const warnings = getWarnings(validationIssues);
 
@@ -1330,8 +1338,13 @@ export async function generateGameArticleDraft(
     metadata,
     ...(shouldRunReviewer && reviewerOutput
       ? {
-          reviewerIssues: reviewerOutput.issues,
+          reviewerIssues: reviewerOutput.issues, // Final remaining issues after all fixes
           reviewerApproved: reviewerOutput.approved,
+          // Include initial issues if different from final (i.e., some were fixed)
+          ...(initialReviewerIssues &&
+          initialReviewerIssues.length !== reviewerOutput.issues.length
+            ? { reviewerInitialIssues: initialReviewerIssues }
+            : {}),
         }
       : {}),
   };

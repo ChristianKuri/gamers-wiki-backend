@@ -450,6 +450,124 @@ function getOverlappingTerms(setA: Set<string>, setB: Set<string>): string[] {
 }
 
 /**
+ * Validates that the generated markdown section count matches the plan.
+ * Also checks for duplicate or very similar headlines.
+ *
+ * @param markdown - The full article markdown
+ * @param plan - The article plan with expected sections
+ * @returns Array of validation issues
+ */
+function validateSectionStructure(
+  markdown: string,
+  plan: ArticlePlan
+): ValidationIssue[] {
+  const issues: ValidationIssue[] = [];
+
+  const generatedSections = getContentH2Sections(markdown);
+  const plannedSectionCount = plan.sections.length;
+
+  // Check if section count matches plan
+  if (generatedSections.length !== plannedSectionCount) {
+    issues.push(
+      issue(
+        'warning',
+        `Generated ${generatedSections.length} sections but plan specified ${plannedSectionCount}. ` +
+          `Check for duplicate or missing sections.`
+      )
+    );
+  }
+
+  // Check for duplicate headlines (exact or very similar)
+  const normalizedHeadlines = new Map<string, string[]>();
+  for (const section of generatedSections) {
+    // Normalize: lowercase, remove common prefixes, trim
+    const normalized = section.heading
+      .toLowerCase()
+      .replace(/^(the|a|an)\s+/i, '')
+      .trim();
+
+    // Also create a "core" version without subtitles after colons
+    const core = normalized.split(':')[0].trim();
+
+    // Track both normalized and core versions
+    if (!normalizedHeadlines.has(normalized)) {
+      normalizedHeadlines.set(normalized, []);
+    }
+    normalizedHeadlines.get(normalized)!.push(section.heading);
+
+    // Check if core version matches another section's core
+    for (const [existingNorm, existingHeadings] of normalizedHeadlines) {
+      if (existingNorm === normalized) continue;
+
+      const existingCore = existingNorm.split(':')[0].trim();
+      // If cores are very similar (one starts with the other or high overlap)
+      if (
+        core.includes(existingCore) ||
+        existingCore.includes(core) ||
+        (core.length > 5 && existingCore.length > 5 && levenshteinSimilarity(core, existingCore) > 0.7)
+      ) {
+        issues.push(
+          issue(
+            'warning',
+            `Similar section headlines detected: "${existingHeadings[0]}" and "${section.heading}". ` +
+              `Consider consolidating these sections.`
+          )
+        );
+      }
+    }
+  }
+
+  // Check for exact duplicates
+  for (const [, headings] of normalizedHeadlines) {
+    if (headings.length > 1) {
+      issues.push(
+        issue(
+          'error',
+          `Duplicate section headlines: ${headings.map((h) => `"${h}"`).join(', ')}`
+        )
+      );
+    }
+  }
+
+  return issues;
+}
+
+/**
+ * Simple Levenshtein-based similarity score between 0 and 1.
+ */
+function levenshteinSimilarity(a: string, b: string): number {
+  if (a === b) return 1;
+  if (a.length === 0 || b.length === 0) return 0;
+
+  const matrix: number[][] = [];
+
+  for (let i = 0; i <= b.length; i++) {
+    matrix[i] = [i];
+  }
+  for (let j = 0; j <= a.length; j++) {
+    matrix[0][j] = j;
+  }
+
+  for (let i = 1; i <= b.length; i++) {
+    for (let j = 1; j <= a.length; j++) {
+      if (b.charAt(i - 1) === a.charAt(j - 1)) {
+        matrix[i][j] = matrix[i - 1][j - 1];
+      } else {
+        matrix[i][j] = Math.min(
+          matrix[i - 1][j - 1] + 1,
+          matrix[i][j - 1] + 1,
+          matrix[i - 1][j] + 1
+        );
+      }
+    }
+  }
+
+  const distance = matrix[b.length][a.length];
+  const maxLength = Math.max(a.length, b.length);
+  return 1 - distance / maxLength;
+}
+
+/**
  * Detects content overlap between article sections.
  * Helps identify when the same topic is covered redundantly in multiple sections.
  *
@@ -737,6 +855,9 @@ export function validateArticleDraft(
 
   // Required elements coverage validation
   issues.push(...validateRequiredElements(draft.plan, draft.markdown));
+
+  // Section structure validation (count matches plan, no duplicates)
+  issues.push(...validateSectionStructure(draft.markdown, draft.plan));
 
   // Section overlap detection (content deduplication)
   issues.push(...validateSectionOverlap(draft.markdown));
