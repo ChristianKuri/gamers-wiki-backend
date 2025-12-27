@@ -327,7 +327,7 @@ export const FIXER_CONFIG = {
    * Maximum number of Editor phase retries when plan validation fails.
    * Each retry includes validation feedback in the prompt.
    */
-  MAX_PLAN_RETRIES: 2,
+  MAX_PLAN_RETRIES: 3,
   /**
    * Maximum number of retries for a single section during Specialist phase.
    * Applied when a section write fails due to transient errors.
@@ -337,7 +337,7 @@ export const FIXER_CONFIG = {
    * Maximum number of Fixer iterations (Reviewer → Fix → Reviewer cycles).
    * Each iteration can apply multiple fixes, then re-reviews.
    */
-  MAX_FIXER_ITERATIONS: 2,
+  MAX_FIXER_ITERATIONS: 3,
   /**
    * Temperature for Fixer LLM calls (direct edit, expand).
    * Moderate value to balance accuracy with stylistic flexibility.

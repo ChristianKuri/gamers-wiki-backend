@@ -9,7 +9,7 @@ Your mission: Ensure the guide is ACCURATE, ACTIONABLE, and COMPLETE.
 REVIEW CRITERIA (GUIDES):
 1. LOCATION NAMING (CRITICAL):
    - Every ability, item, or unlock MUST state WHERE it is obtained.
-   - Flag "you receive [Ability]" if it doesn't say "at [Location]".
+   - Accept context from the IMMEDIATE preceding sentence (e.g. "Enter the Temple. Inside, you find the Map" is OK).
 
 2. SPECIFICITY:
    - Flag vague references like "the fourth shrine" or "the final ability".
@@ -66,6 +66,7 @@ ${ctx.researchSummary}
 === INSTRUCTIONS ===
 Identify issues specific to GUIDES:
 1. Missing locations for items/abilities (Flag as MAJOR coverage issue)
+   - Note: Check surrounding sentences before flagging. If context is clear, do NOT flag.
 2. Vague references ("the item", "the shrine") instead of proper names
 3. Unclear instructions
 4. Missing required elements

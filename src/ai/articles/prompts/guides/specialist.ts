@@ -73,7 +73,7 @@ ${ctx.crossReferenceContext || '(None)'}
 - Write ${minParagraphs}-${maxParagraphs} paragraphs (unless research is thin).
 - Focus on "How-To". Use imperative verbs ("Go here", "Press X").
 - **Bold** important item names or locations.
-- **CRITICAL:** For every key item, ability, or NPC, you MUST state the EXACT LOCATION (e.g., "in the chest behind the waterfall", "at coordinates 0250, 0145").
+- **CRITICAL:** For every key item, ability, or NPC, you MUST state the EXACT LOCATION in the **SAME SENTENCE** (e.g., "Obtain the **Paraglider** from **Purah** at **Lookout Landing**"). Do not split item and location across sentences.
 - **ANTI-REDUNDANCY:** Check the "PREVIOUSLY COVERED" list above. Do NOT re-explain mechanics or locations already covered. Reference them briefly if needed ("As mentioned in the previous section...").
 - Do NOT repeat the section headline as a subheading.
 
