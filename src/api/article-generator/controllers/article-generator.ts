@@ -170,24 +170,22 @@ export default ({ strapi }: { strapi: Core.Strapi }) => ({
     const developerName = (game as any).developers?.[0]?.name || null;
     const publisherName = (game as any).publishers?.[0]?.name || null;
 
-    const draft = await generateGameArticleDraft(
-      {
-        gameName: game.name,
-        gameSlug: game.slug,
-        releaseDate: game.releaseDate,
-        genres: genreNames,
-        platforms: platformNames,
-        developer: developerName,
-        publisher: publisherName,
-        igdbDescription: game.description,
-        instruction: body.instruction,
-        categoryHints: (categories || []).map((c) => ({
-          slug: c.slug as any,
-          systemPrompt: (c as any).systemPrompt ?? null,
-        })),
-      },
-      locale
-    );
+    // Articles are always generated in English; translation is a separate process
+    const draft = await generateGameArticleDraft({
+      gameName: game.name,
+      gameSlug: game.slug,
+      releaseDate: game.releaseDate,
+      genres: genreNames,
+      platforms: platformNames,
+      developer: developerName,
+      publisher: publisherName,
+      igdbDescription: game.description,
+      instruction: body.instruction,
+      categoryHints: (categories || []).map((c) => ({
+        slug: c.slug as any,
+        systemPrompt: (c as any).systemPrompt ?? null,
+      })),
+    });
 
     // Find the category doc by slug
     const categoryMatch = (categories || []).find((c) => c.slug === draft.categorySlug);
@@ -227,11 +225,30 @@ export default ({ strapi }: { strapi: Core.Strapi }) => ({
     ctx.body = {
       success: true,
       post: created,
-      title: draft.title,
-      categorySlug: draft.categorySlug,
-      author: { documentId: author.documentId, name: author.name },
+      // Full draft data for comprehensive validation and debugging
+      draft: {
+        title: draft.title,
+        categorySlug: draft.categorySlug,
+        excerpt: draft.excerpt,
+        tags: draft.tags,
+        markdown: draft.markdown,
+        sources: draft.sources,
+        plan: draft.plan,
+        metadata: draft.metadata,
+      },
       models: draft.models,
-      sources: draft.sources,
+      // Reviewer output (only present if reviewer ran)
+      ...(draft.reviewerApproved !== undefined && {
+        reviewerApproved: draft.reviewerApproved,
+        reviewerIssues: draft.reviewerIssues ?? [],
+        // Include initial issues if some were fixed (complete history)
+        ...(draft.reviewerInitialIssues &&
+          draft.reviewerInitialIssues.length > 0 && {
+            reviewerInitialIssues: draft.reviewerInitialIssues,
+          }),
+      }),
+      game: { documentId: game.documentId, name: game.name, slug: game.slug },
+      author: { documentId: author.documentId, name: author.name },
       published: Boolean(body.publish),
     };
   },

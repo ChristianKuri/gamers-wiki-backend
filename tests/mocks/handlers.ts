@@ -63,6 +63,32 @@ const MOCK_TAVILY_RESULTS = {
   ],
 };
 
+const MOCK_EXA_RESULTS = {
+  results: [
+    {
+      title: 'How to Master Early Game Mechanics - Wiki Guide',
+      url: 'https://wiki.example.com/early-game-guide',
+      text: 'Comprehensive guide covering all early game mechanics. Start by understanding the core abilities and how they interact with each other.',
+      score: 0.95,
+      publishedDate: '2024-06-15',
+      author: 'WikiContributor',
+    },
+    {
+      title: 'Essential Tips for Beginners - Community Forum',
+      url: 'https://forum.example.com/tips',
+      text: 'Collection of tips gathered from the community. Focus on exploration before combat and gather resources early.',
+      score: 0.88,
+    },
+    {
+      title: 'Advanced Strategy Guide',
+      url: 'https://ign.example.com/strategy',
+      text: 'In-depth strategies for progressing through the main quest line efficiently while maximizing your character build.',
+      score: 0.82,
+    },
+  ],
+  autopromptString: 'how to master early game mechanics and tips for beginners',
+};
+
 /**
  * Detect if the prompt is for a platform or game description
  */
@@ -96,11 +122,78 @@ function isScoutBriefingPrompt(userText: string): boolean {
   return userText.toLowerCase().includes('briefing document');
 }
 
-function buildMockArticlePlan(locale: 'en' | 'es') {
+function isReviewerPrompt(userText: string): boolean {
+  const lower = userText.toLowerCase();
+  // Must have both ARTICLE PLAN and ARTICLE CONTENT markers - unique to Reviewer prompt
+  return (
+    lower.includes('review the following article draft') &&
+    lower.includes('=== article plan ===') &&
+    lower.includes('=== article content ===')
+  );
+}
+
+/**
+ * Build a mock Reviewer response that matches the ReviewerOutputSchema
+ */
+function buildMockReviewerResponse() {
+  return {
+    approved: true,
+    issues: [
+      {
+        severity: 'minor',
+        category: 'style',
+        location: 'Common Mistakes',
+        message: 'Consider adding more specific examples in the "Common Mistakes" section.',
+        suggestion: 'Add concrete examples of common mistakes players make.',
+        fixStrategy: 'expand',
+        fixInstruction: 'Add 2-3 concrete examples of common mistakes players make, such as "forgetting to save before boss fights" or "selling unique items".',
+      },
+    ],
+    suggestions: [
+      'Consider adding screenshots to illustrate key points.',
+    ],
+  };
+}
+
+function buildMockArticlePlan(locale: 'en' | 'es', category: 'guides' | 'lists' = 'guides') {
+  if (category === 'lists') {
+    // Must have at least 4 sections (MIN_SECTIONS = 4)
+    return {
+      title: 'Top 10 Best Weapons in the Game',
+      categorySlug: 'lists',
+      excerpt:
+        'Discover the most powerful weapons in the game, ranked by damage output, versatility, and how easy they are to obtain in the early game.',
+      tags: ['weapons', 'best gear', 'top 10', 'rankings'],
+      sections: [
+        {
+          headline: 'Sword of Legends',
+          goal: 'Describe the top-ranked weapon.',
+          researchQueries: ['best weapon damage stats'],
+        },
+        {
+          headline: 'Moonlight Greatsword',
+          goal: 'Describe the second weapon.',
+          researchQueries: ['moonlight greatsword location'],
+        },
+        {
+          headline: 'Dragon Halberd',
+          goal: 'Describe the third weapon.',
+          researchQueries: ['dragon halberd requirements'],
+        },
+        {
+          headline: 'Shadow Dagger',
+          goal: 'Describe the fourth weapon.',
+          researchQueries: ['shadow dagger build'],
+        },
+      ],
+      safety: { noPrices: true, noScoresUnlessReview: true },
+    };
+  }
+
   if (locale === 'es') {
     return {
       title: 'Guía para principiantes: primeras 5 horas',
-      categorySlug: 'guide',
+      categorySlug: 'guides',
       excerpt:
         'Empieza fuerte con rutas seguras, mejoras clave y los errores más comunes durante tus primeras horas, para progresar más rápido y evitar frustraciones.',
       tags: ['principiantes', 'primeras horas', 'consejos'],
@@ -132,7 +225,7 @@ function buildMockArticlePlan(locale: 'en' | 'es') {
 
   return {
     title: 'Beginner Guide: Your First 5 Hours',
-    categorySlug: 'guide',
+    categorySlug: 'guides',
     excerpt:
       'Start strong with safe routes, key upgrades, and the most common mistakes to avoid in your first hours—so you level faster, stay alive, and enjoy the opening.',
     tags: ['beginner tips', 'early game', 'progression'],
@@ -186,6 +279,32 @@ export const handlers = [
     });
   }),
   /**
+   * Mock Exa search API
+   */
+  http.post('https://api.exa.ai/search', async ({ request }) => {
+    const body = (await request.json()) as { query?: string };
+    const query = body?.query || '';
+    return HttpResponse.json({
+      ...MOCK_EXA_RESULTS,
+      // Include the original query in results
+      autopromptString: MOCK_EXA_RESULTS.autopromptString || query,
+    });
+  }),
+  /**
+   * Mock Exa findSimilar API
+   */
+  http.post('https://api.exa.ai/findSimilar', async ({ request }) => {
+    const body = (await request.json()) as { url?: string };
+    const url = body?.url || '';
+    return HttpResponse.json({
+      results: MOCK_EXA_RESULTS.results.map((r) => ({
+        ...r,
+        // Adjust URLs to show they're "similar" results
+        url: r.url.replace('example.com', 'similar.example.com'),
+      })),
+    });
+  }),
+  /**
    * Mock OpenRouter API (chat completions - legacy format)
    */
   http.post('https://openrouter.ai/api/v1/chat/completions', async ({ request }) => {
@@ -195,6 +314,27 @@ export const handlers = [
     };
     const locale = detectLocale(body.messages);
     const userText = getUserText(body.messages);
+
+    // Check Reviewer FIRST - it contains article plan info, so isArticlePlanPrompt would match it
+    if (isReviewerPrompt(userText)) {
+      return HttpResponse.json({
+        id: 'mock-completion-id',
+        object: 'chat.completion',
+        created: Date.now(),
+        model: body.model,
+        choices: [
+          {
+            index: 0,
+            message: {
+              role: 'assistant',
+              content: JSON.stringify(buildMockReviewerResponse()),
+            },
+            finish_reason: 'stop',
+          },
+        ],
+        usage: { prompt_tokens: 200, completion_tokens: 150, total_tokens: 350 },
+      });
+    }
 
     // Article generator planner (generateObject) expects raw JSON string
     if (isArticlePlanPrompt(userText)) {
@@ -310,6 +450,29 @@ export const handlers = [
     
     const locale = detectLocale(messages);
     const userText = getUserText(messages);
+
+    // Check Reviewer FIRST - it contains article plan info, so isArticlePlanPrompt would match it
+    if (isReviewerPrompt(userText)) {
+      const reviewerJson = JSON.stringify(buildMockReviewerResponse());
+
+      return HttpResponse.json({
+        id: 'mock-response-id',
+        object: 'response',
+        created_at: Date.now(),
+        model: body.model,
+        status: 'completed',
+        output: [
+          {
+            id: 'mock-output-id',
+            type: 'message',
+            role: 'assistant',
+            status: 'completed',
+            content: [{ type: 'output_text', text: reviewerJson, annotations: [] }],
+          },
+        ],
+        usage: { input_tokens: 200, output_tokens: 150, total_tokens: 350 },
+      });
+    }
 
     if (isArticlePlanPrompt(userText)) {
       const planJson = JSON.stringify(buildMockArticlePlan(locale));
@@ -541,6 +704,18 @@ export const errorHandlers = {
     return HttpResponse.json(
       { error: { message: 'Tavily rate limit exceeded' } },
       { status: 429 }
+    );
+  }),
+  exaError: http.post('https://api.exa.ai/search', () => {
+    return HttpResponse.json(
+      { error: { message: 'Exa API error' } },
+      { status: 500 }
+    );
+  }),
+  exaFindSimilarError: http.post('https://api.exa.ai/findSimilar', () => {
+    return HttpResponse.json(
+      { error: { message: 'Exa findSimilar API error' } },
+      { status: 500 }
     );
   }),
   aiError: http.post('https://openrouter.ai/api/v1/responses', () => {
