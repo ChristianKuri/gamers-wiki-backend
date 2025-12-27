@@ -300,7 +300,7 @@ export const REVIEWER_CONFIG = {
   /** Maximum output tokens for review */
   MAX_OUTPUT_TOKENS: 2000,
   /** Maximum article content length to include in review (chars) */
-  MAX_ARTICLE_CONTENT_LENGTH: 15000,
+  MAX_ARTICLE_CONTENT_LENGTH: 45000,
   /** Maximum research context length to include in review (chars) */
   MAX_RESEARCH_CONTEXT_LENGTH: 5000,
   /**

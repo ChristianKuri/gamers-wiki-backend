@@ -510,6 +510,7 @@ describeE2E('Article Generator E2E', () => {
           igdbId: TEST_IGDB_ID,
           instruction: TEST_INSTRUCTION,
           publish: false,
+          categorySlug: 'guides',
         }),
         timeoutMs: 900000,
       }

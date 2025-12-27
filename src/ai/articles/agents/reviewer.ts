@@ -302,7 +302,7 @@ export async function runReviewer(
         schema: ReviewerOutputSchema,
         temperature,
         maxOutputTokens: REVIEWER_CONFIG.MAX_OUTPUT_TOKENS,
-        system: getReviewerSystemPrompt(),
+        system: getReviewerSystemPrompt(plan.categorySlug),
         prompt: getReviewerUserPrompt(promptContext),
       }),
     { context: 'Reviewer analysis', signal: deps.signal }

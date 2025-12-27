@@ -18,6 +18,7 @@ import { withRetry } from '../retry';
 import {
   buildExaQueriesForGuides,
   buildScoutQueries,
+  detectArticleIntent,
   getScoutCategorySystemPrompt,
   getScoutCategoryUserPrompt,
   getScoutOverviewSystemPrompt,
@@ -455,6 +456,17 @@ export async function runScout(
   const temperature = deps.temperature ?? SCOUT_CONFIG.TEMPERATURE;
   const localeInstruction = 'Write in English.';
 
+  // Resolve effective category for prompt tailoring
+  // If not explicitly provided, try to detect from instruction
+  let effectiveCategorySlug = context.categorySlug;
+  if (!effectiveCategorySlug) {
+    const intent = detectArticleIntent(context.instruction);
+    if (intent !== 'general') {
+      effectiveCategorySlug = intent;
+    }
+    // If generic, we default to guides logic inside the prompt functions or null here
+  }
+
   // Build search queries (Tavily keyword-based)
   const queries = buildScoutQueries(context);
   const dedupedCategoryQueries = deduplicateQueries(queries.category);
@@ -627,8 +639,8 @@ export async function runScout(
           deps.generateText({
             model: deps.model,
             temperature,
-            system: getScoutOverviewSystemPrompt(localeInstruction),
-            prompt: getScoutOverviewUserPrompt(promptContext),
+            system: getScoutOverviewSystemPrompt(localeInstruction, effectiveCategorySlug),
+            prompt: getScoutOverviewUserPrompt(promptContext, effectiveCategorySlug),
           }),
         { context: 'Scout overview briefing', signal }
       )
@@ -639,8 +651,8 @@ export async function runScout(
           deps.generateText({
             model: deps.model,
             temperature,
-            system: getScoutCategorySystemPrompt(localeInstruction),
-            prompt: getScoutCategoryUserPrompt(context.gameName, context.instruction, categoryContext),
+            system: getScoutCategorySystemPrompt(localeInstruction, effectiveCategorySlug),
+            prompt: getScoutCategoryUserPrompt(context.gameName, context.instruction, categoryContext, effectiveCategorySlug),
           }),
         { context: 'Scout category briefing', signal }
       )
@@ -651,8 +663,8 @@ export async function runScout(
           deps.generateText({
             model: deps.model,
             temperature,
-            system: getScoutRecentSystemPrompt(localeInstruction),
-            prompt: getScoutRecentUserPrompt(context.gameName, recentContext),
+            system: getScoutRecentSystemPrompt(localeInstruction, effectiveCategorySlug),
+            prompt: getScoutRecentUserPrompt(context.gameName, recentContext, effectiveCategorySlug, context.instruction),
           }),
         { context: 'Scout recent briefing', signal }
       )

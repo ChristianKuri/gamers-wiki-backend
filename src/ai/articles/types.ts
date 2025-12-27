@@ -199,6 +199,11 @@ export interface GameArticleContext {
   readonly publisher?: string | null;
   readonly igdbDescription?: string | null;
   readonly instruction?: string | null;
+  /**
+   * Explicitly requested article category.
+   * If provided, this overrides intent detection and forces the article type.
+   */
+  readonly categorySlug?: ArticleCategorySlug;
   readonly categoryHints?: readonly CategoryHint[];
   /**
    * Target word count for the article.

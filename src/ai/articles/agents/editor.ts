@@ -20,6 +20,7 @@ import { withRetry } from '../retry';
 import {
   buildCategoryHintsSection,
   buildExistingResearchSummary,
+  detectArticleIntent,
   getEditorSystemPrompt,
   getEditorUserPrompt,
   type EditorPromptContext,
@@ -100,6 +101,15 @@ export async function runEditor(
   const temperature = deps.temperature ?? EDITOR_CONFIG.TEMPERATURE;
   const localeInstruction = 'Write all strings in English.';
 
+  // Resolve effective category to tailor the prompt
+  let effectiveCategorySlug = context.categorySlug;
+  if (!effectiveCategorySlug) {
+    const intent = detectArticleIntent(context.instruction);
+    if (intent !== 'general') {
+      effectiveCategorySlug = intent;
+    }
+  }
+
   const categoryHintsSection = buildCategoryHintsSection(context.categoryHints);
   const existingResearchSummary = buildExistingResearchSummary(
     scoutOutput,
@@ -129,6 +139,7 @@ export async function runEditor(
     targetWordCount,
     targetSectionCount,
     validationFeedback: deps.validationFeedback,
+    categorySlug: effectiveCategorySlug,
   };
 
   log.debug('Generating article plan...');
@@ -139,7 +150,7 @@ export async function runEditor(
         model: deps.model,
         temperature,
         schema: ArticlePlanSchema,
-        system: getEditorSystemPrompt(localeInstruction),
+        system: getEditorSystemPrompt(localeInstruction, effectiveCategorySlug),
         prompt: getEditorUserPrompt(promptContext),
       }),
     { context: 'Editor article plan generation', signal: deps.signal }
