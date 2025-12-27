@@ -26,6 +26,15 @@ Core writing principles:
 - ACCURACY: Every number and name must be verified
 - UTILITY: Focus on helping the player succeed
 - FLOW: Guide the player naturally through the process
+- LOCATION PRECISION: Every item, ability, NPC, or key location MUST have its exact location stated in the same sentence. Players cannot follow instructions if they don't know WHERE to go.
+
+LOCATION PRECISION EXAMPLES:
+✅ GOOD: "Obtain the **[Item Name]** from **[NPC Name]** at **[Location Name]**"
+✅ GOOD: "[NPC Name] appears at the **[Location Name]** entrance ([coordinates] if available) to grant you the **[Ability Name]**"
+✅ GOOD: "Enter the **[Dungeon/Location Name]** located in the **[Region Name]** to receive the **[Ability Name]**"
+❌ BAD: "You will receive the [ability]" (missing location)
+❌ BAD: "Upon entering, you will receive the [ability]" (location implied but not explicit)
+❌ BAD: "[NPC Name] directs you to the [location]" (missing location name and where it is)
 
 ${localeInstruction}
 
@@ -69,11 +78,46 @@ ${truncatedOverview}
 === PREVIOUSLY COVERED (DO NOT REPEAT) ===
 ${ctx.crossReferenceContext || '(None)'}
 
+=== LOCATION REQUIREMENTS (CRITICAL) ===
+Every key element MUST include its exact location in the SAME sentence. This is non-negotiable.
+
+GOOD EXAMPLES:
+✅ "Obtain the **[Item Name]** from **[NPC Name]** at **[Location Name]** ([coordinates] if available)"
+✅ "At the **[Location Name]** ([coordinates] if available), **[NPC Name]** grants you the **[Ability Name]**"
+✅ "Enter the **[Dungeon/Location Name]** ([coordinates] if available) in the **[Region Name]** to receive the **[Ability Name]** from **[NPC Name]**"
+✅ "Find the **[Item Name]** in a **[container type]** inside the **[specific location]** ([coordinates] if available) [relative direction] of the **[known landmark]**"
+
+BAD EXAMPLES (DO NOT DO THIS):
+❌ "You will receive the [ability]" → Missing WHERE
+❌ "Upon entering, [NPC Name] grants you the ability" → Location implied but not explicit
+❌ "The [location] contains the ability" → Which location? Where is it?
+❌ "[NPC Name] directs you to the [location]" → Missing location name and where it is
+
+LOCATION CHECKLIST - Before writing, verify:
+□ Every ability unlock states WHERE it's obtained (dungeon/location name, region/area, coordinates if available)
+□ Every item/equipment states WHERE it's found (location name, specific spot/container, coordinates if available)
+□ Every NPC interaction states WHERE it occurs (location name, specific area/room, coordinates if available)
+□ Every key location has spatial context (relative to other known locations when relevant)
+
+=== NPC INTRODUCTION RULES ===
+When an NPC first appears in your section:
+1. State WHERE they first appear (exact location)
+2. State WHO they are (name and role)
+3. State WHAT they do (what they give/teach/direct you to)
+
+Example: "At the **[Location Name]** entrance ([coordinates] if available), you first meet **[NPC Name]**, a [role/description] who [action/explanation] and directs you to the **[Next Location]**."
+
+=== SPATIAL CONTEXT RULES ===
+When mentioning locations, provide relative context when helpful:
+- "The **[Location Name]** ([coordinates] if available) is located [relative position] of the **[Known Location]**, accessible via [method/mechanic]"
+- "Head [direction] from the **[Known Location]** toward the **[Target Location]** ([coordinates] if available)"
+- "From the **[Current Location]** exit, look [direction] to see [landmark/feature]"
+
 === WRITING INSTRUCTIONS ===
 - Write ${minParagraphs}-${maxParagraphs} paragraphs (unless research is thin).
 - Focus on "How-To". Use imperative verbs ("Go here", "Press X").
 - **Bold** important item names or locations.
-- **CRITICAL:** For every key item, ability, or NPC, you MUST state the EXACT LOCATION in the **SAME SENTENCE** (e.g., "Obtain the **Paraglider** from **Purah** at **Lookout Landing**"). Do not split item and location across sentences.
+- **CRITICAL:** For every key item, ability, or NPC, you MUST state the EXACT LOCATION in the **SAME SENTENCE** (e.g., "Obtain the **[Item Name]** from **[NPC Name]** at **[Location Name]**"). Do not split item and location across sentences.
 - **ANTI-REDUNDANCY:** Check the "PREVIOUSLY COVERED" list above. Do NOT re-explain mechanics or locations already covered. Reference them briefly if needed ("As mentioned in the previous section...").
 - Do NOT repeat the section headline as a subheading.
 

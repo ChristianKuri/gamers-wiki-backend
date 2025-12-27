@@ -10,10 +10,12 @@ REVIEW CRITERIA (GUIDES):
 1. LOCATION NAMING (CRITICAL):
    - Every ability, item, or unlock MUST state WHERE it is obtained.
    - Accept context from the IMMEDIATE preceding sentence (e.g. "Enter the Temple. Inside, you find the Map" is OK).
+   - Flag if location is implied but not explicit (e.g. "Upon entering, you receive..." without stating which location).
 
 2. SPECIFICITY:
-   - Flag vague references like "the fourth shrine" or "the final ability".
+   - Flag vague references like "the [ordinal] [location type]" or "the final ability".
    - Guides must use proper names.
+   - Flag relative locations without context (e.g. "the [location] nearby" without stating what it's near).
 
 3. CONSISTENCY:
    - Section titles must match content (e.g. "Three Shrines" vs 4 items listed).
@@ -21,6 +23,22 @@ REVIEW CRITERIA (GUIDES):
 4. COVERAGE:
    - Are all required elements (from plan) covered?
    - Are instructions clear and sequential?
+   - Are NPCs properly introduced when first encountered (name, location, role)?
+
+COMMON LOCATION MISTAKES TO FLAG:
+❌ "You will receive the [ability]" → Missing WHERE
+❌ "Upon entering, [thing happens]" → Location implied but not explicit
+❌ "[NPC Name] grants you [ability]" → Missing WHERE [NPC Name] appears
+❌ "The [location] contains [item]" → Missing location name and where it is
+❌ "Head to the next area" → Missing area name and location
+❌ "[NPC Name] directs you" → Missing WHERE the interaction occurs
+❌ "The [ordinal] [location type]" → Missing location name and relative location context
+
+LOCATION VERIFICATION PATTERNS:
+- Ability unlocks: Must state dungeon/location name AND where it is (region/area, coordinates if available)
+- Item locations: Must state exact location (building/container, area, coordinates if available)
+- NPC introductions: Must state WHERE they first appear, WHO they are (name and role), WHAT they do
+- Relative locations: Must provide context (e.g. "[direction] of [X]", "inside [Y]", "near [Z]")
 
 OUTPUT FORMAT:
 Return JSON with 'approved' status and 'issues'.
@@ -63,21 +81,64 @@ ${ctx.markdown}
 === RESEARCH ===
 ${ctx.researchSummary}
 
+=== LOCATION VERIFICATION PATTERNS ===
+Check for these common location omission patterns:
+
+ABILITY UNLOCKS:
+❌ "You will receive the [ability]" → Flag: Missing WHERE
+❌ "Upon entering, you receive [ability]" → Flag: Location implied but not explicit
+❌ "[NPC Name] grants you [ability]" → Flag: Missing WHERE [NPC Name] appears
+✅ "Enter the **[Location Name]** ([coordinates] if available) to receive the **[Ability Name]** from [NPC Name]" → OK
+
+ITEM LOCATIONS:
+❌ "Find the [item] in a [container]" → Flag: Missing WHERE the [container] is
+❌ "The [location] contains [item]" → Flag: Missing location name and where it is
+✅ "Find the **[Item Name]** in a [container type] inside the **[specific location]** ([coordinates] if available) [relative direction] of the **[known landmark]**" → OK
+
+NPC INTRODUCTIONS:
+❌ "[NPC Name] directs you" → Flag: Missing WHERE this interaction occurs
+❌ "Meet [NPC Name]" → Flag: Missing WHERE and WHO (role)
+✅ "At the **[Location Name]** entrance ([coordinates] if available), you first meet **[NPC Name]**, a [role/description] who [action/explanation]" → OK
+
+RELATIVE LOCATIONS:
+❌ "The [location] nearby" → Flag: Missing what it's near and location name
+❌ "Head to the next area" → Flag: Missing area name and location
+✅ "The **[Location Name]** ([coordinates] if available) is located [relative position] of the **[Known Location]**, accessible via [method/mechanic]" → OK
+
 === INSTRUCTIONS ===
 Identify issues specific to GUIDES:
-1. Missing locations for items/abilities (Flag as MAJOR coverage issue)
-   - Note: Check surrounding sentences before flagging. If context is clear, do NOT flag.
+1. Missing locations for items/abilities (Flag as CRITICAL or MAJOR coverage issue)
+   - Check: Is the location stated in the SAME sentence or IMMEDIATELY preceding sentence?
+   - Flag if location is implied but not explicit
+   - Flag if NPC interaction lacks location context
+
 2. Vague references ("the item", "the shrine") instead of proper names
-3. Unclear instructions
-4. Missing required elements
+   - Flag: "the fourth shrine" without name
+   - Flag: "the final ability" without name
+   - Flag: Relative locations without context
+
+3. NPC introduction issues
+   - Flag: NPC mentioned without WHERE they first appear
+   - Flag: NPC mentioned without WHO they are (name and role)
+   - Flag: NPC interaction without location context
+
+4. Spatial context gaps
+   - Flag: Locations mentioned without relative context when it would be helpful
+   - Flag: "Nearby" or "next area" without specifying what it's near
+
+5. Unclear instructions
+   - Flag: Steps that are ambiguous or could be interpreted multiple ways
+
+6. Missing required elements
+   - Verify each required element has: name, location, explanation, actionable steps
 
 CRITICAL: For the 'location' field in your JSON output, you MUST use one of the exact headlines listed above.
 If an issue spans multiple sections or the whole article, use "global".
 DO NOT invent location names or combine headlines.
 
 Decide fixStrategy:
-- direct_edit: For vague names, missing locations, typos, or minor factual errors
-- expand: For missing details/explanations within a section
+- direct_edit: For vague names, missing locations in same sentence, typos, or minor factual errors
+- expand: For missing details/explanations within a section (e.g., adding spatial context)
 - regenerate: For sections that are fundamentally broken or outdated
 
 Return JSON`;
