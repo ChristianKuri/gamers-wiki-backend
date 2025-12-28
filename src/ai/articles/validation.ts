@@ -370,6 +370,182 @@ function validateContentQuality(markdown: string): ValidationIssue[] {
 }
 
 // ============================================================================
+// Token Repetition Detection (LLM Failure Mode)
+// ============================================================================
+
+/**
+ * Configuration for repetitive text detection.
+ */
+const REPETITION_CONFIG = {
+  /** Minimum string length to check for repetition */
+  MIN_LENGTH_TO_CHECK: 100,
+  /** Minimum pattern length to detect (e.g., "ede" = 3 chars) */
+  MIN_PATTERN_LENGTH: 2,
+  /** Maximum pattern length to check */
+  MAX_PATTERN_LENGTH: 10,
+  /** Minimum consecutive repetitions to flag as corrupted */
+  MIN_REPETITIONS: 15,
+  /** Ratio of repeated pattern length to total string length that indicates corruption */
+  CORRUPTION_RATIO_THRESHOLD: 0.3,
+} as const;
+
+/**
+ * Detects if a string contains corrupted repetitive patterns.
+ * This catches a common LLM failure mode where the model gets stuck
+ * generating the same tokens repeatedly (e.g., "ededededededede...").
+ *
+ * @param text - The text to check
+ * @returns Object with `isCorrupted` flag and optional `pattern` that was detected
+ *
+ * @example
+ * detectRepetitiveText("normal text") // { isCorrupted: false }
+ * detectRepetitiveText("normalededededededede...") // { isCorrupted: true, pattern: "ede", repetitions: 50 }
+ */
+export function detectRepetitiveText(text: string): {
+  isCorrupted: boolean;
+  pattern?: string;
+  repetitions?: number;
+} {
+  if (text.length < REPETITION_CONFIG.MIN_LENGTH_TO_CHECK) {
+    return { isCorrupted: false };
+  }
+
+  // Check for patterns of various lengths (2-10 chars)
+  for (let patternLen = REPETITION_CONFIG.MIN_PATTERN_LENGTH; patternLen <= REPETITION_CONFIG.MAX_PATTERN_LENGTH; patternLen++) {
+    // Slide through the string looking for repeated patterns
+    for (let startPos = 0; startPos < text.length - patternLen * REPETITION_CONFIG.MIN_REPETITIONS; startPos++) {
+      const pattern = text.slice(startPos, startPos + patternLen);
+
+      // Skip patterns that are just whitespace or single repeated char
+      if (/^\s+$/.test(pattern)) continue;
+      if (pattern.length > 1 && new Set(pattern).size === 1) {
+        // Single char repeated (e.g., "aaa") - check as single char pattern
+        continue;
+      }
+
+      // Count consecutive repetitions of this pattern
+      let repetitions = 0;
+      let checkPos = startPos;
+      while (checkPos + patternLen <= text.length) {
+        if (text.slice(checkPos, checkPos + patternLen) === pattern) {
+          repetitions++;
+          checkPos += patternLen;
+        } else {
+          break;
+        }
+      }
+
+      // Check if this is suspicious
+      const repeatedLength = repetitions * patternLen;
+      const ratio = repeatedLength / text.length;
+
+      if (repetitions >= REPETITION_CONFIG.MIN_REPETITIONS && ratio >= REPETITION_CONFIG.CORRUPTION_RATIO_THRESHOLD) {
+        return {
+          isCorrupted: true,
+          pattern,
+          repetitions,
+        };
+      }
+    }
+  }
+
+  // Also check for single character repetition (e.g., "eeeeeeeeee")
+  const charCounts = new Map<string, number>();
+  for (const char of text) {
+    charCounts.set(char, (charCounts.get(char) ?? 0) + 1);
+  }
+
+  for (const [char, count] of charCounts) {
+    // If a single non-space character makes up >50% of the text, it's likely corrupted
+    if (char !== ' ' && char !== '\n' && count / text.length > 0.5) {
+      return {
+        isCorrupted: true,
+        pattern: char,
+        repetitions: count,
+      };
+    }
+  }
+
+  return { isCorrupted: false };
+}
+
+/**
+ * Checks all string fields in an article plan for token repetition corruption.
+ * Returns the first corrupted field found, or null if none.
+ *
+ * @param plan - The article plan to check
+ * @returns Object with field path and corruption details, or null if clean
+ */
+export function findCorruptedPlanField(plan: {
+  title: string;
+  excerpt: string;
+  tags: readonly string[];
+  sections: readonly { headline: string; goal: string; researchQueries: readonly string[]; mustCover: readonly string[] }[];
+  requiredElements?: readonly string[];
+}): { field: string; pattern: string; repetitions: number } | null {
+  // Check title
+  const titleCheck = detectRepetitiveText(plan.title);
+  if (titleCheck.isCorrupted) {
+    return { field: 'title', pattern: titleCheck.pattern!, repetitions: titleCheck.repetitions! };
+  }
+
+  // Check excerpt
+  const excerptCheck = detectRepetitiveText(plan.excerpt);
+  if (excerptCheck.isCorrupted) {
+    return { field: 'excerpt', pattern: excerptCheck.pattern!, repetitions: excerptCheck.repetitions! };
+  }
+
+  // Check tags
+  for (let i = 0; i < plan.tags.length; i++) {
+    const tagCheck = detectRepetitiveText(plan.tags[i]);
+    if (tagCheck.isCorrupted) {
+      return { field: `tags[${i}]`, pattern: tagCheck.pattern!, repetitions: tagCheck.repetitions! };
+    }
+  }
+
+  // Check required elements
+  if (plan.requiredElements) {
+    for (let i = 0; i < plan.requiredElements.length; i++) {
+      const elementCheck = detectRepetitiveText(plan.requiredElements[i]);
+      if (elementCheck.isCorrupted) {
+        return { field: `requiredElements[${i}]`, pattern: elementCheck.pattern!, repetitions: elementCheck.repetitions! };
+      }
+    }
+  }
+
+  // Check sections
+  for (let i = 0; i < plan.sections.length; i++) {
+    const section = plan.sections[i];
+
+    const headlineCheck = detectRepetitiveText(section.headline);
+    if (headlineCheck.isCorrupted) {
+      return { field: `sections[${i}].headline`, pattern: headlineCheck.pattern!, repetitions: headlineCheck.repetitions! };
+    }
+
+    const goalCheck = detectRepetitiveText(section.goal);
+    if (goalCheck.isCorrupted) {
+      return { field: `sections[${i}].goal`, pattern: goalCheck.pattern!, repetitions: goalCheck.repetitions! };
+    }
+
+    for (let j = 0; j < section.researchQueries.length; j++) {
+      const queryCheck = detectRepetitiveText(section.researchQueries[j]);
+      if (queryCheck.isCorrupted) {
+        return { field: `sections[${i}].researchQueries[${j}]`, pattern: queryCheck.pattern!, repetitions: queryCheck.repetitions! };
+      }
+    }
+
+    for (let j = 0; j < section.mustCover.length; j++) {
+      const mustCoverCheck = detectRepetitiveText(section.mustCover[j]);
+      if (mustCoverCheck.isCorrupted) {
+        return { field: `sections[${i}].mustCover[${j}]`, pattern: mustCoverCheck.pattern!, repetitions: mustCoverCheck.repetitions! };
+      }
+    }
+  }
+
+  return null;
+}
+
+// ============================================================================
 // Content Deduplication
 // ============================================================================
 
@@ -887,6 +1063,22 @@ export function validateArticleDraft(
 export function validateArticlePlan(plan: ArticlePlan): ValidationIssue[] {
   const issues: ValidationIssue[] = [];
   const C = ARTICLE_PLAN_CONSTRAINTS;
+
+  // Check for token repetition corruption (LLM failure mode)
+  // This MUST be first - corrupted output is never usable and should trigger retry
+  const corruptedField = findCorruptedPlanField(plan);
+  if (corruptedField) {
+    issues.push(
+      issue(
+        'error',
+        `LLM output corruption detected in ${corruptedField.field}: ` +
+          `pattern "${corruptedField.pattern}" repeated ${corruptedField.repetitions} times. ` +
+          `This is a known LLM failure mode - retry required.`
+      )
+    );
+    // Return early - no point validating corrupted output further
+    return issues;
+  }
 
   // Validate section count
   if (plan.sections.length < C.MIN_SECTIONS) {

@@ -20,21 +20,25 @@ describe('ArticlePlanSchema', () => {
           headline: 'What You Should Do First',
           goal: 'Give a safe opening path and immediate priorities.',
           researchQueries: ['Elden Ring early game best route'],
+          mustCover: ['Opening path'],
         },
         {
           headline: 'Starter Class and Keepsake',
           goal: 'Explain starter choices and why they matter.',
           researchQueries: ['Elden Ring best starting class'],
+          mustCover: ['Class selection'],
         },
         {
           headline: 'Leveling and Stat Priorities',
           goal: 'Teach new players the core stats and early targets.',
           researchQueries: ['Elden Ring vigor early game recommendation'],
+          mustCover: ['Stat priorities'],
         },
         {
           headline: 'Early Weapons and Gear',
           goal: 'Recommend accessible early-game equipment.',
           researchQueries: ['Elden Ring best early game weapons'],
+          mustCover: ['Early gear'],
         },
       ],
       safety: {
@@ -54,10 +58,10 @@ describe('ArticlePlanSchema', () => {
       excerpt:
         'Start strong in Elden Ring with early routes, safe upgrades, and the key mistakes most new Tarnished make—so you level faster and stay alive.',
       sections: [
-        { headline: 'Section 1', goal: 'Goal', researchQueries: ['query1'] },
-        { headline: 'Section 2', goal: 'Goal', researchQueries: ['query2'] },
-        { headline: 'Section 3', goal: 'Goal', researchQueries: ['query3'] },
-        { headline: 'Section 4', goal: 'Goal', researchQueries: ['query4'] },
+        { headline: 'Section 1', goal: 'Goal', researchQueries: ['query1'], mustCover: ['item1'] },
+        { headline: 'Section 2', goal: 'Goal', researchQueries: ['query2'], mustCover: ['item2'] },
+        { headline: 'Section 3', goal: 'Goal', researchQueries: ['query3'], mustCover: ['item3'] },
+        { headline: 'Section 4', goal: 'Goal', researchQueries: ['query4'], mustCover: ['item4'] },
       ],
       safety: { noScoresUnlessReview: true },
     };
@@ -182,10 +186,10 @@ describe('ArticlePlanSchema safety field', () => {
       'Start strong in Elden Ring with early routes, safe upgrades, and the key mistakes most new Tarnished make—so you level faster and stay alive.',
     tags: ['test tag'],
     sections: [
-      { headline: 'Section 1', goal: 'Goal', researchQueries: ['query1'] },
-      { headline: 'Section 2', goal: 'Goal', researchQueries: ['query2'] },
-      { headline: 'Section 3', goal: 'Goal', researchQueries: ['query3'] },
-      { headline: 'Section 4', goal: 'Goal', researchQueries: ['query4'] },
+      { headline: 'Section 1', goal: 'Goal', researchQueries: ['query1'], mustCover: ['item1'] },
+      { headline: 'Section 2', goal: 'Goal', researchQueries: ['query2'], mustCover: ['item2'] },
+      { headline: 'Section 3', goal: 'Goal', researchQueries: ['query3'], mustCover: ['item3'] },
+      { headline: 'Section 4', goal: 'Goal', researchQueries: ['query4'], mustCover: ['item4'] },
     ],
   };
 

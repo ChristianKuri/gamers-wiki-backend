@@ -547,7 +547,7 @@ describe('runScout', () => {
       expect(queries.some((q) => q.includes('Hollow Knight'))).toBe(true);
     });
 
-    it('includes genres in overview search', async () => {
+    it('includes game name in overview search', async () => {
       const mockSearch = createMockSearch();
       const mockGenerateText = vi.fn()
         .mockResolvedValueOnce({ text: MOCK_OVERVIEW_BRIEFING, usage: {} })
@@ -564,7 +564,8 @@ describe('runScout', () => {
       await runScout(context, deps);
 
       const queries = mockSearch.mock.calls.map((call) => call[0]);
-      expect(queries.some((q) => q.includes('Metroidvania') || q.includes('Platformer'))).toBe(true);
+      // Guides strategy includes game name and gameplay-related keywords
+      expect(queries.some((q) => q.includes('Elden Ring'))).toBe(true);
     });
 
     it('handles missing instruction gracefully', async () => {

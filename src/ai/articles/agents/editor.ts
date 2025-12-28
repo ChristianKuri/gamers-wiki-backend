@@ -16,6 +16,7 @@ import {
   type ArticleCategorySlugInput,
 } from '../article-plan';
 import { EDITOR_CONFIG, WORD_COUNT_CONSTRAINTS } from '../config';
+import { findCorruptedPlanField } from '../validation';
 import { withRetry } from '../retry';
 import {
   buildCategoryHintsSection,
@@ -142,7 +143,17 @@ export async function runEditor(
     categorySlug: effectiveCategorySlug,
   };
 
-  log.debug('Generating article plan...');
+  // Build prompts and log sizes for debugging
+  const systemPrompt = getEditorSystemPrompt(localeInstruction, effectiveCategorySlug);
+  const userPrompt = getEditorUserPrompt(promptContext);
+  
+  log.info(`Generating article plan...`);
+  log.info(`  System prompt: ${systemPrompt.length} chars`);
+  log.info(`  User prompt: ${userPrompt.length} chars`);
+  log.info(`  Category: ${effectiveCategorySlug || 'auto-detect'}`);
+  
+  const startTime = Date.now();
+  log.info(`  Calling generateObject...`);
 
   const { object: rawPlan, usage } = await withRetry(
     () =>
@@ -150,11 +161,29 @@ export async function runEditor(
         model: deps.model,
         temperature,
         schema: ArticlePlanSchema,
-        system: getEditorSystemPrompt(localeInstruction, effectiveCategorySlug),
-        prompt: getEditorUserPrompt(promptContext),
+        system: systemPrompt,
+        prompt: userPrompt,
       }),
     { context: 'Editor article plan generation', signal: deps.signal }
   );
+
+  const elapsed = Date.now() - startTime;
+  log.info(`  generateObject completed in ${elapsed}ms`);
+  log.info(`  Raw plan received: ${rawPlan.sections?.length || 0} sections, ${rawPlan.requiredElements?.length || 0} required elements`);
+
+  // Check for LLM output corruption (token repetition bug)
+  // This MUST happen before any other processing - corrupted output cannot be used
+  log.info(`  Checking for output corruption...`);
+  const corruptedField = findCorruptedPlanField(rawPlan);
+  if (corruptedField) {
+    const errorMsg =
+      `LLM output corruption detected in ${corruptedField.field}: ` +
+      `pattern "${corruptedField.pattern}" repeated ${corruptedField.repetitions} times. ` +
+      `This is a known LLM failure mode.`;
+    log.error(errorMsg);
+    throw new Error(errorMsg);
+  }
+  log.info(`  No corruption detected`);
 
   // Normalize categorySlug (AI may output aliases like 'guide' instead of 'guides')
   const normalizedCategorySlug = normalizeArticleCategorySlug(

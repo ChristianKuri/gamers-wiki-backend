@@ -3,51 +3,33 @@ import { buildRequiredElementHints } from '../shared/editor-utils';
 
 export const editorPrompts: EditorPrompts = {
   getSystemPrompt(localeInstruction: string): string {
-    return `You are the Editor agent specializing in GAME GUIDES.
-    
-Your mission: Structure a logical, step-by-step guide that solves player problems.
+    return `You are the Editor agent for AI-generated game guides across ALL game types (RPG, FPS, strategy, puzzle, etc.).
 
-Core principles:
-- STRUCTURE: Use logical progression (Start → Middle → End)
-- COMPLETENESS: Extract ALL key elements from research — never omit items, NPCs, or locations
-- SPECIFICITY: Required elements must be precise and actionable
-- CLARITY: Headlines should be actionable ("How to unlock X", "Where to find Y")
-- FOCUS: Stick to the specific guide topic requested
+MISSION: Create complete, actionable guide structures that solve player problems step-by-step.
 
-═══════════════════════════════════════════════════════════════════════════════
-CRITICAL: mustCover ASSIGNMENT IS MANDATORY
-═══════════════════════════════════════════════════════════════════════════════
-You MUST assign every requiredElement to exactly ONE section's "mustCover" array.
-The Specialist agent ONLY sees the mustCover for each section — if an element is
-not in any mustCover, IT WILL NOT BE COVERED IN THE ARTICLE.
+CORE PRINCIPLES:
+• COMPLETENESS: Every element MUST include WHAT + WHERE + HOW
+• EXHAUSTIVE: Extract ALL key elements from research, no omissions
+• CLARITY: Actionable headlines ("How to X", "Where to find Y")
+• STRUCTURE: Adapt flow to guide type (walkthrough vs boss vs collectibles vs builds)
 
-For EACH section in your plan, you MUST include a "mustCover" array containing
-the specific elements that section is responsible for covering.
+⚠️ CRITICAL: mustCover ACCOUNTABILITY ⚠️
+Every requiredElement MUST be assigned to exactly ONE section's mustCover array.
+The Specialist agent ONLY sees mustCover — omitted elements disappear from the final article.
+Missing assignments = missing content in final article.
 
-FAILURE TO INCLUDE mustCover ARRAYS = REJECTED PLAN
+ELEMENT FORMAT RULE: "[Type]: [NAME] ([WHERE], [HOW])"
+Each element needs 3 parts:
+1. WHAT: Type + specific name (not categories)
+2. WHERE: Precise location with context
+3. HOW: Acquisition method/purpose/controls
 
-REQUIRED ELEMENTS RULES:
-When building the "requiredElements" list, you must be EXHAUSTIVE and SPECIFIC:
-
-1. ITEM SETS: List ALL items in a set, not just some
-   ✅ "Archaic Set locations: Legwear (Room of Awakening), Tunic (Pondside Cave), Warm Greaves (hollow tree near Gutanbac)"
-   ❌ "Archaic Legwear and Warm Greaves locations" (missing Tunic!)
-
-2. CONTROLS: Specify exact button inputs, not vague descriptions
-   ✅ "Ultrahand controls: [L] to activate, [A] to grab, [R] + D-pad to rotate, wiggle Right Stick to detach"
-   ❌ "Controls for Ultrahand" (too vague — which controls?)
-
-3. NPCs: Name every NPC the guide must cover with their location
-   ✅ "NPCs: Rauru at Temple of Time, Purah at Lookout Landing research building, Captain Hoz at First Gatehouse in Hyrule Castle"
-   ❌ "NPC interactions" (which NPCs? where?)
-
-4. LOCATIONS: Include parent context for sub-locations
-   ✅ "First Gatehouse within Hyrule Castle ruins"
-   ❌ "First Gatehouse" (where is that?)
-
-5. ABILITIES: List each ability with its unlock location
-   ✅ "Abilities: Ultrahand (Ukouh Shrine), Fuse (In-isa Shrine), Ascend (Gutanbac Shrine), Recall (Temple of Time)"
-   ❌ "The four abilities" (which ones? where?)
+✅ "Item: Archaic Tunic (chest in Pondside Cave southeast of Temple, accessible after Ultrahand unlock)"
+✅ "NPC: Rauru (Temple of Time main entrance, provides story exposition and Recall ability)"
+✅ "Ability: Ultrahand (Ukouh Shrine on Great Sky Island, [L] activate → [A] grab → [R]+D-pad rotate)"
+❌ "Archaic Set locations" ← Vague! WHERE exactly? HOW to get each piece?
+❌ "NPC interactions" ← WHO? WHERE? WHAT do they do?
+❌ "Ultrahand" ← WHERE unlocked? HOW to use?
 
 ${localeInstruction}`;
   },
@@ -57,121 +39,86 @@ ${localeInstruction}`;
       ? `\n=== ⚠️ VALIDATION FEEDBACK ===\n${ctx.validationFeedback.map((msg, i) => `${i + 1}. ${msg}`).join('\n')}\n`
       : '';
 
-    // Calculate target sections if word count provided
     const sectionGuidance = ctx.targetSectionCount
-      ? `Target: approximately ${ctx.targetSectionCount} sections for ${ctx.targetWordCount} words.`
-      : 'Use 3-6 sections depending on topic complexity.';
+      ? `Target: ~${ctx.targetSectionCount} sections for ${ctx.targetWordCount} words.`
+      : 'Use 3-6 sections depending on complexity.';
 
     return `Design a GUIDE article plan for "${ctx.gameName}".
 ${validationFeedbackSection}
-
-=== USER DIRECTIVE ===
+=== USER REQUEST ===
 ${ctx.instruction?.trim() || 'Create a comprehensive guide'}
 
-=== SCOUT INTELLIGENCE ===
+=== SCOUT RESEARCH ===
 ${ctx.scoutBriefing.fullContext}
 
 ${ctx.existingResearchSummary}
 
-=== GUIDE STRUCTURE ===
-The article MUST be a 'guides' category.
-${sectionGuidance}
+=== STRUCTURE ===
+Category: 'guides' | ${sectionGuidance}
 
-Plan a structure that logically leads the player from "What is this?" to "How do I master it?".
+Adapt structure to guide type:
+• Walkthrough/Quest: Overview → Prerequisites → Step-by-step → Tips → Troubleshooting
+• Boss/Combat: Preparation → Phase breakdown → Strategy → Rewards
+• Collectibles/Items: Overview → Location list (grouped logically) → Acquisition methods
+• Build/Loadout: Concept → Core items → Alternatives → Playstyle tips
 
-Suggested Flow:
-1. Introduction / Overview (What are we doing?)
-2. Prerequisites / Preparation (What do I need?)
-3. Step-by-Step Instructions (The core content)
-4. Advanced Tips / Optimization (How to do it better)
-5. Troubleshooting / FAQ (Common issues)
+=== REQUIRED ELEMENTS (EXTRACT FROM RESEARCH) ===
+⚠️ CRITICAL: Format EVERY element as "[Type]: [NAME] ([WHERE], [HOW])" ⚠️
 
-Negative Constraints:
-- DO NOT repeat the section headline as a subheading (e.g., if H2 is "Combat", do not start with H3 "Combat").
-- DO NOT plan overlapping topics (e.g., don't cover "Shrine 4" in "First 3 Shrines" section).
-- DO NOT create sections that duplicate content from other sections.
-
-=== RESEARCH QUERIES ===
-Create specific queries to fill knowledge gaps.
-Good query examples:
-- "exact location of [item] map coordinates"
-- "list of materials needed for [recipe]"
-- "boss [name] attack patterns phase 2"
-- "[ability name] button controls tutorial"
-
-=== REQUIRED ELEMENTS (CRITICAL) ===
-Extract ALL key elements from the Scout research and user directive.
-The Specialist agent will use this list as a checklist — anything missing here will be missing from the article.
+Element type templates (WHAT + WHERE + HOW):
+• Items: "Item: Iron Sword (chest in Dungeon Level 2 east wing, behind locked door requiring Bronze Key)"
+• NPCs: "NPC: Merchant Beedle (Kakariko Village east entrance, sells arrows and elixirs)"
+• Abilities: "Ability: Double Jump (unlocked at Sky Tower after defeating Wind Boss, press A twice)"
+• Locations: "Location: Hidden Cave (north of Zora's Domain past waterfall, accessible via Zephyr ability)"
+• Enemies: "Enemy: Lynel (Coliseum Ruins in Central Hyrule, weak to ice arrows and perfect dodges)"
 
 ${buildRequiredElementHints(ctx.instruction, ctx.genres)}
 
-REQUIRED ELEMENTS MUST BE:
-1. **EXHAUSTIVE**: List EVERY item, NPC, location, and mechanic mentioned in research
-2. **SPECIFIC**: Include exact names, not categories (e.g., "Archaic Tunic" not "armor pieces")
-3. **ACTIONABLE**: Include enough detail that a writer knows exactly what to cover
+=== OUTPUT FORMAT ===
+⚠️ VALIDATION BEFORE OUTPUT ⚠️
+1. Every section MUST have mustCover array (no exceptions)
+2. Every requiredElement MUST appear in EXACTLY ONE mustCover (no duplicates, no orphans)
+3. mustCover strings MUST match requiredElements exactly (copy/paste)
+4. Every element MUST have all 3 parts: WHAT (Type: Name) + WHERE (location) + HOW (method/purpose)
+5. Distribute elements evenly across sections (avoid one section with 10 items, another with 1)
 
-ELEMENT CHECKLIST (review Scout research for each):
-□ All collectible items/equipment mentioned (list each by name)
-□ All NPCs mentioned (name + location)
-□ All abilities/mechanics (name + unlock method/location)
-□ All locations/areas (with parent context if sub-location)
-□ All controls/inputs (exact button prompts)
-□ All recipes/crafting (ingredients + result)
-□ All enemies/bosses (name + location)
-
-BAD EXAMPLES (too vague):
-❌ "Armor locations" → Which armor? List each piece!
-❌ "NPC interactions" → Which NPCs? Where?
-❌ "Ability controls" → Which buttons for which actions?
-❌ "The shrines" → Name each shrine!
-
-GOOD EXAMPLES (specific and complete):
-✅ "Archaic Set: Legwear in Room of Awakening chest, Tunic in Pondside Cave chest, Warm Greaves in hollow tree near Gutanbac Shrine"
-✅ "Ultrahand controls: [L] activate, [A] grab, [R]+D-pad rotate, Right Stick wiggle to detach"
-✅ "Shrines: Ukouh (Ultrahand), In-isa (Fuse), Gutanbac (Ascend), Nachoyah (Recall tutorial)"
-✅ "NPCs: Rauru (spirit guide, Temple of Time), Purah (researcher, Lookout Landing), Captain Hoz (guard captain, First Gatehouse in Hyrule Castle)"
-
-=== OUTPUT FORMAT (MANDATORY STRUCTURE) ===
-Return JSON with this EXACT structure. The mustCover array in each section is REQUIRED:
-
+Output structure validated by ArticlePlanSchema. Example of good output:
 {
-  "title": "...",
+  "title": "Actionable guide title (e.g., 'How to Get the Master Sword in Tears of the Kingdom')",
   "categorySlug": "guides",
-  "excerpt": "...",
-  "tags": ["...", "..."],
+  "excerpt": "Single sentence describing what the guide accomplishes",
+  "tags": ["relevant-topic", "game-mechanic", "item-name"],
   "requiredElements": [
-    "Element A: specific details",
-    "Element B: specific details",
-    "Element C: specific details"
+    "Item: Master Sword (Korok Forest Sacred Grove, complete 13 hearts requirement)",
+    "Item: Heart Container (various shrines, 4 spirit orbs each)",
+    "Location: Korok Forest (north of Hyrule Castle through Lost Woods, follow torch pattern)"
   ],
   "sections": [
     {
-      "headline": "Section 1 Title",
-      "goal": "What this section achieves",
-      "researchQueries": ["query 1", "query 2", "query 3"],
-      "mustCover": ["Element A: specific details"]  // ← REQUIRED!
+      "headline": "Preparing for the Master Sword",
+      "goal": "Ensure player has required health and knows where to go",
+      "researchQueries": [
+        "Master Sword heart requirement Tears of the Kingdom",
+        "fastest shrines for heart containers TOTK"
+      ],
+      "mustCover": [
+        "Item: Heart Container (various shrines, 4 spirit orbs each)"
+      ]
     },
     {
-      "headline": "Section 2 Title",
-      "goal": "What this section achieves",
-      "researchQueries": ["query 1", "query 2", "query 3"],
-      "mustCover": ["Element B: specific details", "Element C: specific details"]  // ← REQUIRED!
+      "headline": "Navigating the Lost Woods to Korok Forest",
+      "goal": "Guide player through Lost Woods maze to reach the sword location",
+      "researchQueries": [
+        "Lost Woods torch pattern solution TOTK",
+        "Korok Forest entrance map location"
+      ],
+      "mustCover": [
+        "Location: Korok Forest (north of Hyrule Castle through Lost Woods, follow torch pattern)",
+        "Item: Master Sword (Korok Forest Sacred Grove, complete 13 hearts requirement)"
+      ]
     }
   ]
 }
-
-═══════════════════════════════════════════════════════════════════════════════
-mustCover RULES (YOUR PLAN WILL BE REJECTED IF VIOLATED):
-═══════════════════════════════════════════════════════════════════════════════
-1. EVERY section MUST have a "mustCover" array (even if it has only 1-2 elements)
-2. EVERY requiredElement MUST appear in EXACTLY ONE section's mustCover
-3. mustCover elements should match requiredElements EXACTLY (copy the text)
-4. If you have 10 requiredElements and 4 sections, distribute them: ~2-3 per section
-
-VALIDATION CHECK (do this before outputting):
-□ Does every section have a "mustCover" array?
-□ Is every requiredElement assigned to exactly one mustCover?
-□ Are mustCover strings copied exactly from requiredElements?
 `;
   }
 };
