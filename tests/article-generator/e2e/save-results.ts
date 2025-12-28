@@ -150,6 +150,8 @@ export interface PlanSection {
   readonly headline: string;
   readonly goal: string;
   readonly researchQueries: readonly string[];
+  /** Elements this section must cover (assigned by Editor from requiredElements) */
+  readonly mustCover: readonly string[];
 }
 
 /** Article plan from Editor */

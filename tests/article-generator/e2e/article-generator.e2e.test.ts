@@ -342,6 +342,7 @@ function extractPlanAnalysis(json: any): ArticlePlanAnalysis {
       headline: s.headline ?? '',
       goal: s.goal ?? '',
       researchQueries: s.researchQueries ?? [],
+      mustCover: s.mustCover ?? [],
     })),
     requiredElements: plan.requiredElements ?? [],
     totalResearchQueries: sections.reduce(
