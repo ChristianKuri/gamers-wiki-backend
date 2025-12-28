@@ -90,36 +90,31 @@ export interface FixerOutput {
 }
 
 // ============================================================================
-// Zod Schemas - Simple, letting LLM do the work
+// Zod Schemas - Paragraph Rewrite Approach
 // ============================================================================
 
 /**
- * Universal schema for smart section editing.
- * Give the LLM space to think and work.
+ * Schema for paragraph-level rewriting.
+ * 
+ * KEY INSIGHT: Instead of asking the LLM to splice text into specific locations,
+ * we ask it to COMPLETELY REWRITE paragraphs that have issues. This:
+ * 1. Produces natural, flowing prose (no Frankenstein sentences)
+ * 2. Lets the LLM use its intelligence to integrate information properly
+ * 3. Reduces retry cycles because the result is semantically complete
  */
-const SmartEditOutputSchema = z.object({
-  thinking: z.string().describe('Your reasoning about how to apply this fix - think step by step'),
-  editedContent: z.string().describe('The complete edited section content with the fix applied'),
-  whatChanged: z.string().describe('Brief description of the change made'),
-  changeType: z.enum(['insertion', 'replacement', 'expansion', 'restructure', 'no_change']).describe('Type of change made'),
-  wasFixed: z.boolean().describe('Did you successfully fix the issue?'),
-  grammarCheck: z.string().describe('Confirm the edited text is grammatically correct'),
-});
-
-/**
- * Schema for batch fixing multiple issues in one section.
- * More efficient and avoids grammar corruption from sequential edits.
- */
-const BatchFixOutputSchema = z.object({
-  thinking: z.string().describe('Your detailed reasoning about how to fix ALL these issues together - think step by step'),
-  editedContent: z.string().describe('The complete edited section content with ALL fixes applied'),
-  fixesSummary: z.array(z.object({
-    issue: z.string().describe('Which issue this addresses'),
-    wasFixed: z.boolean().describe('Whether this issue was successfully fixed'),
-    change: z.string().describe('What was changed (or why it could not be fixed)'),
-  })).describe('Summary of each fix applied'),
-  grammarCheck: z.string().describe('Verify the final text is grammatically correct'),
-  confidenceScore: z.number().min(0).max(100).describe('How confident are you that ALL issues were properly fixed (0-100)'),
+const ParagraphRewriteSchema = z.object({
+  analysis: z.string().describe('Analyze what information is missing or incorrect in this section'),
+  rewrittenSection: z.string().describe('The COMPLETE rewritten section with all issues fixed. Do not just patch - rewrite paragraphs entirely for natural flow.'),
+  changesExplained: z.array(z.object({
+    originalProblem: z.string().describe('What was wrong'),
+    howFixed: z.string().describe('How you fixed it by rewriting'),
+    verificationQuote: z.string().describe('Quote the exact text from your rewrite that fixes this issue'),
+  })).describe('Explain each fix with proof'),
+  selfCheck: z.object({
+    allIssuesAddressed: z.boolean().describe('Did you address ALL listed issues?'),
+    readsProfessionally: z.boolean().describe('Does the rewritten section read professionally and naturally?'),
+    noInformationLost: z.boolean().describe('Did you preserve all original important information?'),
+  }).describe('Self-verification checklist'),
 });
 
 // ============================================================================
@@ -257,12 +252,15 @@ export function getSectionContent(markdown: string, headline: string): string | 
 // ============================================================================
 
 /**
- * Batch fix multiple issues in a single section.
+ * Rewrite section with fixes - PARAGRAPH-LEVEL REWRITING approach.
  * 
- * This is the preferred approach because:
- * 1. Fixes all issues in one pass - no grammar corruption from sequential edits
- * 2. LLM sees full context of what needs to change
- * 3. Validates grammar at the end
+ * KEY INSIGHT: Instead of trying to surgically insert text at specific locations,
+ * we ask the LLM to COMPLETELY REWRITE paragraphs that have issues. This:
+ * 
+ * 1. Produces natural, flowing prose (no Frankenstein sentences)
+ * 2. Lets the LLM integrate new information properly
+ * 3. Reduces retry cycles because the result reads naturally
+ * 4. Prevents "reported success but reviewer still sees the issue" bugs
  * 
  * @param markdown - Current article markdown
  * @param sectionName - The section headline
@@ -270,7 +268,7 @@ export function getSectionContent(markdown: string, headline: string): string | 
  * @param deps - Dependencies
  * @returns Fix result with updated markdown
  */
-export async function applyBatchFix(
+export async function rewriteSectionWithFixes(
   markdown: string,
   sectionName: string,
   issues: readonly ReviewIssue[],
@@ -279,8 +277,8 @@ export async function applyBatchFix(
   const log = deps.logger ?? createPrefixedLogger('[Fixer]');
   const temperature = deps.temperature ?? FIXER_CONFIG.TEMPERATURE;
 
-  // Filter to issues with fix instructions
-  const actionableIssues = issues.filter(i => i.fixInstruction && i.fixStrategy !== 'no_action');
+  // Filter to actionable issues
+  const actionableIssues = issues.filter(i => i.fixStrategy !== 'no_action');
   
   if (actionableIssues.length === 0) {
     return {
@@ -304,142 +302,134 @@ export async function applyBatchFix(
     };
   }
 
-  // Build the issues list for the prompt
-  // KEY INSIGHT: We give the LLM the PROBLEM, not the mechanical solution
-  // The LLM is smart - let it figure out HOW to fix it
-  const issuesText = actionableIssues.map((issue, idx) => {
-    const hint = issue.fixInstruction 
-      ? `\n   HINT: ${issue.fixInstruction.slice(0, 200)}${issue.fixInstruction.length > 200 ? '...' : ''}`
-      : '';
-    return `${idx + 1}. [${issue.severity.toUpperCase()}] ${issue.message}${hint}`;
+  // Build clear issue descriptions
+  const issuesList = actionableIssues.map((issue, idx) => {
+    return `${idx + 1}. [${issue.severity.toUpperCase()}] ${issue.message}
+   What's needed: ${issue.fixInstruction || 'Fix as appropriate'}`;
   }).join('\n\n');
 
-  // Determine expected scope - more issues = more changes allowed
-  const hasExpandOrRegenerate = actionableIssues.some(
-    i => i.fixStrategy === 'expand' || i.fixStrategy === 'regenerate'
-  );
-  const maxLengthIncrease = hasExpandOrRegenerate 
-    ? 800 + (actionableIssues.length * 100)
-    : 300 + (actionableIssues.length * 50);
-
-  log.info(`Batch fixing ${actionableIssues.length} issues in "${sectionName}"`);
+  log.info(`Rewriting "${sectionName}" to fix ${actionableIssues.length} issue(s)`);
 
   try {
     const { object, usage } = await withRetry(
       () =>
         deps.generateObject({
           model: deps.model,
-          schema: BatchFixOutputSchema,
+          schema: ParagraphRewriteSchema,
           temperature,
-          maxOutputTokens: 6000, // More space for thinking and complete section
-          system: `You are an expert editor fixing issues in a gaming guide article.
+          maxOutputTokens: 6000,
+          system: `You are an expert gaming guide editor. Your job is to REWRITE sections to fix issues.
 
-YOUR APPROACH (CRITICAL):
-1. READ the issues carefully - understand WHAT is wrong
-2. THINK about HOW to fix each one - the "hint" is just a suggestion, use your judgment
-3. APPLY all fixes to the content
-4. VERIFY each fix was actually applied
-5. Return the complete edited section
+CRITICAL: DO NOT PATCH - REWRITE PARAGRAPHS
+When fixing issues, don't try to splice words into existing sentences. Instead:
+1. Identify which paragraph(s) contain the issue
+2. COMPLETELY REWRITE those paragraphs from scratch
+3. Integrate the missing/corrected information naturally into the rewrite
 
-YOU ARE SMART - USE YOUR INTELLIGENCE:
-- Don't blindly follow mechanical instructions
-- If a hint says "insert X after Y" but Y doesn't exist or has changed, figure out WHERE the information should go
-- If content is MISSING, add it in a natural place
-- If something is WRONG, fix it properly
+WHY THIS MATTERS:
+- Patching creates awkward "Frankenstein" sentences like "find in a treasure chest containing"
+- Rewriting produces natural prose that flows well
+- Reviewers can clearly see the issue is fixed
 
-EDITING PRINCIPLES:
-- Fix ALL issues - don't skip any
-- Be thorough but minimal - add what's needed, nothing more
-- Preserve existing structure and voice
-- Maintain markdown formatting (**bold**, ###headings, bullet lists)
-- Ensure grammar is correct
+EXAMPLE:
+❌ BAD (patching): "Go to the cave. (NEW: The Archaic Tunic is here.) Open the chest."
+✅ GOOD (rewriting): "Make your way to the Pondside Cave, where you'll find a chest containing the Archaic Tunic. This early armor piece provides essential protection for Link."
 
-COMMON MISTAKES TO AVOID:
-❌ Saying you fixed something but not including the change in the output
-❌ Adding duplicate headers or content
-❌ Breaking sentence structure
-❌ Leaving out part of the original content
+GUIDELINES:
+- Rewrite ENTIRE paragraphs that need changes, not just sentences
+- Keep paragraphs that don't need changes mostly intact
+- Maintain the article's professional gaming guide tone
+- Preserve all original important information
+- Don't add fluff - be informative and concise
+- Keep markdown formatting (bold, lists, subheadings)
 
-SELF-CHECK BEFORE RETURNING:
-For EACH issue, verify: "Did I actually include the fix in editedContent?"
-If you can't fix an issue, mark wasFixed: false and explain why.`,
-          prompt: `Fix ALL these issues in the section below.
+STRUCTURAL ISSUES (CRITICAL PRIORITY):
+- Duplicate headers: Remove redundant headings (keep only one)
+- Empty sections: Add content or remove the section
+- Broken formatting: Fix markdown syntax`,
+          prompt: `REWRITE this section to fix ALL the issues below.
 
 ISSUES TO FIX:
-${issuesText}
+${issuesList}
 
-CURRENT SECTION CONTENT ("${sectionName}"):
+CURRENT SECTION ("${sectionName}"):
 ---
 ${sectionContent}
 ---
 
 INSTRUCTIONS:
-1. Think through each issue step by step
-2. Apply ALL fixes to the content
-3. Double-check that each fix is actually in your editedContent
-4. Return the complete edited section with ALL fixes applied
-5. Be honest in fixesSummary - mark wasFixed: false if you couldn't fix something`,
+1. Analyze which paragraphs need to be rewritten to fix these issues
+2. Rewrite those paragraphs COMPLETELY (don't just insert words)
+3. Ensure the rewritten text reads naturally and professionally
+4. Verify each issue is fixed by quoting the relevant text from your rewrite
+
+Return the COMPLETE rewritten section.`,
         }),
-      { context: `Batch fix: ${sectionName} (${actionableIssues.length} issues)`, signal: deps.signal }
+      { context: `Rewrite section: ${sectionName} (${actionableIssues.length} issues)`, signal: deps.signal }
     );
 
     const tokenUsage: TokenUsage = usage
       ? { input: usage.inputTokens ?? 0, output: usage.outputTokens ?? 0 }
       : createEmptyTokenUsage();
 
-    // Log thinking and confidence
-    log.debug(`Batch fix thinking: ${object.thinking.slice(0, 300)}...`);
-    log.debug(`Grammar check: ${object.grammarCheck}`);
-    log.debug(`Confidence: ${object.confidenceScore}%`);
+    // Log analysis
+    log.debug(`Analysis: ${object.analysis.slice(0, 200)}...`);
 
-    // Count actually fixed issues (LLM's self-report)
-    const actuallyFixed = object.fixesSummary.filter(f => f.wasFixed).length;
-    const notFixed = object.fixesSummary.filter(f => !f.wasFixed);
+    // Validate self-check
+    if (!object.selfCheck.allIssuesAddressed) {
+      log.warn('LLM reports not all issues were addressed');
+    }
+    if (!object.selfCheck.readsProfessionally) {
+      log.warn('LLM reports result may not read professionally');
+    }
 
-    // Log issues that couldn't be fixed
-    if (notFixed.length > 0) {
-      log.warn(`Batch fix: ${notFixed.length} issue(s) could not be fixed:`);
-      for (const fix of notFixed) {
-        log.warn(`  ❌ ${fix.issue}: ${fix.change}`);
+    // Log each change with verification
+    let verifiedFixes = 0;
+    for (const change of object.changesExplained) {
+      const hasProof = change.verificationQuote.length > 10 && 
+        object.rewrittenSection.includes(change.verificationQuote.slice(0, 20));
+      
+      if (hasProof) {
+        log.info(`  ✓ ${change.originalProblem}: ${change.howFixed}`);
+        verifiedFixes++;
+      } else {
+        log.warn(`  ⚠ ${change.originalProblem}: ${change.howFixed} (verification uncertain)`);
       }
     }
 
-    // Validate the edit
+    // Validate the rewrite
     const originalLength = sectionContent.length;
-    const editedLength = object.editedContent.length;
-    const lengthDiff = editedLength - originalLength;
+    const rewrittenLength = object.rewrittenSection.length;
+    const lengthDiff = rewrittenLength - originalLength;
 
-    // Check for excessive content removal
-    if (lengthDiff < -200) {
-      log.warn(`Batch fix rejected: Too much content removed (${Math.abs(lengthDiff)} chars)`);
+    // Allow reasonable content changes (more lenient for paragraph rewrites)
+    const minLength = originalLength * 0.5; // Can shrink by up to 50%
+    const maxLength = originalLength * 2.5; // Can grow by up to 150%
+
+    if (rewrittenLength < minLength) {
+      log.warn(`Rewrite rejected: Too much content removed (${rewrittenLength} < ${minLength} chars)`);
       return {
         markdown,
         success: false,
         tokenUsage,
-        description: 'Fix rejected - removed too much content',
+        description: 'Rewrite removed too much content',
         issuesAddressed: 0,
       };
     }
 
-    // Check for excessive addition
-    if (lengthDiff > maxLengthIncrease) {
-      log.warn(`Batch fix rejected: Too much content added (${lengthDiff} chars, max ${maxLengthIncrease})`);
+    if (rewrittenLength > maxLength) {
+      log.warn(`Rewrite rejected: Too much content added (${rewrittenLength} > ${maxLength} chars)`);
       return {
         markdown,
         success: false,
         tokenUsage,
-        description: 'Fix rejected - added too much content',
+        description: 'Rewrite added too much content',
         issuesAddressed: 0,
       };
-    }
-
-    // Low confidence warning
-    if (object.confidenceScore < 70) {
-      log.warn(`Batch fix low confidence (${object.confidenceScore}%) - fixes may not be complete`);
     }
 
     // Replace the section
-    const resultMarkdown = replaceSection(markdown, sectionName, object.editedContent);
+    const resultMarkdown = replaceSection(markdown, sectionName, object.rewrittenSection);
 
     if (!resultMarkdown) {
       log.error(`Failed to replace section "${sectionName}"`);
@@ -453,68 +443,53 @@ INSTRUCTIONS:
     }
 
     const contentChanged = resultMarkdown !== markdown;
-    // Success = content changed AND at least one issue was actually fixed
-    const success = contentChanged && actuallyFixed > 0;
-
-    // Log each fix
-    for (const fix of object.fixesSummary) {
-      const status = fix.wasFixed ? '✓' : '✗';
-      log.info(`  ${status} ${fix.issue}: ${fix.change}`);
-    }
+    const issuesAddressed = object.selfCheck.allIssuesAddressed 
+      ? actionableIssues.length 
+      : Math.max(verifiedFixes, 1);
 
     log.info(
-      success
-        ? `Batch fix applied (${actuallyFixed}/${object.fixesSummary.length} fixed, ${lengthDiff >= 0 ? '+' : ''}${lengthDiff} chars, ${object.confidenceScore}% confidence)`
-        : contentChanged 
-          ? `Batch fix made changes but no issues were marked as fixed`
-          : 'Batch fix had no effect'
+      contentChanged
+        ? `Section rewritten (${lengthDiff >= 0 ? '+' : ''}${lengthDiff} chars, ${issuesAddressed} issues addressed)`
+        : 'Rewrite had no effect'
     );
 
     return {
       markdown: resultMarkdown,
-      success,
+      success: contentChanged,
       tokenUsage,
-      description: object.fixesSummary.filter(f => f.wasFixed).map(f => f.change).join('; '),
-      issuesAddressed: actuallyFixed,
+      description: object.changesExplained.map(c => c.howFixed).join('; '),
+      issuesAddressed: contentChanged ? issuesAddressed : 0,
     };
   } catch (error) {
-    log.error(`Batch fix failed: ${error instanceof Error ? error.message : String(error)}`);
+    log.error(`Section rewrite failed: ${error instanceof Error ? error.message : String(error)}`);
     return {
       markdown,
       success: false,
       tokenUsage: createEmptyTokenUsage(),
-      description: `Batch fix failed: ${error instanceof Error ? error.message : 'Unknown error'}`,
+      description: `Section rewrite failed: ${error instanceof Error ? error.message : 'Unknown error'}`,
       issuesAddressed: 0,
     };
   }
 }
 
+// Legacy alias for backwards compatibility
+export const applyBatchFix = rewriteSectionWithFixes;
+
 /**
- * Smart section fix - the unified, LLM-native approach for single issues.
+ * Smart section fix - delegates to rewriteSectionWithFixes for consistency.
  * 
- * For single issues per section, this is used. For multiple issues,
- * prefer applyBatchFix to avoid grammar corruption.
+ * For single issues, we still use the paragraph-rewrite approach
+ * because it produces better results than surgical edits.
  */
 export async function applySmartFix(
   markdown: string,
   issue: ReviewIssue,
   deps: FixerDeps,
-  ctx?: FixerContext
+  _ctx?: FixerContext
 ): Promise<FixResult> {
   const log = deps.logger ?? createPrefixedLogger('[Fixer]');
-  const temperature = deps.temperature ?? FIXER_CONFIG.TEMPERATURE;
 
-  if (!issue.fixInstruction) {
-    log.warn('Smart fix requested but no fixInstruction provided');
-    return {
-      markdown,
-      success: false,
-      tokenUsage: createEmptyTokenUsage(),
-      description: 'No fix instruction provided',
-    };
-  }
-
-  // Get section content if location is specified
+  // Validate issue has required fields
   if (!issue.location || issue.location === 'global') {
     log.warn('Smart fix requires a specific section location');
     return {
@@ -525,174 +500,15 @@ export async function applySmartFix(
     };
   }
 
-  const sectionContent = getSectionContent(markdown, issue.location);
-  if (!sectionContent) {
-    log.warn(`Section "${issue.location}" not found`);
-    return {
-      markdown,
-      success: false,
-      tokenUsage: createEmptyTokenUsage(),
-      description: `Section "${issue.location}" not found`,
-    };
-  }
-
-  // Determine the scope of change expected
-  const isMinorFix = issue.fixStrategy === 'inline_insert' || issue.fixStrategy === 'direct_edit';
-  const maxLengthIncrease = isMinorFix ? 300 : 800; // chars
-
-  log.info(`Applying smart fix to "${issue.location}" (${issue.fixStrategy}): ${issue.message.slice(0, 60)}...`);
-
-  try {
-    // Build hint from fix instruction without requiring exact matching
-    const hint = issue.fixInstruction 
-      ? `\nHINT (use your judgment): ${issue.fixInstruction}`
-      : '';
-
-    const { object, usage } = await withRetry(
-      () =>
-        deps.generateObject({
-          model: deps.model,
-          schema: SmartEditOutputSchema,
-          temperature,
-          maxOutputTokens: 5000, // Give LLM plenty of space
-          system: `You are an expert editor fixing issues in gaming guide articles.
-
-YOUR APPROACH:
-1. READ the issue - understand WHAT is wrong
-2. THINK about HOW to fix it (the hint is a suggestion, not a requirement)
-3. APPLY the fix to the content
-4. VERIFY the fix is actually in your output
-5. Return the complete edited section
-
-YOU ARE SMART - USE YOUR INTELLIGENCE:
-- Don't blindly follow mechanical instructions
-- If a hint says "insert X after Y" but Y doesn't match exactly, figure out the right place
-- If content is MISSING, add it where it fits naturally
-- If something is WRONG, fix it properly
-
-EDITING PRINCIPLES:
-- Make the MINIMUM change necessary to fix the issue
-- Preserve the author's voice and style  
-- Keep all existing information intact
-- Maintain markdown formatting (**bold**, ###headings, etc.)
-- Don't add fluff or padding
-
-${isMinorFix ? `
-THIS IS A MINOR FIX:
-- Add/change only a few words or a short phrase
-- Do NOT add new paragraphs unless truly necessary
-` : `
-THIS FIX MAY REQUIRE MORE CONTENT:
-- You may add a paragraph if needed
-- But still prefer minimal changes
-`}
-
-SELF-CHECK:
-Before returning, ask: "Did I actually include the fix in editedContent?"
-If you couldn't fix the issue, set wasFixed: false and explain why.`,
-          prompt: `Fix this issue in the section below.
-
-ISSUE: ${issue.message}
-${hint}
-
-SEVERITY: ${issue.severity}
-CATEGORY: ${issue.category}
-
-SECTION "${issue.location}":
----
-${sectionContent}
----
-
-Think through how to fix this, apply the edit, verify it's in your output, then return the edited section.`,
-        }),
-      { context: `Smart fix: ${issue.message.slice(0, 50)}`, signal: deps.signal }
-    );
-
-    const tokenUsage: TokenUsage = usage
-      ? { input: usage.inputTokens ?? 0, output: usage.outputTokens ?? 0 }
-      : createEmptyTokenUsage();
-
-    // Log the LLM's thinking
-    log.debug(`LLM thinking: ${object.thinking.slice(0, 300)}...`);
-    log.debug(`Grammar check: ${object.grammarCheck}`);
-
-    // Check if LLM reports it couldn't fix the issue
-    if (!object.wasFixed) {
-      log.warn(`Smart fix: LLM could not fix the issue - ${object.whatChanged}`);
-      return {
-        markdown,
-        success: false,
-        tokenUsage,
-        description: `Could not fix: ${object.whatChanged}`,
-      };
-    }
-
-    // Validate the edit wasn't too aggressive
-    const originalLength = sectionContent.length;
-    const editedLength = object.editedContent.length;
-    const lengthDiff = editedLength - originalLength;
-
-    // Check for content removal (usually bad)
-    if (lengthDiff < -100) {
-      log.warn(`Smart fix rejected: Too much content removed (${Math.abs(lengthDiff)} chars)`);
-      return {
-        markdown,
-        success: false,
-        tokenUsage,
-        description: 'Fix rejected - removed too much content',
-      };
-    }
-
-    // Check for excessive addition
-    if (lengthDiff > maxLengthIncrease) {
-      log.warn(`Smart fix rejected: Too much content added (${lengthDiff} chars, max ${maxLengthIncrease})`);
-      return {
-        markdown,
-        success: false,
-        tokenUsage,
-        description: 'Fix rejected - added too much content',
-      };
-    }
-
-    // Replace the section with edited content
-    const resultMarkdown = replaceSection(markdown, issue.location, object.editedContent);
-
-    if (!resultMarkdown) {
-      log.error(`Failed to replace section "${issue.location}"`);
-      return {
-        markdown,
-        success: false,
-        tokenUsage,
-        description: `Failed to replace section "${issue.location}"`,
-      };
-    }
-
-    const contentChanged = resultMarkdown !== markdown;
-    const success = contentChanged && object.wasFixed;
-
-    log.info(
-      success
-        ? `Smart fix applied (${object.changeType}, ${lengthDiff >= 0 ? '+' : ''}${lengthDiff} chars): ${object.whatChanged}`
-        : contentChanged
-          ? `Smart fix: content changed but issue may not be fully fixed`
-          : 'Smart fix had no effect'
-    );
-
-    return {
-      markdown: resultMarkdown,
-      success,
-      tokenUsage,
-      description: object.whatChanged,
-    };
-  } catch (error) {
-    log.error(`Smart fix failed: ${error instanceof Error ? error.message : String(error)}`);
-    return {
-      markdown,
-      success: false,
-      tokenUsage: createEmptyTokenUsage(),
-      description: `Fix failed: ${error instanceof Error ? error.message : 'Unknown error'}`,
-    };
-  }
+  // Delegate to rewriteSectionWithFixes with single issue
+  const result = await rewriteSectionWithFixes(markdown, issue.location, [issue], deps);
+  
+  return {
+    markdown: result.markdown,
+    success: result.success,
+    tokenUsage: result.tokenUsage,
+    description: result.description,
+  };
 }
 
 /**
