@@ -1118,17 +1118,15 @@ export async function generateGameArticleDraft(
       originalMarkdownBeforeFixer = currentMarkdown;
     }
 
-    while (
-      actionableIssues.length > 0 &&
-      fixerIterations < FIXER_CONFIG.MAX_FIXER_ITERATIONS
-    ) {
-      fixerIterations++;
-      log.info(`Fixer iteration ${fixerIterations}/${FIXER_CONFIG.MAX_FIXER_ITERATIONS}...`);
+    // Helper to count critical issues
+    const countCritical = (issues: readonly { severity: string }[]) =>
+      issues.filter((i) => i.severity === 'critical').length;
 
-      // Apply fixes
+    // Helper to run a fix iteration
+    const runFixIteration = async (issuesToFix: typeof reviewerOutput.issues) => {
       const fixerResult = await runFixer(
         currentMarkdown,
-        reviewerOutput.issues,
+        issuesToFix,
         fixerContext,
         fixerDeps,
         fixerIterations
@@ -1137,48 +1135,95 @@ export async function generateGameArticleDraft(
       currentMarkdown = fixerResult.markdown;
       allFixesApplied.push(...fixerResult.fixesApplied);
       fixerTokenUsage = addTokenUsage(fixerTokenUsage, fixerResult.tokenUsage);
-
-      // Track markdown after this iteration (for history)
       markdownHistory.push(currentMarkdown);
 
+      return fixerResult;
+    };
+
+    // Helper to re-review
+    const reReview = async () => {
+      log.info('Re-reviewing article after fixes...');
+      reviewerResult = await runPhase(
+        'Reviewer',
+        'VALIDATION_FAILED',
+        () =>
+          runReviewer(currentMarkdown, plan, scoutOutput, {
+            generateObject: resolvedDeps.generateObject,
+            model: resolvedDeps.openrouter(reviewerModel),
+            logger: createPrefixedLogger('[Reviewer]'),
+            signal: basePhaseOptions.signal,
+          }),
+        { ...basePhaseOptions, modelName: reviewerModel }
+      );
+
+      reviewerOutput = reviewerResult.output;
+      reviewerTokenUsage = addTokenUsage(reviewerTokenUsage, reviewerOutput.tokenUsage);
+
+      log.info(
+        `Re-review complete: ${reviewerOutput.approved ? 'APPROVED' : 'NEEDS ATTENTION'} ` +
+          `(${logIssueCounts(reviewerOutput.issues)} issues)`
+      );
+
+      // Update actionable issues
+      actionableIssues.length = 0;
+      actionableIssues.push(...reviewerOutput.issues.filter((i) => i.fixStrategy !== 'no_action'));
+    };
+
+    // PHASE 1: Fix all issues (up to MAX_FIXER_ITERATIONS)
+    while (
+      actionableIssues.length > 0 &&
+      fixerIterations < FIXER_CONFIG.MAX_FIXER_ITERATIONS
+    ) {
+      fixerIterations++;
+      log.info(`Fixer iteration ${fixerIterations}/${FIXER_CONFIG.MAX_FIXER_ITERATIONS}...`);
+
+      const fixerResult = await runFixIteration(reviewerOutput.issues);
       const successfulFixes = fixerResult.fixesApplied.filter((f) => f.success).length;
       log.info(
         `Fixer iteration ${fixerIterations}: ${successfulFixes}/${fixerResult.fixesApplied.length} fixes applied`
       );
 
-      // Re-review after fixes
       if (successfulFixes > 0) {
-        log.info('Re-reviewing article after fixes...');
-        reviewerResult = await runPhase(
-          'Reviewer',
-          'VALIDATION_FAILED',
-          () =>
-            runReviewer(currentMarkdown, plan, scoutOutput, {
-              generateObject: resolvedDeps.generateObject,
-              model: resolvedDeps.openrouter(reviewerModel),
-              logger: createPrefixedLogger('[Reviewer]'),
-              signal: basePhaseOptions.signal,
-              // Don't pass temperature override - let Reviewer use its default
-            }),
-          { ...basePhaseOptions, modelName: reviewerModel }
-        );
-
-        reviewerOutput = reviewerResult.output;
-        reviewerTokenUsage = addTokenUsage(reviewerTokenUsage, reviewerOutput.tokenUsage);
-
-        log.info(
-          `Re-review complete: ${reviewerOutput.approved ? 'APPROVED' : 'NEEDS ATTENTION'} ` +
-            `(${logIssueCounts(reviewerOutput.issues)} issues)`
-        );
-
-        // Update actionable issues for next iteration check
-        actionableIssues.length = 0;
-        actionableIssues.push(...reviewerOutput.issues.filter((i) => i.fixStrategy !== 'no_action'));
+        await reReview();
       } else {
-        // No successful fixes, stop iterating
         log.warn('No fixes were successful, stopping Fixer loop');
         break;
       }
+    }
+
+    // PHASE 2: Continue fixing ONLY critical issues (up to MAX_CRITICAL_FIX_ITERATIONS total)
+    let criticalIssues = reviewerOutput.issues.filter((i) => i.severity === 'critical');
+    
+    while (
+      criticalIssues.length > 0 &&
+      fixerIterations < FIXER_CONFIG.MAX_CRITICAL_FIX_ITERATIONS
+    ) {
+      fixerIterations++;
+      log.info(
+        `Critical fix iteration ${fixerIterations}/${FIXER_CONFIG.MAX_CRITICAL_FIX_ITERATIONS} ` +
+          `(${criticalIssues.length} critical issues remaining)...`
+      );
+
+      const fixerResult = await runFixIteration(criticalIssues);
+      const successfulFixes = fixerResult.fixesApplied.filter((f) => f.success).length;
+      log.info(
+        `Critical fix iteration ${fixerIterations}: ${successfulFixes}/${fixerResult.fixesApplied.length} fixes applied`
+      );
+
+      if (successfulFixes > 0) {
+        await reReview();
+        criticalIssues = reviewerOutput.issues.filter((i) => i.severity === 'critical');
+      } else {
+        log.warn('No critical fixes were successful, stopping');
+        break;
+      }
+    }
+
+    // Final warning if critical issues remain
+    if (countCritical(reviewerOutput.issues) > 0) {
+      log.warn(
+        `⚠️ ${countCritical(reviewerOutput.issues)} critical issue(s) remain after ${fixerIterations} iterations!`
+      );
     }
 
     phaseTimer.end('reviewer');

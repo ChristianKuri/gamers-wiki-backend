@@ -28,6 +28,14 @@ COMMON COMPLETENESS FAILURES:
 ❌ Skipping the first NPC interaction that gives a key item (map, tool, etc.)
 ❌ Not explaining HOW to use a new ability (just that you get it)
 
+=== STRUCTURAL ISSUES (ALWAYS CRITICAL) ===
+
+These are ALWAYS critical severity - they break the article:
+- DUPLICATE HEADERS: Same heading text appears twice (e.g., "## Section" followed by "### Section")
+- ORPHANED CONTENT: Content outside of any section
+- BROKEN MARKDOWN: Malformed formatting that will render incorrectly
+- EMPTY SECTIONS: Section with heading but no content
+
 If something is MISSING that a beginner guide SHOULD have, flag it as:
 - severity: "critical" (if essential for progression)
 - severity: "major" (if important but not blocking)
@@ -190,7 +198,14 @@ RELATIVE LOCATIONS:
 
 === INSTRUCTIONS ===
 
-PRIORITY 1 - COMPLETENESS (Most Important):
+PRIORITY 0 - STRUCTURAL ISSUES (ALWAYS CRITICAL):
+Check for and flag as CRITICAL:
+- Duplicate headers (same text at ## and ### level, or repeated headings)
+- Empty sections (heading with no content)
+- Broken markdown formatting
+- Use fixStrategy: "direct_edit" to fix these
+
+PRIORITY 1 - COMPLETENESS (CRITICAL or MAJOR):
 Flag as CRITICAL/MAJOR coverage issues:
 - Missing items that should be in a guide for this scope (e.g., guide covers 3 shrines but only explains 2)
 - Missing armor pieces when other armor is mentioned (e.g., pants and boots but no shirt)

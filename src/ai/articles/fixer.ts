@@ -98,11 +98,12 @@ export interface FixerOutput {
  * Give the LLM space to think and work.
  */
 const SmartEditOutputSchema = z.object({
-  thinking: z.string().describe('Your reasoning about how to apply this fix (be thorough)'),
-  editedContent: z.string().describe('The complete edited section content'),
+  thinking: z.string().describe('Your reasoning about how to apply this fix - think step by step'),
+  editedContent: z.string().describe('The complete edited section content with the fix applied'),
   whatChanged: z.string().describe('Brief description of the change made'),
-  changeType: z.enum(['insertion', 'replacement', 'expansion', 'restructure']).describe('Type of change made'),
-  grammarCheck: z.string().describe('Confirm the edited text is grammatically correct - any issues found?'),
+  changeType: z.enum(['insertion', 'replacement', 'expansion', 'restructure', 'no_change']).describe('Type of change made'),
+  wasFixed: z.boolean().describe('Did you successfully fix the issue?'),
+  grammarCheck: z.string().describe('Confirm the edited text is grammatically correct'),
 });
 
 /**
@@ -110,13 +111,15 @@ const SmartEditOutputSchema = z.object({
  * More efficient and avoids grammar corruption from sequential edits.
  */
 const BatchFixOutputSchema = z.object({
-  thinking: z.string().describe('Your reasoning about how to fix ALL these issues together'),
+  thinking: z.string().describe('Your detailed reasoning about how to fix ALL these issues together - think step by step'),
   editedContent: z.string().describe('The complete edited section content with ALL fixes applied'),
   fixesSummary: z.array(z.object({
     issue: z.string().describe('Which issue this addresses'),
-    change: z.string().describe('What was changed'),
+    wasFixed: z.boolean().describe('Whether this issue was successfully fixed'),
+    change: z.string().describe('What was changed (or why it could not be fixed)'),
   })).describe('Summary of each fix applied'),
   grammarCheck: z.string().describe('Verify the final text is grammatically correct'),
+  confidenceScore: z.number().min(0).max(100).describe('How confident are you that ALL issues were properly fixed (0-100)'),
 });
 
 // ============================================================================
@@ -302,9 +305,14 @@ export async function applyBatchFix(
   }
 
   // Build the issues list for the prompt
-  const issuesText = actionableIssues.map((issue, idx) => 
-    `${idx + 1}. [${issue.severity.toUpperCase()}] ${issue.message}\n   FIX: ${issue.fixInstruction}`
-  ).join('\n\n');
+  // KEY INSIGHT: We give the LLM the PROBLEM, not the mechanical solution
+  // The LLM is smart - let it figure out HOW to fix it
+  const issuesText = actionableIssues.map((issue, idx) => {
+    const hint = issue.fixInstruction 
+      ? `\n   HINT: ${issue.fixInstruction.slice(0, 200)}${issue.fixInstruction.length > 200 ? '...' : ''}`
+      : '';
+    return `${idx + 1}. [${issue.severity.toUpperCase()}] ${issue.message}${hint}`;
+  }).join('\n\n');
 
   // Determine expected scope - more issues = more changes allowed
   const hasExpandOrRegenerate = actionableIssues.some(
@@ -323,39 +331,54 @@ export async function applyBatchFix(
           model: deps.model,
           schema: BatchFixOutputSchema,
           temperature,
-          maxOutputTokens: 4000,
-          system: `You are an expert editor fixing multiple issues in a gaming guide article section.
+          maxOutputTokens: 6000, // More space for thinking and complete section
+          system: `You are an expert editor fixing issues in a gaming guide article.
 
-YOUR TASK:
-Fix ALL the listed issues in a SINGLE, coherent edit. This is important because applying fixes sequentially can break grammar.
+YOUR APPROACH (CRITICAL):
+1. READ the issues carefully - understand WHAT is wrong
+2. THINK about HOW to fix each one - the "hint" is just a suggestion, use your judgment
+3. APPLY all fixes to the content
+4. VERIFY each fix was actually applied
+5. Return the complete edited section
+
+YOU ARE SMART - USE YOUR INTELLIGENCE:
+- Don't blindly follow mechanical instructions
+- If a hint says "insert X after Y" but Y doesn't exist or has changed, figure out WHERE the information should go
+- If content is MISSING, add it in a natural place
+- If something is WRONG, fix it properly
 
 EDITING PRINCIPLES:
-1. Address EVERY issue listed - don't skip any
-2. Make minimal changes - only what's needed to fix each issue
-3. Preserve the author's voice and existing structure
-4. Maintain all markdown formatting (**bold**, ###headings, bullet lists, etc.)
-5. CRITICAL: Ensure the final text is grammatically correct
-6. Don't add fluff, padding, or repeat information
+- Fix ALL issues - don't skip any
+- Be thorough but minimal - add what's needed, nothing more
+- Preserve existing structure and voice
+- Maintain markdown formatting (**bold**, ###headings, bullet lists)
+- Ensure grammar is correct
 
-GRAMMAR CHECK:
-After editing, carefully read the entire section to verify:
-- No sentence fragments
-- No double verbs ("find in a treasure chest containing" is WRONG)
-- No incomplete phrases
-- Natural sentence flow
+COMMON MISTAKES TO AVOID:
+❌ Saying you fixed something but not including the change in the output
+❌ Adding duplicate headers or content
+❌ Breaking sentence structure
+❌ Leaving out part of the original content
 
-Take your time to think through all fixes and verify the result.`,
-          prompt: `Fix ALL these issues in the section below:
+SELF-CHECK BEFORE RETURNING:
+For EACH issue, verify: "Did I actually include the fix in editedContent?"
+If you can't fix an issue, mark wasFixed: false and explain why.`,
+          prompt: `Fix ALL these issues in the section below.
 
 ISSUES TO FIX:
 ${issuesText}
 
-SECTION "${sectionName}":
+CURRENT SECTION CONTENT ("${sectionName}"):
 ---
 ${sectionContent}
 ---
 
-Apply all fixes, verify grammar is correct, then return the complete edited section.`,
+INSTRUCTIONS:
+1. Think through each issue step by step
+2. Apply ALL fixes to the content
+3. Double-check that each fix is actually in your editedContent
+4. Return the complete edited section with ALL fixes applied
+5. Be honest in fixesSummary - mark wasFixed: false if you couldn't fix something`,
         }),
       { context: `Batch fix: ${sectionName} (${actionableIssues.length} issues)`, signal: deps.signal }
     );
@@ -364,9 +387,22 @@ Apply all fixes, verify grammar is correct, then return the complete edited sect
       ? { input: usage.inputTokens ?? 0, output: usage.outputTokens ?? 0 }
       : createEmptyTokenUsage();
 
-    // Log thinking and grammar check
-    log.debug(`Batch fix thinking: ${object.thinking.slice(0, 200)}...`);
+    // Log thinking and confidence
+    log.debug(`Batch fix thinking: ${object.thinking.slice(0, 300)}...`);
     log.debug(`Grammar check: ${object.grammarCheck}`);
+    log.debug(`Confidence: ${object.confidenceScore}%`);
+
+    // Count actually fixed issues (LLM's self-report)
+    const actuallyFixed = object.fixesSummary.filter(f => f.wasFixed).length;
+    const notFixed = object.fixesSummary.filter(f => !f.wasFixed);
+
+    // Log issues that couldn't be fixed
+    if (notFixed.length > 0) {
+      log.warn(`Batch fix: ${notFixed.length} issue(s) could not be fixed:`);
+      for (const fix of notFixed) {
+        log.warn(`  ❌ ${fix.issue}: ${fix.change}`);
+      }
+    }
 
     // Validate the edit
     const originalLength = sectionContent.length;
@@ -397,6 +433,11 @@ Apply all fixes, verify grammar is correct, then return the complete edited sect
       };
     }
 
+    // Low confidence warning
+    if (object.confidenceScore < 70) {
+      log.warn(`Batch fix low confidence (${object.confidenceScore}%) - fixes may not be complete`);
+    }
+
     // Replace the section
     const resultMarkdown = replaceSection(markdown, sectionName, object.editedContent);
 
@@ -411,26 +452,30 @@ Apply all fixes, verify grammar is correct, then return the complete edited sect
       };
     }
 
-    const success = resultMarkdown !== markdown;
-    const fixCount = object.fixesSummary.length;
+    const contentChanged = resultMarkdown !== markdown;
+    // Success = content changed AND at least one issue was actually fixed
+    const success = contentChanged && actuallyFixed > 0;
 
-    // Log each fix applied
+    // Log each fix
     for (const fix of object.fixesSummary) {
-      log.info(`  - ${fix.issue}: ${fix.change}`);
+      const status = fix.wasFixed ? '✓' : '✗';
+      log.info(`  ${status} ${fix.issue}: ${fix.change}`);
     }
 
     log.info(
       success
-        ? `Batch fix applied (${fixCount} changes, ${lengthDiff >= 0 ? '+' : ''}${lengthDiff} chars)`
-        : 'Batch fix had no effect'
+        ? `Batch fix applied (${actuallyFixed}/${object.fixesSummary.length} fixed, ${lengthDiff >= 0 ? '+' : ''}${lengthDiff} chars, ${object.confidenceScore}% confidence)`
+        : contentChanged 
+          ? `Batch fix made changes but no issues were marked as fixed`
+          : 'Batch fix had no effect'
     );
 
     return {
       markdown: resultMarkdown,
       success,
       tokenUsage,
-      description: object.fixesSummary.map(f => f.change).join('; '),
-      issuesAddressed: fixCount,
+      description: object.fixesSummary.filter(f => f.wasFixed).map(f => f.change).join('; '),
+      issuesAddressed: actuallyFixed,
     };
   } catch (error) {
     log.error(`Batch fix failed: ${error instanceof Error ? error.message : String(error)}`);
@@ -498,54 +543,57 @@ export async function applySmartFix(
   log.info(`Applying smart fix to "${issue.location}" (${issue.fixStrategy}): ${issue.message.slice(0, 60)}...`);
 
   try {
+    // Build hint from fix instruction without requiring exact matching
+    const hint = issue.fixInstruction 
+      ? `\nHINT (use your judgment): ${issue.fixInstruction}`
+      : '';
+
     const { object, usage } = await withRetry(
       () =>
         deps.generateObject({
           model: deps.model,
           schema: SmartEditOutputSchema,
           temperature,
-          maxOutputTokens: 4000, // Give LLM plenty of space
+          maxOutputTokens: 5000, // Give LLM plenty of space
           system: `You are an expert editor fixing issues in gaming guide articles.
 
 YOUR APPROACH:
-1. First, THINK about the issue and how to fix it
-2. Then, apply the fix to the content
-3. Return the complete edited section
-4. VERIFY grammar is correct
+1. READ the issue - understand WHAT is wrong
+2. THINK about HOW to fix it (the hint is a suggestion, not a requirement)
+3. APPLY the fix to the content
+4. VERIFY the fix is actually in your output
+5. Return the complete edited section
+
+YOU ARE SMART - USE YOUR INTELLIGENCE:
+- Don't blindly follow mechanical instructions
+- If a hint says "insert X after Y" but Y doesn't match exactly, figure out the right place
+- If content is MISSING, add it where it fits naturally
+- If something is WRONG, fix it properly
 
 EDITING PRINCIPLES:
 - Make the MINIMUM change necessary to fix the issue
-- Preserve the author's voice and style
+- Preserve the author's voice and style  
 - Keep all existing information intact
 - Maintain markdown formatting (**bold**, ###headings, etc.)
 - Don't add fluff or padding
 
 ${isMinorFix ? `
 THIS IS A MINOR FIX:
-- You should be adding/changing only a few words or a short phrase
-- Do NOT add new paragraphs
-- Do NOT restructure the content
-- The edit should be nearly invisible
+- Add/change only a few words or a short phrase
+- Do NOT add new paragraphs unless truly necessary
 ` : `
 THIS FIX MAY REQUIRE MORE CONTENT:
-- You may add a paragraph if truly needed
+- You may add a paragraph if needed
 - But still prefer minimal changes
-- Don't repeat information that's elsewhere in the article
 `}
 
-GRAMMAR CHECK (CRITICAL):
-After editing, read the modified sentences aloud. Check for:
-- Sentence fragments
-- Double verbs (e.g., "find in containing" is WRONG)
-- Broken phrases from insertions
-- Natural flow
-
-Take your time to think through this carefully.`,
+SELF-CHECK:
+Before returning, ask: "Did I actually include the fix in editedContent?"
+If you couldn't fix the issue, set wasFixed: false and explain why.`,
           prompt: `Fix this issue in the section below.
 
 ISSUE: ${issue.message}
-
-FIX INSTRUCTION: ${issue.fixInstruction}
+${hint}
 
 SEVERITY: ${issue.severity}
 CATEGORY: ${issue.category}
@@ -555,7 +603,7 @@ SECTION "${issue.location}":
 ${sectionContent}
 ---
 
-Think through how to fix this, apply the edit, verify grammar, then return the edited section.`,
+Think through how to fix this, apply the edit, verify it's in your output, then return the edited section.`,
         }),
       { context: `Smart fix: ${issue.message.slice(0, 50)}`, signal: deps.signal }
     );
@@ -564,9 +612,20 @@ Think through how to fix this, apply the edit, verify grammar, then return the e
       ? { input: usage.inputTokens ?? 0, output: usage.outputTokens ?? 0 }
       : createEmptyTokenUsage();
 
-    // Log the LLM's thinking and grammar check
-    log.debug(`LLM thinking: ${object.thinking.slice(0, 200)}...`);
+    // Log the LLM's thinking
+    log.debug(`LLM thinking: ${object.thinking.slice(0, 300)}...`);
     log.debug(`Grammar check: ${object.grammarCheck}`);
+
+    // Check if LLM reports it couldn't fix the issue
+    if (!object.wasFixed) {
+      log.warn(`Smart fix: LLM could not fix the issue - ${object.whatChanged}`);
+      return {
+        markdown,
+        success: false,
+        tokenUsage,
+        description: `Could not fix: ${object.whatChanged}`,
+      };
+    }
 
     // Validate the edit wasn't too aggressive
     const originalLength = sectionContent.length;
@@ -608,12 +667,15 @@ Think through how to fix this, apply the edit, verify grammar, then return the e
       };
     }
 
-    const success = resultMarkdown !== markdown;
+    const contentChanged = resultMarkdown !== markdown;
+    const success = contentChanged && object.wasFixed;
 
     log.info(
       success
         ? `Smart fix applied (${object.changeType}, ${lengthDiff >= 0 ? '+' : ''}${lengthDiff} chars): ${object.whatChanged}`
-        : 'Smart fix had no effect'
+        : contentChanged
+          ? `Smart fix: content changed but issue may not be fully fixed`
+          : 'Smart fix had no effect'
     );
 
     return {

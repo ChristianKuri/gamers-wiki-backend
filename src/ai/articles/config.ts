@@ -334,10 +334,15 @@ export const FIXER_CONFIG = {
    */
   MAX_SECTION_RETRIES: 2,
   /**
-   * Maximum number of Fixer iterations (Reviewer → Fix → Reviewer cycles).
-   * Each iteration can apply multiple fixes, then re-reviews.
+   * Maximum number of Fixer iterations for non-critical issues.
+   * After this, only critical issues continue to be fixed.
    */
-  MAX_FIXER_ITERATIONS: 3, // TEMP: Disabled for debugging
+  MAX_FIXER_ITERATIONS: 3,
+  /**
+   * Maximum total iterations when critical issues remain.
+   * Fixer will continue beyond MAX_FIXER_ITERATIONS if critical issues exist.
+   */
+  MAX_CRITICAL_FIX_ITERATIONS: 10,
   /**
    * Temperature for Fixer LLM calls.
    * Slightly higher to allow natural, varied edits.
@@ -569,6 +574,7 @@ function validateConfiguration(): void {
   validateNonNegative(FIXER_CONFIG.MAX_PLAN_RETRIES, 'FIXER_CONFIG.MAX_PLAN_RETRIES');
   validateNonNegative(FIXER_CONFIG.MAX_SECTION_RETRIES, 'FIXER_CONFIG.MAX_SECTION_RETRIES');
   validateNonNegative(FIXER_CONFIG.MAX_FIXER_ITERATIONS, 'FIXER_CONFIG.MAX_FIXER_ITERATIONS');
+  validatePositive(FIXER_CONFIG.MAX_CRITICAL_FIX_ITERATIONS, 'FIXER_CONFIG.MAX_CRITICAL_FIX_ITERATIONS');
   validateTemperature(FIXER_CONFIG.TEMPERATURE, 'FIXER_CONFIG.TEMPERATURE');
   validatePositive(FIXER_CONFIG.MAX_FIXES_PER_ITERATION, 'FIXER_CONFIG.MAX_FIXES_PER_ITERATION');
   validatePositive(FIXER_CONFIG.MAX_OUTPUT_TOKENS_SMART_FIX, 'FIXER_CONFIG.MAX_OUTPUT_TOKENS_SMART_FIX');
