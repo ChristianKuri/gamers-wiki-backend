@@ -509,6 +509,46 @@ export interface RecoveryMetadata {
    * Only present if fixerIterations > 1.
    */
   readonly markdownHistory?: readonly string[];
+  /**
+   * Honest metrics about recovery outcomes (not just operations).
+   * Only present if fixerIterations > 0.
+   */
+  readonly outcomeMetrics?: FixerOutcomeMetrics;
+}
+
+/**
+ * Honest metrics about fixer outcomes.
+ * Distinguishes between operations performed vs actual outcomes.
+ */
+export interface FixerOutcomeMetrics {
+  /** Number of fix operations attempted (sections worked on) */
+  readonly operationsAttempted: number;
+  /** Number of fix operations that changed the markdown */
+  readonly operationsSucceeded: number;
+  /** Issues by severity BEFORE fixing started */
+  readonly issuesBefore: IssueSeverityCounts;
+  /** Issues by severity AFTER fixing completed */
+  readonly issuesAfter: IssueSeverityCounts;
+  /** Net change in issue counts (negative = improvement) */
+  readonly netChange: IssueSeverityCounts;
+  /** Whether the reviewer approved the final article */
+  readonly reviewerApproved: boolean;
+  /** 
+   * Note about issue tracking: Issues may change between reviews.
+   * A fix may resolve one issue but the reviewer may identify new issues.
+   * "operationsSucceeded" means markdown changed, NOT that specific issues were resolved.
+   */
+  readonly note: string;
+}
+
+/**
+ * Issue counts by severity level.
+ */
+export interface IssueSeverityCounts {
+  readonly critical: number;
+  readonly major: number;
+  readonly minor: number;
+  readonly total: number;
 }
 
 // ============================================================================

@@ -76,6 +76,7 @@ import {
   type ArticleProgressCallback,
   type Clock,
   type FixApplied,
+  type FixerOutcomeMetrics,
   type GameArticleContext,
   type GameArticleDraft,
   type RecoveryMetadata,
@@ -1183,9 +1184,16 @@ export async function generateGameArticleDraft(
     phaseTimer.end('reviewer');
 
     if (fixerIterations > 0) {
+      const opsSucceeded = allFixesApplied.filter((f) => f.success).length;
+      const beforeCounts = initialReviewerIssues
+        ? `${initialReviewerIssues.filter((i) => i.severity === 'critical').length}C/${initialReviewerIssues.filter((i) => i.severity === 'major').length}M`
+        : '?';
+      const afterCounts = reviewerOutput
+        ? `${reviewerOutput.issues.filter((i) => i.severity === 'critical').length}C/${reviewerOutput.issues.filter((i) => i.severity === 'major').length}M`
+        : '?';
       log.info(
-        `Fixer complete: ${fixerIterations} iteration(s), ${allFixesApplied.length} total fixes ` +
-          `(${allFixesApplied.filter((f) => f.success).length} successful)`
+        `Fixer complete: ${fixerIterations} iteration(s), ${allFixesApplied.length} operations ` +
+          `(${opsSucceeded} succeeded). Issues: ${beforeCounts} → ${afterCounts} (critical/major)`
       );
     }
 
@@ -1301,8 +1309,45 @@ export async function generateGameArticleDraft(
       }
     : undefined;
 
+  // Helper to count issues by severity
+  const countBySeverity = (issues: readonly { severity: string }[]): FixerOutcomeMetrics['issuesBefore'] => ({
+    critical: issues.filter((i) => i.severity === 'critical').length,
+    major: issues.filter((i) => i.severity === 'major').length,
+    minor: issues.filter((i) => i.severity === 'minor').length,
+    total: issues.length,
+  });
+
+  // Build outcome metrics if fixer ran
+  const buildOutcomeMetrics = (): FixerOutcomeMetrics | undefined => {
+    if (fixerIterations === 0 || !initialReviewerIssues || !reviewerOutput) {
+      return undefined;
+    }
+
+    const issuesBefore = countBySeverity(initialReviewerIssues);
+    const issuesAfter = countBySeverity(reviewerOutput.issues);
+    const netChange = {
+      critical: issuesAfter.critical - issuesBefore.critical,
+      major: issuesAfter.major - issuesBefore.major,
+      minor: issuesAfter.minor - issuesBefore.minor,
+      total: issuesAfter.total - issuesBefore.total,
+    };
+
+    return {
+      operationsAttempted: allFixesApplied.length,
+      operationsSucceeded: allFixesApplied.filter((f) => f.success).length,
+      issuesBefore,
+      issuesAfter,
+      netChange,
+      reviewerApproved: reviewerOutput.approved,
+      note:
+        'Operations count markdown changes, not issues resolved. ' +
+        'Reviewer may identify new issues after each fix, causing issue drift.',
+    };
+  };
+
   // Build recovery metadata if any retries or fixes were applied
   const hasRecovery = planRetries > 0 || fixerIterations > 0 || Object.keys(sectionRetries).length > 0;
+  const outcomeMetrics = buildOutcomeMetrics();
   const recovery: RecoveryMetadata | undefined = hasRecovery
     ? {
         planRetries,
@@ -1315,6 +1360,8 @@ export async function generateGameArticleDraft(
         ...(originalMarkdownBeforeFixer ? { originalMarkdown: originalMarkdownBeforeFixer } : {}),
         // Include markdown history if multiple Fixer iterations (for incremental comparison)
         ...(markdownHistory.length > 1 ? { markdownHistory } : {}),
+        // Include honest outcome metrics
+        ...(outcomeMetrics ? { outcomeMetrics } : {}),
       }
     : undefined;
 
