@@ -6,27 +6,42 @@ export const reviewerPrompts: ReviewerPrompts = {
 
 Your mission: Ensure the guide is ACCURATE, ACTIONABLE, and **COMPLETE**.
 
-=== COMPLETENESS AUDIT (CRITICAL - DO THIS FIRST) ===
+██████████████████████████████████████████████████████████████████████████████
+██ CRITICAL: TWO-PASS REVIEW PROCESS                                        ██
+██ You MUST complete Pass 1 (Checklist) BEFORE Pass 2 (Quality)             ██
+██████████████████████████████████████████████████████████████████████████████
 
-Before checking details, step back and ask: "Is this guide COMPLETE?"
+=== PASS 1: CHECKLIST COMPLIANCE (DO THIS FIRST - MANDATORY) ===
 
-Think like an expert player reviewing a guide for beginners:
-1. What does a player NEED to know for this topic/timeframe?
-2. What items, abilities, NPCs, or tutorials are STANDARD for this part of the game?
-3. Would a player following this guide MISS something important?
+Before looking at style, grammar, or button prompts, you MUST verify the article
+covers ALL required elements from the plan. This is a BINARY check for each item.
 
-COMPLETENESS CHECKLIST:
-□ ALL collectible items in the covered area mentioned? (armor pieces, weapons, materials)
-□ ALL ability tutorials explained (not just named)? If a shrine teaches an ability, HOW to use it matters.
-□ ALL key NPCs introduced with their role? (Who gives the map? Who gives tutorials?)
-□ ALL required steps for progression covered? (Can't skip the 4th shrine if 4 are needed)
-□ Would a player feel "complete" after following this guide, or would they miss obvious things?
+FOR EACH REQUIRED ELEMENT in the plan:
+1. SEARCH the article: Does this item/ability/NPC appear BY NAME?
+2. If NOT FOUND → CRITICAL issue (category: "checklist", fixStrategy: "expand")
+3. If FOUND but location/how-to missing → MAJOR issue with specific details
 
-COMMON COMPLETENESS FAILURES:
-❌ Mentioning 2 of 3 armor pieces (where's the third?)
-❌ Saying "complete the shrine" without explaining its unique puzzle
-❌ Skipping the first NPC interaction that gives a key item (map, tool, etc.)
-❌ Not explaining HOW to use a new ability (just that you get it)
+CHECKLIST FAILURES ARE ALWAYS HIGH PRIORITY:
+- Missing armor piece when other armor mentioned = CRITICAL
+- Missing ability when other abilities from same area explained = CRITICAL  
+- Missing key NPC who gives important item = CRITICAL
+- Item mentioned but location not stated = MAJOR
+
+EXAMPLE CHECKLIST ANALYSIS:
+Plan requires: Archaic Legwear, Archaic Tunic, Archaic Warm Greaves
+Article contains: "Archaic Legwear" (✓), "Archaic Warm Greaves" (✓)
+Article missing: "Archaic Tunic" (✗) → CRITICAL: Item completely absent
+
+DO NOT PROCEED TO PASS 2 until you have checked EVERY required element.
+
+=== PASS 2: QUALITY CHECK (ONLY AFTER PASS 1 COMPLETE) ===
+
+After verifying checklist compliance, then check:
+- Location clarity (is WHERE stated explicitly?)
+- NPC introductions (name, location, role?)
+- Button prompts and inputs
+- Grammar and style
+- Structural issues
 
 === STRUCTURAL ISSUES (ALWAYS CRITICAL) ===
 
@@ -35,12 +50,6 @@ These are ALWAYS critical severity - they break the article:
 - ORPHANED CONTENT: Content outside of any section
 - BROKEN MARKDOWN: Malformed formatting that will render incorrectly
 - EMPTY SECTIONS: Section with heading but no content
-
-If something is MISSING that a beginner guide SHOULD have, flag it as:
-- severity: "critical" (if essential for progression)
-- severity: "major" (if important but not blocking)
-- category: "coverage"
-- fixStrategy: "expand" or "add_section"
 
 === REVIEW CRITERIA (GUIDES) ===
 
@@ -116,15 +125,10 @@ AVOID THESE MISTAKES:
   },
 
   getUserPrompt(ctx: ReviewerPromptContext): string {
-    // Build required elements checklist with location requirements
-    const requiredElementsChecklist = ctx.plan.requiredElements?.length
-      ? `
-=== REQUIRED ELEMENTS FROM PLAN ===
-The plan specified these elements MUST be covered:
-${ctx.plan.requiredElements.map((e, i) => `${i + 1}. ${e}`).join('\n')}
-
-For each: Is it NAMED, LOCATED, EXPLAINED, and ACTIONABLE?`
-      : '';
+    // Build required elements as a numbered checklist for explicit verification
+    const requiredElementsList = ctx.plan.requiredElements?.length
+      ? ctx.plan.requiredElements.map((e, i) => `  ${i + 1}. ${e}`).join('\n')
+      : '  (No required elements specified)';
 
     // Build section details with mustCover for completeness check
     const sectionDetails = ctx.plan.sections.map(s => {
@@ -139,111 +143,88 @@ For each: Is it NAMED, LOCATED, EXPLAINED, and ACTIONABLE?`
 
     return `Review this GUIDE article draft.
 
-=== STEP 1: COMPLETENESS AUDIT (DO THIS FIRST) ===
+██████████████████████████████████████████████████████████████████████████████
+██ PASS 1: CHECKLIST COMPLIANCE (MANDATORY - DO THIS FIRST)                 ██
+██████████████████████████████████████████████████████████████████████████████
 
-Before checking details, think like an expert player:
+You MUST verify EACH required element below appears in the article.
+For each one, search the article text for the item/ability/NPC name.
 
-GAME: Based on the title and content, what game is this guide for?
-SCOPE: What timeframe/area does this guide cover?
-EXPECTED CONTENT: For a beginner's guide to this scope, what SHOULD be included?
+REQUIRED ELEMENTS CHECKLIST:
+${requiredElementsList}
 
-Ask yourself:
-1. Are ALL items/collectibles in this area mentioned? (armor sets, weapons, key items)
-2. Are ALL ability tutorials EXPLAINED (not just named)? Does the reader know HOW to use them?
-3. Are ALL key NPCs introduced properly? (Who gives the map/tutorial/key items?)
-4. Would a player following this guide feel COMPLETE, or would they miss obvious things?
+FOR EACH ELEMENT ABOVE:
+□ Does it appear BY NAME in the article? (Search for the bolded item name)
+□ If YES: Is the LOCATION stated? Is HOW to get/use it explained?
+□ If NO: This is a CRITICAL "checklist" issue - the article is incomplete!
 
-If you identify MISSING content that a beginner guide SHOULD have, flag it immediately as a coverage issue.
+CHECKLIST VERIFICATION EXAMPLE:
+If plan requires "Item: Archaic Tunic (chest in Pondside Cave...)"
+→ Search article for "Archaic Tunic"
+→ If NOT FOUND anywhere: CRITICAL issue, category: "checklist", fixStrategy: "expand"
+→ If FOUND but no location: MAJOR issue, category: "checklist", fixStrategy: "inline_insert"
 
-=== STEP 2: PLAN VERIFICATION ===
+⚠️ DO NOT proceed to quality checks until you have verified EVERY element above.
+⚠️ Missing items are MORE IMPORTANT than button prompt corrections.
+
+██████████████████████████████████████████████████████████████████████████████
+██ PASS 2: QUALITY CHECK (ONLY AFTER CHECKLIST COMPLETE)                    ██
+██████████████████████████████████████████████████████████████████████████████
+
+=== PLAN DETAILS ===
 
 Title: ${ctx.plan.title}
 
 Sections and their required coverage:
 ${sectionDetails}
 
-${requiredElementsChecklist}
-
-=== STEP 3: ARTICLE CONTENT ===
+=== ARTICLE CONTENT ===
 
 ${ctx.markdown}
 
-=== STEP 4: RESEARCH CONTEXT ===
+=== RESEARCH CONTEXT (for fact-checking) ===
 
 ${ctx.researchSummary}
 
-=== LOCATION VERIFICATION PATTERNS ===
-Check for these common location omission patterns:
+=== ISSUE PRIORITY ORDER ===
 
-ABILITY UNLOCKS:
-❌ "You will receive the [ability]" → Flag: Missing WHERE
-❌ "Upon entering, you receive [ability]" → Flag: Location implied but not explicit
-❌ "[NPC Name] grants you [ability]" → Flag: Missing WHERE [NPC Name] appears
-✅ "Enter the **[Location Name]** ([coordinates] if available) to receive the **[Ability Name]** from [NPC Name]" → OK
+PRIORITY 0 - CHECKLIST FAILURES (FROM PASS 1):
+These are the MOST IMPORTANT issues. If a required element is missing:
+- severity: "critical"
+- category: "checklist"  
+- fixStrategy: "expand"
+- fixInstruction: "Add paragraph about [ITEM NAME] in section '[SECTION]'. Must include: location, how to find/get it, why it matters."
 
-ITEM LOCATIONS:
-❌ "Find the [item] in a [container]" → Flag: Missing WHERE the [container] is
-❌ "The [location] contains [item]" → Flag: Missing location name and where it is
-✅ "Find the **[Item Name]** in a [container type] inside the **[specific location]** ([coordinates] if available) [relative direction] of the **[known landmark]**" → OK
+PRIORITY 1 - STRUCTURAL ISSUES:
+- Duplicate headers, empty sections, broken markdown
+- severity: "critical"
+- category: "structure"
+- fixStrategy: "direct_edit"
 
-NPC INTRODUCTIONS:
-❌ "[NPC Name] directs you" → Flag: Missing WHERE this interaction occurs
-❌ "Meet [NPC Name]" → Flag: Missing WHERE and WHO (role)
-✅ "At the **[Location Name]** entrance ([coordinates] if available), you first meet **[NPC Name]**, a [role/description] who [action/explanation]" → OK
+PRIORITY 2 - LOCATION/QUALITY ISSUES (FROM PASS 2):
+Only check these AFTER completing the checklist verification:
 
-RELATIVE LOCATIONS:
-❌ "The [location] nearby" → Flag: Missing what it's near and location name
-❌ "Head to the next area" → Flag: Missing area name and location
-✅ "The **[Location Name]** ([coordinates] if available) is located [relative position] of the **[Known Location]**, accessible via [method/mechanic]" → OK
+1. Location clarity for items that ARE mentioned:
+   - Is the location stated explicitly? (same sentence or immediately preceding)
+   - category: "coverage", severity: "major"
 
-=== INSTRUCTIONS ===
+2. Vague references needing specificity:
+   - "the fourth shrine" → needs actual name
+   - category: "coverage", severity: "major"
 
-PRIORITY 0 - STRUCTURAL ISSUES (ALWAYS CRITICAL):
-Check for and flag as CRITICAL:
-- Duplicate headers (same text at ## and ### level, or repeated headings)
-- Empty sections (heading with no content)
-- Broken markdown formatting
-- Use fixStrategy: "direct_edit" to fix these
+3. NPC introductions for NPCs that ARE mentioned:
+   - Is WHERE they appear stated?
+   - Is their role/purpose explained?
+   - category: "coverage", severity: "major"
 
-PRIORITY 1 - COMPLETENESS (CRITICAL or MAJOR):
-Flag as CRITICAL/MAJOR coverage issues:
-- Missing items that should be in a guide for this scope (e.g., guide covers 3 shrines but only explains 2)
-- Missing armor pieces when other armor is mentioned (e.g., pants and boots but no shirt)
-- Ability tutorials that say "complete it" without explaining HOW (the puzzle, the mechanic)
-- Key NPCs skipped (e.g., the one who gives you the map or explains core mechanics)
-- Progression steps glossed over (e.g., "finish the 4th shrine" as a footnote when it's a unique tutorial)
+4. Button prompts and inputs:
+   - Are control inputs provided where helpful?
+   - category: "coverage", severity: "minor"
 
-For missing content, use:
-- fixStrategy: "expand" (add paragraph to existing section)
-- fixStrategy: "add_section" (if major topic is completely absent)
-- fixInstruction: Specify WHAT is missing and WHERE it should go
-
-PRIORITY 2 - LOCATION CLARITY:
-1. Missing locations for items/abilities (Flag as CRITICAL or MAJOR coverage issue)
-   - Check: Is the location stated in the SAME sentence or IMMEDIATELY preceding sentence?
-   - Flag if location is implied but not explicit
-   - Flag if NPC interaction lacks location context
-
-2. Vague references ("the item", "the shrine") instead of proper names
-   - Flag: "the fourth shrine" without name
-   - Flag: "the final ability" without name
-   - Flag: Relative locations without context
-
-3. NPC introduction issues
-   - Flag: NPC mentioned without WHERE they first appear
-   - Flag: NPC mentioned without WHO they are (name and role)
-   - Flag: NPC interaction without location context
-
-4. Spatial context gaps
-   - Flag: Locations mentioned without relative context when it would be helpful
-   - Flag: "Nearby" or "next area" without specifying what it's near
-
-PRIORITY 3 - CLARITY:
-5. Unclear instructions
-   - Flag: Steps that are ambiguous or could be interpreted multiple ways
-
-6. Missing required elements from plan
-   - Verify each required element has: name, location, explanation, actionable steps
+PRIORITY 3 - STYLE (LOWEST):
+- Grammar issues, awkward phrasing
+- category: "style", severity: "minor"
+- Only flag if truly problematic
 
 CRITICAL: For the 'location' field in your JSON output, you MUST use one of the exact headlines listed above.
 If an issue spans multiple sections or the whole article, use "global".
@@ -251,23 +232,37 @@ DO NOT invent location names or combine headlines.
 
 === FIX STRATEGY DECISION TREE ===
 
-ASK: "Is a MAJOR TOPIC completely missing?" (e.g., entire item, NPC, or tutorial not mentioned)
-  → YES: Use expand with detailed instruction about what to add
-  → Example: "Add paragraph about the Archaic Tunic found in Pondside Cave. Must include: location (inside cave near In-isa Shrine), how to find it (chest near entrance), why it matters (first chest armor)."
+ASK #1: "Is a REQUIRED ELEMENT completely missing from the article?" (checklist failure)
+  → YES: CRITICAL issue, category: "checklist", fixStrategy: "expand"
+  → Example: "Add paragraph about the **Archaic Tunic** in section 'Combat Basics and the Fuse Ability'. 
+     Must include: location (chest in Pondside Cave near In-isa Shrine), how to find it, why it matters (first chest armor)."
 
-ASK: "Can this be fixed by adding 2-10 words to an existing sentence?"
+ASK #2: "Is there a structural issue?" (duplicate headers, empty sections)
+  → YES: CRITICAL issue, category: "structure", fixStrategy: "direct_edit"
+
+ASK #3: "Can this be fixed by adding 2-10 words to an existing sentence?"
   → YES: Use inline_insert with EXACT sentence quote
   → NO: Continue...
 
-ASK: "Can this be fixed by replacing text (no additions)?"
+ASK #4: "Can this be fixed by replacing text (no additions)?"
   → YES: Use direct_edit with find/replace
   → NO: Continue...
 
-ASK: "Is information missing that needs a new paragraph?"
+ASK #5: "Is information missing that needs a new paragraph?"
   → YES: Use expand (ONE focused paragraph)
-  → NO: Use no_action (issue is minor)
+  → NO: Use no_action (issue is minor style preference)
 
 === FIXINSTRUCTION EXAMPLES ===
+
+GOOD checklist issue (required element missing):
+{
+  "severity": "critical",
+  "category": "checklist",
+  "location": "Combat Basics and the Fuse Ability",
+  "message": "CHECKLIST FAILURE: The plan requires 'Archaic Tunic (chest in Pondside Cave...)' but this item does not appear anywhere in the article.",
+  "fixStrategy": "expand",
+  "fixInstruction": "Add paragraph about the **Archaic Tunic** found in Pondside Cave. Must include: location (chest inside Pondside Cave, accessible from the path to In-isa Shrine), how to find it (look for the cave entrance with a cooking pot nearby), why it matters (first chest armor piece, completes the Archaic set with Legwear and Warm Greaves)."
+}
 
 GOOD inline_insert (note: FULL sentence with **bold** markers):
 "In the sentence 'Here, you must find **Purah**, the research director who provides crucial information.', insert 'at Lookout Landing' after 'find **Purah**'"
@@ -275,15 +270,12 @@ GOOD inline_insert (note: FULL sentence with **bold** markers):
 GOOD direct_edit:
 "Replace 'the hidden fourth shrine' with 'Nachoyah Shrine (located in the Room of Awakening)'"
 
-GOOD expand:
+GOOD expand (quality issue, not checklist):
 "Add ONE paragraph (max 100 words) specifying the exact location of the Archaic Warm Greaves relative to Gutanbac Shrine exit. Must include: direction from shrine, landmark (hollowed tree), how to reach it. Do not repeat existing content about cold resistance."
 
-BAD inline_insert (sentence fragment - will fail!):
-"In the sentence 'find Purah who provides', insert..." ← WRONG: This is a fragment, not the full sentence!
-
 BAD (too vague):
-"Add more location details" ← What sentence? What details?
-"Fix the Purah introduction" ← How exactly?
+"Add more location details" ← What item? What details?
+"Fix the missing item" ← Which item? Where should it go?
 "Make the location explicit" ← Which location? Where to add it?
 
 Return JSON`;

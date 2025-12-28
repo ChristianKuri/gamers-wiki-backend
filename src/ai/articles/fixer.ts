@@ -343,16 +343,21 @@ GUIDELINES:
 - Don't add fluff - be informative and concise
 - Keep markdown formatting (bold, lists, subheadings)
 
+CRITICAL - DO NOT INCLUDE SECTION HEADER:
+- The section heading (## Section Name) is handled separately
+- Your output should be the CONTENT ONLY, starting with the first paragraph
+- Do NOT start with "## " or "### " or any heading that duplicates the section title
+
 STRUCTURAL ISSUES (CRITICAL PRIORITY):
-- Duplicate headers: Remove redundant headings (keep only one)
-- Empty sections: Add content or remove the section
+- Duplicate headers within content: Remove redundant subheadings
+- Empty sections: Add content
 - Broken formatting: Fix markdown syntax`,
-          prompt: `REWRITE this section to fix ALL the issues below.
+          prompt: `REWRITE this section's CONTENT to fix ALL the issues below.
 
 ISSUES TO FIX:
 ${issuesList}
 
-CURRENT SECTION ("${sectionName}"):
+CURRENT SECTION CONTENT (heading "${sectionName}" is separate, do NOT include it):
 ---
 ${sectionContent}
 ---
@@ -363,7 +368,7 @@ INSTRUCTIONS:
 3. Ensure the rewritten text reads naturally and professionally
 4. Verify each issue is fixed by quoting the relevant text from your rewrite
 
-Return the COMPLETE rewritten section.`,
+⚠️ CRITICAL: Return ONLY the section content. Do NOT include "## ${sectionName}" or any duplicate heading at the start.`,
         }),
       { context: `Rewrite section: ${sectionName} (${actionableIssues.length} issues)`, signal: deps.signal }
     );
@@ -428,8 +433,35 @@ Return the COMPLETE rewritten section.`,
       };
     }
 
+    // Post-process: Strip any leading headers that duplicate the section title
+    // LLMs sometimes include the section heading even when told not to
+    let cleanedContent = object.rewrittenSection;
+    
+    // Remove leading ## or ### headers that match the section name
+    const headerPatterns = [
+      new RegExp(`^##\\s*${sectionName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*\\n+`, 'i'),
+      new RegExp(`^###\\s*${sectionName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*\\n+`, 'i'),
+      // Also remove any exact duplicate of the section name as a header
+      /^#{2,3}\s+.{0,100}\n+/,  // Any leading header (will be checked more carefully)
+    ];
+    
+    // Check if the content starts with a header that matches or nearly matches the section name
+    const firstLineMatch = cleanedContent.match(/^(#{2,3})\s*(.+?)\s*\n/);
+    if (firstLineMatch) {
+      const headerText = firstLineMatch[2];
+      // Check if it's a duplicate of the section name (fuzzy match)
+      const normalizedSection = sectionName.toLowerCase().replace(/[^a-z0-9]/g, '');
+      const normalizedHeader = headerText.toLowerCase().replace(/[^a-z0-9]/g, '');
+      if (normalizedSection === normalizedHeader || 
+          normalizedSection.includes(normalizedHeader) || 
+          normalizedHeader.includes(normalizedSection)) {
+        log.warn(`Stripping duplicate header "${headerText}" from rewritten content`);
+        cleanedContent = cleanedContent.replace(firstLineMatch[0], '');
+      }
+    }
+
     // Replace the section
-    const resultMarkdown = replaceSection(markdown, sectionName, object.rewrittenSection);
+    const resultMarkdown = replaceSection(markdown, sectionName, cleanedContent);
 
     if (!resultMarkdown) {
       log.error(`Failed to replace section "${sectionName}"`);

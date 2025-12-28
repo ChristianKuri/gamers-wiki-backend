@@ -309,7 +309,7 @@ export interface ArticleGenerationMetadata {
  */
 export interface ReviewIssue {
   readonly severity: 'critical' | 'major' | 'minor';
-  readonly category: 'redundancy' | 'coverage' | 'factual' | 'style' | 'seo';
+  readonly category: 'checklist' | 'structure' | 'redundancy' | 'coverage' | 'factual' | 'style' | 'seo';
   /** Section headline or "title", "excerpt", etc. */
   readonly location?: string;
   readonly message: string;

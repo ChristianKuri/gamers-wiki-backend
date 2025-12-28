@@ -124,7 +124,7 @@ const FIX_STRATEGY_VALUES = ['inline_insert', 'direct_edit', 'regenerate', 'add_
  */
 const ReviewIssueBaseSchema = z.object({
   severity: z.enum(['critical', 'major', 'minor']),
-  category: z.enum(['redundancy', 'coverage', 'factual', 'style', 'seo']),
+  category: z.enum(['checklist', 'structure', 'redundancy', 'coverage', 'factual', 'style', 'seo']),
   location: z.string().optional(),
   message: z.string(),
   suggestion: z.string().optional(),
@@ -144,6 +144,34 @@ const ReviewerOutputSchema = z.object({
 });
 
 /**
+ * Generates a default fix instruction when the LLM fails to provide one.
+ * This prevents important issues (especially checklist failures) from being dropped.
+ */
+function generateDefaultFixInstruction(issue: z.infer<typeof ReviewIssueBaseSchema>): string {
+  const location = issue.location || 'the appropriate section';
+  
+  // For checklist failures (missing required elements)
+  if (issue.category === 'checklist' || issue.message.includes('CHECKLIST FAILURE')) {
+    return `Add paragraph in "${location}" covering the missing element. ` +
+      `Based on issue: ${issue.message.slice(0, 200)}. ` +
+      `Include: name, location, how to obtain/use, and relevance.`;
+  }
+  
+  // For structural issues
+  if (issue.category === 'structure') {
+    return `Fix structural issue in "${location}": ${issue.message.slice(0, 150)}`;
+  }
+  
+  // For coverage issues (location/detail missing)
+  if (issue.category === 'coverage' || issue.fixStrategy === 'inline_insert') {
+    return `In section "${location}", add the missing information: ${issue.message.slice(0, 150)}`;
+  }
+  
+  // Default fallback
+  return `Fix in "${location}": ${issue.message.slice(0, 150)}`;
+}
+
+/**
  * Validates and filters review issues, removing those with invalid fix configurations.
  * Issues without required fixInstruction are logged as warnings and filtered out.
  *
@@ -159,15 +187,28 @@ function filterValidIssues(
   const skippedCount = { missingFixInstruction: 0, invalidLocation: 0 };
 
   for (const issue of issues) {
-    // Skip issues with actionable strategy but no fixInstruction
+    // Handle issues with actionable strategy but missing fixInstruction
     if (issue.fixStrategy !== 'no_action') {
       if (!issue.fixInstruction || issue.fixInstruction.trim().length === 0) {
-        log.warn(
-          `Skipping issue (missing fixInstruction): "${issue.message.slice(0, 60)}..." ` +
-            `[strategy: ${issue.fixStrategy}]`
-        );
-        skippedCount.missingFixInstruction++;
-        continue;
+        // For critical/major issues (especially checklist), generate a default instruction
+        // rather than dropping important issues
+        if (issue.severity === 'critical' || issue.severity === 'major') {
+          const defaultInstruction = generateDefaultFixInstruction(issue);
+          log.warn(
+            `Issue missing fixInstruction (generated default): "${issue.message.slice(0, 60)}..." ` +
+              `[strategy: ${issue.fixStrategy}]`
+          );
+          // Mutate to add the generated instruction (the issue is already a plain object from Zod)
+          (issue as { fixInstruction: string }).fixInstruction = defaultInstruction;
+        } else {
+          // For minor issues, skip if no instruction
+          log.warn(
+            `Skipping minor issue (missing fixInstruction): "${issue.message.slice(0, 60)}..." ` +
+              `[strategy: ${issue.fixStrategy}]`
+          );
+          skippedCount.missingFixInstruction++;
+          continue;
+        }
       }
     }
 
