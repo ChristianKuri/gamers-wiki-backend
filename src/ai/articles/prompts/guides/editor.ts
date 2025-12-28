@@ -14,7 +14,19 @@ Core principles:
 - CLARITY: Headlines should be actionable ("How to unlock X", "Where to find Y")
 - FOCUS: Stick to the specific guide topic requested
 
-REQUIRED ELEMENTS RULES (CRITICAL):
+═══════════════════════════════════════════════════════════════════════════════
+CRITICAL: mustCover ASSIGNMENT IS MANDATORY
+═══════════════════════════════════════════════════════════════════════════════
+You MUST assign every requiredElement to exactly ONE section's "mustCover" array.
+The Specialist agent ONLY sees the mustCover for each section — if an element is
+not in any mustCover, IT WILL NOT BE COVERED IN THE ARTICLE.
+
+For EACH section in your plan, you MUST include a "mustCover" array containing
+the specific elements that section is responsible for covering.
+
+FAILURE TO INCLUDE mustCover ARRAYS = REJECTED PLAN
+
+REQUIRED ELEMENTS RULES:
 When building the "requiredElements" list, you must be EXHAUSTIVE and SPECIFIC:
 
 1. ITEM SETS: List ALL items in a set, not just some
@@ -119,12 +131,47 @@ GOOD EXAMPLES (specific and complete):
 ✅ "Shrines: Ukouh (Ultrahand), In-isa (Fuse), Gutanbac (Ascend), Nachoyah (Recall tutorial)"
 ✅ "NPCs: Rauru (spirit guide, Temple of Time), Purah (researcher, Lookout Landing), Captain Hoz (guard captain, First Gatehouse in Hyrule Castle)"
 
-=== OUTPUT FORMAT ===
-Return JSON matching ArticlePlanSchema.
-IMPORTANT: 
-- Set "categorySlug": "guides"
-- Make "requiredElements" EXHAUSTIVE and SPECIFIC
-- Each section needs clear, non-overlapping goals
+=== OUTPUT FORMAT (MANDATORY STRUCTURE) ===
+Return JSON with this EXACT structure. The mustCover array in each section is REQUIRED:
+
+{
+  "title": "...",
+  "categorySlug": "guides",
+  "excerpt": "...",
+  "tags": ["...", "..."],
+  "requiredElements": [
+    "Element A: specific details",
+    "Element B: specific details",
+    "Element C: specific details"
+  ],
+  "sections": [
+    {
+      "headline": "Section 1 Title",
+      "goal": "What this section achieves",
+      "researchQueries": ["query 1", "query 2", "query 3"],
+      "mustCover": ["Element A: specific details"]  // ← REQUIRED!
+    },
+    {
+      "headline": "Section 2 Title",
+      "goal": "What this section achieves",
+      "researchQueries": ["query 1", "query 2", "query 3"],
+      "mustCover": ["Element B: specific details", "Element C: specific details"]  // ← REQUIRED!
+    }
+  ]
+}
+
+═══════════════════════════════════════════════════════════════════════════════
+mustCover RULES (YOUR PLAN WILL BE REJECTED IF VIOLATED):
+═══════════════════════════════════════════════════════════════════════════════
+1. EVERY section MUST have a "mustCover" array (even if it has only 1-2 elements)
+2. EVERY requiredElement MUST appear in EXACTLY ONE section's mustCover
+3. mustCover elements should match requiredElements EXACTLY (copy the text)
+4. If you have 10 requiredElements and 4 sections, distribute them: ~2-3 per section
+
+VALIDATION CHECK (do this before outputting):
+□ Does every section have a "mustCover" array?
+□ Is every requiredElement assigned to exactly one mustCover?
+□ Are mustCover strings copied exactly from requiredElements?
 `;
   }
 };

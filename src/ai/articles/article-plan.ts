@@ -58,6 +58,17 @@ export const ArticleSectionPlanSchema = z.object({
     .array(z.string().min(1))
     .min(ARTICLE_PLAN_CONSTRAINTS.MIN_RESEARCH_QUERIES_PER_SECTION)
     .max(ARTICLE_PLAN_CONSTRAINTS.MAX_RESEARCH_QUERIES_PER_SECTION),
+  /**
+   * Specific elements this section MUST cover (REQUIRED).
+   * Assigned by the Editor from the global requiredElements list.
+   * Each element should appear in exactly one section's mustCover.
+   * The Specialist uses this for targeted, per-section accountability.
+   *
+   * Making this required ensures the LLM always outputs it via schema enforcement.
+   */
+  mustCover: z
+    .array(z.string().min(1))
+    .min(1, 'Each section must have at least one element to cover'),
 });
 
 export type ArticleSectionPlan = z.infer<typeof ArticleSectionPlanSchema>;

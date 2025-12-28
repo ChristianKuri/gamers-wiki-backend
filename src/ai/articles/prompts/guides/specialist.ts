@@ -89,6 +89,16 @@ COORDINATE RULES:
   ✅ "accessible via the mountain pass"
 - NEVER invent or approximate coordinates
 
+DIRECTION/LOCATION RULES (CRITICAL — PREVENTS HALLUCINATIONS):
+- NEVER invent compass directions (north, south, east, west, northwest, etc.)
+- ONLY use directions if they appear VERBATIM in the research
+- If research says "west" do NOT write "southwest" or "northwest"
+- If direction is unclear, use relative descriptions instead:
+  ✅ "near the Temple of Time"
+  ✅ "adjacent to the main shrine"
+  ❌ "southwest of the Temple of Time" (did research say this EXACTLY?)
+  ❌ "in the northwestern corner" (only if research confirms this)
+
 ABILITY/UNLOCK PATTERNS:
 When describing ability or item unlocks:
 ✅ "At the **[Location Name]**, **[NPC Name]**, [role], grants you the **[Ability Name]**"
@@ -97,6 +107,17 @@ When describing ability or item unlocks:
 ❌ "Upon entering, you get the power" (vague, no specifics)
 
 ${localeInstruction}
+
+BANNED PHRASES (AI CLICHÉS — DO NOT USE):
+These phrases are overused AI-isms. Use direct, specific language instead:
+- "dive into" / "dive deep into" → "explore" / "examine" / "learn about"
+- "journey" / "embark on a journey" → "progress" / "adventure" / "playthrough"
+- "delve into" / "delve deeper" → "investigate" / "look at" / "understand"
+- "explore the world of" → just name the world/game directly
+- "let's take a look at" → remove, just start explaining
+- "without further ado" → remove entirely
+- "it's important to note" → remove, just state the fact
+- "in order to" → "to"
 
 CATEGORY-SPECIFIC TONE:
 ${TONE_GUIDE}`;
@@ -117,19 +138,19 @@ ${TONE_GUIDE}`;
         : ctx.scoutOverview;
 
     // =============================================================================
-    // Required elements reminder for ALL sections
+    // Per-section mustCover elements (targeted accountability)
     // =============================================================================
-    const requiredElementsSection = plan.requiredElements?.length
-      ? `
-=== REQUIRED ELEMENTS CHECK ===
-The article plan requires coverage of these elements:
-${plan.requiredElements.map((el, i) => `${i + 1}. ${el}`).join('\n')}
+    const mustCoverSection = `
+=== THIS SECTION MUST COVER (MANDATORY) ===
+You MUST include ALL of the following elements in this section:
+${ctx.mustCover.map((el, i) => `${i + 1}. ${el}`).join('\n')}
 
-Before finishing this section, verify:
-- Have you covered any elements from this list that fit this section's topic?
-- If an element fits this section but you haven't covered it, ADD IT NOW.
-`
-      : '';
+FAILURE TO COVER ANY ITEM = UNACCEPTABLE OUTPUT.
+For each element above:
+□ Is it mentioned by its proper name?
+□ Is its location explicitly stated?
+□ Is it explained (not just listed)?
+`;
 
     // =============================================================================
     // Section scope reminder
@@ -165,7 +186,7 @@ ${truncatedOverview}
 === PREVIOUSLY COVERED (DO NOT REPEAT) ===
 ${ctx.crossReferenceContext || '(None)'}
 
-${requiredElementsSection}
+${mustCoverSection}
 
 === NAMING RULES (CRITICAL) ===
 
@@ -213,17 +234,13 @@ ONLY include specific details if they appear in the research above.
 - Use **bold** for names/terms on FIRST mention only
 - End with an actionable takeaway
 
-${ctx.requiredElements ? `
-=== THIS SECTION MUST COVER ===
-${ctx.requiredElements.join(', ')}` : ''}
-
 === FINAL CHECKLIST ===
 □ Every NPC has: name + location + role + purpose
 □ Every named element leads with its proper name
 □ Every sub-location includes parent location context
 □ No specific UI/visual details invented (only from research)
 □ No content repeated from "PREVIOUSLY COVERED"
-□ Required elements for this section are included
+□ ALL mustCover elements above are explicitly included
 
 Write the section now (markdown only):`;
   }

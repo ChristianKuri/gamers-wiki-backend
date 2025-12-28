@@ -561,8 +561,6 @@ interface WriteSectionResult {
 interface WriteSectionOptions {
   readonly minParagraphs: number;
   readonly maxParagraphs: number;
-  /** Required elements to include in the checklist (only for last section) */
-  readonly requiredElements?: readonly string[];
   /** Cross-reference context from previous sections (sequential mode only) */
   readonly crossReferenceContext?: string;
 }
@@ -610,9 +608,6 @@ async function writeSection(
     SPECIALIST_CONFIG.RESEARCH_CONTEXT_PER_RESULT
   );
 
-  // Only pass required elements to the last section for final verification
-  const requiredElementsForSection = isLast ? options.requiredElements : undefined;
-
   const sectionContext: SpecialistSectionContext = {
     sectionIndex,
     totalSections: plan.sections.length,
@@ -626,8 +621,8 @@ async function writeSection(
     categoryInsights: scoutOutput.briefing.categoryInsights,
     isThinResearch,
     researchContentLength,
-    requiredElements: requiredElementsForSection,
     crossReferenceContext: options.crossReferenceContext,
+    mustCover: section.mustCover,
   };
 
   log.debug(`Writing section ${sectionIndex + 1}/${plan.sections.length}: ${section.headline}`);
@@ -719,11 +714,10 @@ export async function runSpecialist(
     );
   }
 
-  // Build write options with dynamic paragraph counts and required elements
+  // Build write options with dynamic paragraph counts
   const writeOptions: WriteSectionOptions = {
     minParagraphs,
     maxParagraphs,
-    requiredElements: plan.requiredElements,
   };
 
   // ===== SECTION WRITING PHASE =====
@@ -884,10 +878,6 @@ export interface WriteSingleSectionOptions {
    * Used to calculate paragraph range.
    */
   readonly targetWordCount?: number;
-  /**
-   * Required elements that must be covered (passed to last section only).
-   */
-  readonly requiredElements?: readonly string[];
 }
 
 /**
@@ -942,10 +932,6 @@ export async function writeSingleSection(
     plan.sections.length
   );
 
-  // Only pass required elements to the last section
-  const isLast = sectionIndex === plan.sections.length - 1;
-  const requiredElements = isLast ? options?.requiredElements : undefined;
-
   // If feedback is provided, modify the section's goal to include it
   let effectiveSection = section;
   if (options?.feedback) {
@@ -968,7 +954,6 @@ export async function writeSingleSection(
     {
       minParagraphs,
       maxParagraphs,
-      requiredElements,
     }
   );
 

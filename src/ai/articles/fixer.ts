@@ -425,7 +425,6 @@ export async function regenerateSection(
       {
         feedback,
         targetWordCount: ctx.gameContext.targetWordCount,
-        requiredElements: ctx.plan.requiredElements,
       }
     );
 
@@ -498,6 +497,7 @@ export async function addSection(
     headline: issue.location ?? 'Additional Information',
     goal: issue.fixInstruction,
     researchQueries: [], // Will use existing research pool
+    mustCover: [issue.fixInstruction], // The fix instruction is what must be covered
   };
 
   // Create an extended plan with the new section

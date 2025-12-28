@@ -13,8 +13,15 @@ export interface SpecialistSectionContext {
   readonly categoryInsights: string;
   readonly isThinResearch: boolean;
   readonly researchContentLength: number;
-  readonly requiredElements?: readonly string[];
   readonly crossReferenceContext?: string;
+  /**
+   * Elements this specific section MUST cover.
+   * Assigned by the Editor from the global requiredElements list.
+   * The Specialist sees only these elements for the current section,
+   * enabling targeted accountability instead of cognitive overload.
+   * Required since ArticleSectionPlanSchema enforces mustCover.
+   */
+  readonly mustCover: readonly string[];
 }
 
 export interface SpecialistPrompts {
