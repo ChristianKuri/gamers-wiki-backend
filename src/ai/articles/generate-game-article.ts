@@ -686,18 +686,22 @@ async function executeEditorPhaseWithRetry(
       const { plan, tokenUsage } = result.output;
       totalTokenUsage = addTokenUsage(totalTokenUsage, tokenUsage);
 
-      // Only end timer and report progress on first attempt
-      // (retry attempts are internal, not user-visible)
+      // Always end timer (includes retry time since timer started on first attempt)
+      const editorDurationMs = phaseTimer.end('editor');
+
+      // Report progress (user-visible completion message)
       if (!isRetry) {
-        phaseTimer.end('editor');
         log.info(
-          `Editor (${editorModel}) complete in ${result.durationMs}ms: ` +
+          `Editor (${editorModel}) complete in ${editorDurationMs}ms: ` +
             `${plan.categorySlug} article with ${plan.sections.length} sections`
         );
-        progressTracker.completePhase('editor', `Planned ${plan.sections.length} sections`);
       } else {
-        log.info(`Editor retry ${attempt} produced plan with ${plan.sections.length} sections`);
+        log.info(
+          `Editor (${editorModel}) complete in ${editorDurationMs}ms after ${attempt} retry(s): ` +
+            `${plan.categorySlug} article with ${plan.sections.length} sections`
+        );
       }
+      progressTracker.completePhase('editor', `Planned ${plan.sections.length} sections`);
 
       // Validate plan structure before expensive Specialist phase
       const planIssues = validateArticlePlan(plan);
