@@ -90,31 +90,33 @@ export interface FixerOutput {
 }
 
 // ============================================================================
-// Zod Schema for Direct Edit Output
+// Zod Schemas - Simple, letting LLM do the work
 // ============================================================================
 
-const DirectEditOutputSchema = z.object({
-  editedText: z.string().describe('The corrected text that should replace the original'),
-  explanation: z.string().describe('Brief explanation of what was changed'),
+/**
+ * Universal schema for smart section editing.
+ * Give the LLM space to think and work.
+ */
+const SmartEditOutputSchema = z.object({
+  thinking: z.string().describe('Your reasoning about how to apply this fix (be thorough)'),
+  editedContent: z.string().describe('The complete edited section content'),
+  whatChanged: z.string().describe('Brief description of the change made'),
+  changeType: z.enum(['insertion', 'replacement', 'expansion', 'restructure']).describe('Type of change made'),
+  grammarCheck: z.string().describe('Confirm the edited text is grammatically correct - any issues found?'),
 });
 
 /**
- * Schema for inline insert output - more targeted than direct edit.
+ * Schema for batch fixing multiple issues in one section.
+ * More efficient and avoids grammar corruption from sequential edits.
  */
-const InlineInsertOutputSchema = z.object({
-  originalSentence: z.string().describe('The original sentence that was modified'),
-  modifiedSentence: z.string().describe('The sentence with the insertion applied'),
-  insertedText: z.string().describe('The exact text that was inserted'),
-  explanation: z.string().describe('Brief explanation of what was inserted and where'),
-});
-
-/**
- * Schema for expand output - constrained to prevent bloat.
- */
-const ExpandOutputSchema = z.object({
-  newParagraph: z.string().describe('The single new paragraph to add (max 150 words)'),
-  explanation: z.string().describe('Brief explanation of what was added'),
-  wordCount: z.number().describe('Word count of the new paragraph'),
+const BatchFixOutputSchema = z.object({
+  thinking: z.string().describe('Your reasoning about how to fix ALL these issues together'),
+  editedContent: z.string().describe('The complete edited section content with ALL fixes applied'),
+  fixesSummary: z.array(z.object({
+    issue: z.string().describe('Which issue this addresses'),
+    change: z.string().describe('What was changed'),
+  })).describe('Summary of each fix applied'),
+  grammarCheck: z.string().describe('Verify the final text is grammatically correct'),
 });
 
 // ============================================================================
@@ -252,25 +254,213 @@ export function getSectionContent(markdown: string, headline: string): string | 
 // ============================================================================
 
 /**
- * Applies an inline insertion to add words/clauses to existing sentences.
- * This is the most surgical fix strategy - used for adding location context,
- * names, or brief clarifications without restructuring.
- *
+ * Batch fix multiple issues in a single section.
+ * 
+ * This is the preferred approach because:
+ * 1. Fixes all issues in one pass - no grammar corruption from sequential edits
+ * 2. LLM sees full context of what needs to change
+ * 3. Validates grammar at the end
+ * 
  * @param markdown - Current article markdown
- * @param issue - The issue with fixInstruction specifying what to insert where
+ * @param sectionName - The section headline
+ * @param issues - All issues targeting this section
  * @param deps - Dependencies
  * @returns Fix result with updated markdown
  */
-export async function applyInlineInsert(
+export async function applyBatchFix(
+  markdown: string,
+  sectionName: string,
+  issues: readonly ReviewIssue[],
+  deps: FixerDeps
+): Promise<FixResult & { issuesAddressed: number }> {
+  const log = deps.logger ?? createPrefixedLogger('[Fixer]');
+  const temperature = deps.temperature ?? FIXER_CONFIG.TEMPERATURE;
+
+  // Filter to issues with fix instructions
+  const actionableIssues = issues.filter(i => i.fixInstruction && i.fixStrategy !== 'no_action');
+  
+  if (actionableIssues.length === 0) {
+    return {
+      markdown,
+      success: true,
+      tokenUsage: createEmptyTokenUsage(),
+      description: 'No actionable issues',
+      issuesAddressed: 0,
+    };
+  }
+
+  const sectionContent = getSectionContent(markdown, sectionName);
+  if (!sectionContent) {
+    log.warn(`Section "${sectionName}" not found`);
+    return {
+      markdown,
+      success: false,
+      tokenUsage: createEmptyTokenUsage(),
+      description: `Section "${sectionName}" not found`,
+      issuesAddressed: 0,
+    };
+  }
+
+  // Build the issues list for the prompt
+  const issuesText = actionableIssues.map((issue, idx) => 
+    `${idx + 1}. [${issue.severity.toUpperCase()}] ${issue.message}\n   FIX: ${issue.fixInstruction}`
+  ).join('\n\n');
+
+  // Determine expected scope - more issues = more changes allowed
+  const hasExpandOrRegenerate = actionableIssues.some(
+    i => i.fixStrategy === 'expand' || i.fixStrategy === 'regenerate'
+  );
+  const maxLengthIncrease = hasExpandOrRegenerate 
+    ? 800 + (actionableIssues.length * 100)
+    : 300 + (actionableIssues.length * 50);
+
+  log.info(`Batch fixing ${actionableIssues.length} issues in "${sectionName}"`);
+
+  try {
+    const { object, usage } = await withRetry(
+      () =>
+        deps.generateObject({
+          model: deps.model,
+          schema: BatchFixOutputSchema,
+          temperature,
+          maxOutputTokens: 4000,
+          system: `You are an expert editor fixing multiple issues in a gaming guide article section.
+
+YOUR TASK:
+Fix ALL the listed issues in a SINGLE, coherent edit. This is important because applying fixes sequentially can break grammar.
+
+EDITING PRINCIPLES:
+1. Address EVERY issue listed - don't skip any
+2. Make minimal changes - only what's needed to fix each issue
+3. Preserve the author's voice and existing structure
+4. Maintain all markdown formatting (**bold**, ###headings, bullet lists, etc.)
+5. CRITICAL: Ensure the final text is grammatically correct
+6. Don't add fluff, padding, or repeat information
+
+GRAMMAR CHECK:
+After editing, carefully read the entire section to verify:
+- No sentence fragments
+- No double verbs ("find in a treasure chest containing" is WRONG)
+- No incomplete phrases
+- Natural sentence flow
+
+Take your time to think through all fixes and verify the result.`,
+          prompt: `Fix ALL these issues in the section below:
+
+ISSUES TO FIX:
+${issuesText}
+
+SECTION "${sectionName}":
+---
+${sectionContent}
+---
+
+Apply all fixes, verify grammar is correct, then return the complete edited section.`,
+        }),
+      { context: `Batch fix: ${sectionName} (${actionableIssues.length} issues)`, signal: deps.signal }
+    );
+
+    const tokenUsage: TokenUsage = usage
+      ? { input: usage.inputTokens ?? 0, output: usage.outputTokens ?? 0 }
+      : createEmptyTokenUsage();
+
+    // Log thinking and grammar check
+    log.debug(`Batch fix thinking: ${object.thinking.slice(0, 200)}...`);
+    log.debug(`Grammar check: ${object.grammarCheck}`);
+
+    // Validate the edit
+    const originalLength = sectionContent.length;
+    const editedLength = object.editedContent.length;
+    const lengthDiff = editedLength - originalLength;
+
+    // Check for excessive content removal
+    if (lengthDiff < -200) {
+      log.warn(`Batch fix rejected: Too much content removed (${Math.abs(lengthDiff)} chars)`);
+      return {
+        markdown,
+        success: false,
+        tokenUsage,
+        description: 'Fix rejected - removed too much content',
+        issuesAddressed: 0,
+      };
+    }
+
+    // Check for excessive addition
+    if (lengthDiff > maxLengthIncrease) {
+      log.warn(`Batch fix rejected: Too much content added (${lengthDiff} chars, max ${maxLengthIncrease})`);
+      return {
+        markdown,
+        success: false,
+        tokenUsage,
+        description: 'Fix rejected - added too much content',
+        issuesAddressed: 0,
+      };
+    }
+
+    // Replace the section
+    const resultMarkdown = replaceSection(markdown, sectionName, object.editedContent);
+
+    if (!resultMarkdown) {
+      log.error(`Failed to replace section "${sectionName}"`);
+      return {
+        markdown,
+        success: false,
+        tokenUsage,
+        description: `Failed to replace section "${sectionName}"`,
+        issuesAddressed: 0,
+      };
+    }
+
+    const success = resultMarkdown !== markdown;
+    const fixCount = object.fixesSummary.length;
+
+    // Log each fix applied
+    for (const fix of object.fixesSummary) {
+      log.info(`  - ${fix.issue}: ${fix.change}`);
+    }
+
+    log.info(
+      success
+        ? `Batch fix applied (${fixCount} changes, ${lengthDiff >= 0 ? '+' : ''}${lengthDiff} chars)`
+        : 'Batch fix had no effect'
+    );
+
+    return {
+      markdown: resultMarkdown,
+      success,
+      tokenUsage,
+      description: object.fixesSummary.map(f => f.change).join('; '),
+      issuesAddressed: fixCount,
+    };
+  } catch (error) {
+    log.error(`Batch fix failed: ${error instanceof Error ? error.message : String(error)}`);
+    return {
+      markdown,
+      success: false,
+      tokenUsage: createEmptyTokenUsage(),
+      description: `Batch fix failed: ${error instanceof Error ? error.message : 'Unknown error'}`,
+      issuesAddressed: 0,
+    };
+  }
+}
+
+/**
+ * Smart section fix - the unified, LLM-native approach for single issues.
+ * 
+ * For single issues per section, this is used. For multiple issues,
+ * prefer applyBatchFix to avoid grammar corruption.
+ */
+export async function applySmartFix(
   markdown: string,
   issue: ReviewIssue,
-  deps: FixerDeps
+  deps: FixerDeps,
+  ctx?: FixerContext
 ): Promise<FixResult> {
   const log = deps.logger ?? createPrefixedLogger('[Fixer]');
   const temperature = deps.temperature ?? FIXER_CONFIG.TEMPERATURE;
 
   if (!issue.fixInstruction) {
-    log.warn('Inline insert requested but no fixInstruction provided');
+    log.warn('Smart fix requested but no fixInstruction provided');
     return {
       markdown,
       success: false,
@@ -279,266 +469,181 @@ export async function applyInlineInsert(
     };
   }
 
-  // Extract section content if location is specified
-  let targetText = markdown;
-  let isFullArticle = true;
-
-  if (issue.location && issue.location !== 'global') {
-    const sectionContent = getSectionContent(markdown, issue.location);
-    if (sectionContent) {
-      targetText = sectionContent;
-      isFullArticle = false;
-    }
+  // Get section content if location is specified
+  if (!issue.location || issue.location === 'global') {
+    log.warn('Smart fix requires a specific section location');
+    return {
+      markdown,
+      success: false,
+      tokenUsage: createEmptyTokenUsage(),
+      description: 'Smart fix requires section location',
+    };
   }
 
-  log.debug(`Applying inline insert: ${issue.fixInstruction.slice(0, 100)}...`);
+  const sectionContent = getSectionContent(markdown, issue.location);
+  if (!sectionContent) {
+    log.warn(`Section "${issue.location}" not found`);
+    return {
+      markdown,
+      success: false,
+      tokenUsage: createEmptyTokenUsage(),
+      description: `Section "${issue.location}" not found`,
+    };
+  }
+
+  // Determine the scope of change expected
+  const isMinorFix = issue.fixStrategy === 'inline_insert' || issue.fixStrategy === 'direct_edit';
+  const maxLengthIncrease = isMinorFix ? 300 : 800; // chars
+
+  log.info(`Applying smart fix to "${issue.location}" (${issue.fixStrategy}): ${issue.message.slice(0, 60)}...`);
 
   try {
     const { object, usage } = await withRetry(
       () =>
         deps.generateObject({
           model: deps.model,
-          schema: InlineInsertOutputSchema,
+          schema: SmartEditOutputSchema,
           temperature,
-          maxOutputTokens: FIXER_CONFIG.MAX_OUTPUT_TOKENS_INLINE_INSERT,
-          system: `You are a surgical text editor specializing in MINIMAL insertions.
+          maxOutputTokens: 4000, // Give LLM plenty of space
+          system: `You are an expert editor fixing issues in gaming guide articles.
 
-Your task: Insert a few words or a short clause into an existing sentence WITHOUT rewriting it.
+YOUR APPROACH:
+1. First, THINK about the issue and how to fix it
+2. Then, apply the fix to the content
+3. Return the complete edited section
+4. VERIFY grammar is correct
 
-CRITICAL RULES:
-1. Insert ONLY the minimum necessary words (typically 2-10 words)
-2. DO NOT add new sentences
-3. DO NOT add new paragraphs
-4. DO NOT restructure the sentence
-5. DO NOT add explanations or elaborations
-6. Preserve the original sentence structure exactly
-7. The insertion should feel natural in context
+EDITING PRINCIPLES:
+- Make the MINIMUM change necessary to fix the issue
+- Preserve the author's voice and style
+- Keep all existing information intact
+- Maintain markdown formatting (**bold**, ###headings, etc.)
+- Don't add fluff or padding
 
-EXAMPLES:
-❌ BAD: Rewrote entire sentence
-❌ BAD: Added a new sentence after
-❌ BAD: Changed sentence structure
-✅ GOOD: "meet Purah" → "meet Purah at Lookout Landing"
-✅ GOOD: "the fourth shrine" → "the fourth shrine (Nachoyah Shrine)"
-✅ GOOD: "grants you the ability" → "grants you the ability at the Temple of Time"`,
-          prompt: `Insert the specified content into the target sentence.
+${isMinorFix ? `
+THIS IS A MINOR FIX:
+- You should be adding/changing only a few words or a short phrase
+- Do NOT add new paragraphs
+- Do NOT restructure the content
+- The edit should be nearly invisible
+` : `
+THIS FIX MAY REQUIRE MORE CONTENT:
+- You may add a paragraph if truly needed
+- But still prefer minimal changes
+- Don't repeat information that's elsewhere in the article
+`}
 
-INSERT INSTRUCTION: ${issue.fixInstruction}
+GRAMMAR CHECK (CRITICAL):
+After editing, read the modified sentences aloud. Check for:
+- Sentence fragments
+- Double verbs (e.g., "find in containing" is WRONG)
+- Broken phrases from insertions
+- Natural flow
 
-TEXT TO SEARCH:
-${targetText}
+Take your time to think through this carefully.`,
+          prompt: `Fix this issue in the section below.
 
-Find the target sentence and insert the required words. Return the original sentence and the modified sentence.`,
+ISSUE: ${issue.message}
+
+FIX INSTRUCTION: ${issue.fixInstruction}
+
+SEVERITY: ${issue.severity}
+CATEGORY: ${issue.category}
+
+SECTION "${issue.location}":
+---
+${sectionContent}
+---
+
+Think through how to fix this, apply the edit, verify grammar, then return the edited section.`,
         }),
-      { context: `Inline insert: ${issue.message.slice(0, 50)}`, signal: deps.signal }
+      { context: `Smart fix: ${issue.message.slice(0, 50)}`, signal: deps.signal }
     );
 
     const tokenUsage: TokenUsage = usage
       ? { input: usage.inputTokens ?? 0, output: usage.outputTokens ?? 0 }
       : createEmptyTokenUsage();
 
-    // Validate the insertion is minimal (not a full rewrite)
-    const originalWords = object.originalSentence.split(/\s+/).length;
-    const modifiedWords = object.modifiedSentence.split(/\s+/).length;
-    const addedWords = modifiedWords - originalWords;
+    // Log the LLM's thinking and grammar check
+    log.debug(`LLM thinking: ${object.thinking.slice(0, 200)}...`);
+    log.debug(`Grammar check: ${object.grammarCheck}`);
 
-    if (addedWords > 20) {
-      log.warn(
-        `Inline insert rejected: Too many words added (${addedWords}). ` +
-          `This suggests a rewrite rather than insertion.`
-      );
+    // Validate the edit wasn't too aggressive
+    const originalLength = sectionContent.length;
+    const editedLength = object.editedContent.length;
+    const lengthDiff = editedLength - originalLength;
+
+    // Check for content removal (usually bad)
+    if (lengthDiff < -100) {
+      log.warn(`Smart fix rejected: Too much content removed (${Math.abs(lengthDiff)} chars)`);
       return {
         markdown,
         success: false,
         tokenUsage,
-        description: 'Insert rejected - added too many words (use expand instead)',
+        description: 'Fix rejected - removed too much content',
       };
     }
 
-    // Apply the change by replacing the original sentence with the modified one
-    let resultMarkdown: string;
-    if (isFullArticle) {
-      resultMarkdown = markdown.replace(object.originalSentence, object.modifiedSentence);
-    } else {
-      const modifiedSection = targetText.replace(object.originalSentence, object.modifiedSentence);
-      const replaced = replaceSection(markdown, issue.location!, modifiedSection);
-      resultMarkdown = replaced ?? markdown;
+    // Check for excessive addition
+    if (lengthDiff > maxLengthIncrease) {
+      log.warn(`Smart fix rejected: Too much content added (${lengthDiff} chars, max ${maxLengthIncrease})`);
+      return {
+        markdown,
+        success: false,
+        tokenUsage,
+        description: 'Fix rejected - added too much content',
+      };
     }
 
-    // Verify something actually changed
+    // Replace the section with edited content
+    const resultMarkdown = replaceSection(markdown, issue.location, object.editedContent);
+
+    if (!resultMarkdown) {
+      log.error(`Failed to replace section "${issue.location}"`);
+      return {
+        markdown,
+        success: false,
+        tokenUsage,
+        description: `Failed to replace section "${issue.location}"`,
+      };
+    }
+
     const success = resultMarkdown !== markdown;
 
     log.info(
       success
-        ? `Inline insert applied: "${object.insertedText}" (+${addedWords} words)`
-        : 'Inline insert had no effect'
+        ? `Smart fix applied (${object.changeType}, ${lengthDiff >= 0 ? '+' : ''}${lengthDiff} chars): ${object.whatChanged}`
+        : 'Smart fix had no effect'
     );
 
     return {
       markdown: resultMarkdown,
       success,
       tokenUsage,
-      description: object.explanation,
+      description: object.whatChanged,
     };
   } catch (error) {
-    log.error(`Inline insert failed: ${error instanceof Error ? error.message : String(error)}`);
+    log.error(`Smart fix failed: ${error instanceof Error ? error.message : String(error)}`);
     return {
       markdown,
       success: false,
       tokenUsage: createEmptyTokenUsage(),
-      description: `Insert failed: ${error instanceof Error ? error.message : 'Unknown error'}`,
+      description: `Fix failed: ${error instanceof Error ? error.message : 'Unknown error'}`,
     };
   }
 }
 
 /**
- * Applies a direct edit to fix minor text issues.
- * Uses an LLM to intelligently apply the edit instruction.
- *
- * @param markdown - Current article markdown
- * @param issue - The issue with fixInstruction
- * @param deps - Dependencies
- * @returns Fix result with updated markdown
+ * Applies a direct edit - now just delegates to applySmartFix.
+ * Kept for backwards compatibility with existing code.
  */
 export async function applyDirectEdit(
   markdown: string,
   issue: ReviewIssue,
   deps: FixerDeps
 ): Promise<FixResult> {
-  const log = deps.logger ?? createPrefixedLogger('[Fixer]');
-  const temperature = deps.temperature ?? FIXER_CONFIG.TEMPERATURE;
-
-  if (!issue.fixInstruction) {
-    log.warn('Direct edit requested but no fixInstruction provided');
-    return {
-      markdown,
-      success: false,
-      tokenUsage: createEmptyTokenUsage(),
-      description: 'No fix instruction provided',
-    };
-  }
-
-  // If the issue has a location, extract that section for targeted editing
-  let targetText = markdown;
-  let isFullArticle = true;
-
-  if (issue.location && issue.location !== 'global') {
-    const sectionContent = getSectionContent(markdown, issue.location);
-    if (sectionContent) {
-      targetText = sectionContent;
-      isFullArticle = false;
-    }
-  }
-
-  log.debug(`Applying direct edit: ${issue.fixInstruction.slice(0, 100)}...`);
-
-  try {
-    const { object, usage } = await withRetry(
-      () =>
-        deps.generateObject({
-          model: deps.model,
-          schema: DirectEditOutputSchema,
-          temperature,
-          maxOutputTokens: FIXER_CONFIG.MAX_OUTPUT_TOKENS_DIRECT_EDIT,
-          system: `You are a surgical text editor. Your task is to make MINIMAL changes to fix specific issues.
-
-CRITICAL RULES:
-1. Apply ONLY the requested edit - do not make other changes
-2. Preserve all formatting, structure, and whitespace
-3. If the edit cannot be applied (text not found), return the original text unchanged
-4. Be SURGICAL - change as little as possible to accomplish the goal
-5. DO NOT add new paragraphs unless explicitly requested
-6. DO NOT elaborate or expand - just fix the specific issue
-7. DO NOT introduce redundancy - if similar content exists elsewhere, don't repeat it
-
-This is for MINOR fixes only:
-- Replacing vague terms with specific names
-- Fixing typos or clichés
-- Correcting factual errors in existing text
-
-For adding new content, use 'expand' or 'inline_insert' instead.`,
-          prompt: `Apply this edit to the text below:
-
-EDIT INSTRUCTION: ${issue.fixInstruction}
-
-ORIGINAL TEXT:
-${targetText}
-
-Return the edited text with the MINIMAL change applied.`,
-        }),
-      { context: `Direct edit: ${issue.message.slice(0, 50)}`, signal: deps.signal }
-    );
-
-    const tokenUsage: TokenUsage = usage
-      ? { input: usage.inputTokens ?? 0, output: usage.outputTokens ?? 0 }
-      : createEmptyTokenUsage();
-
-    // Safety check: Ensure the edited text is not drastically shorter than the original
-    // (which usually indicates a truncation error or hallucination by the LLM)
-    const originalLength = targetText.length;
-    const editedLength = object.editedText.length;
-    const lengthRatio = editedLength / originalLength;
-
-    if (originalLength > 500 && lengthRatio < 0.5) {
-      log.warn(
-        `Direct edit rejected: Potential truncation detected. ` +
-          `(Original: ${originalLength} chars, Edited: ${editedLength} chars, Ratio: ${lengthRatio.toFixed(2)})`
-      );
-      return {
-        markdown,
-        success: false,
-        tokenUsage,
-        description: 'Edit rejected due to suspected truncation',
-      };
-    }
-
-    // Safety check: Reject if too much content was added (should use expand instead)
-    if (editedLength > originalLength * 1.3 && editedLength - originalLength > 200) {
-      log.warn(
-        `Direct edit rejected: Too much content added. ` +
-          `(Original: ${originalLength} chars, Edited: ${editedLength} chars). Use 'expand' instead.`
-      );
-      return {
-        markdown,
-        success: false,
-        tokenUsage,
-        description: 'Edit rejected - too much content added (use expand instead)',
-      };
-    }
-
-    // If we edited a section, replace it in the full markdown
-    let resultMarkdown: string;
-    if (isFullArticle) {
-      resultMarkdown = object.editedText;
-    } else {
-      const replaced = replaceSection(markdown, issue.location!, object.editedText);
-      resultMarkdown = replaced ?? markdown;
-    }
-
-    // Verify something actually changed
-    const success = resultMarkdown !== markdown;
-
-    log.info(
-      success
-        ? `Direct edit applied: ${object.explanation}`
-        : 'Direct edit had no effect'
-    );
-
-    return {
-      markdown: resultMarkdown,
-      success,
-      tokenUsage,
-      description: object.explanation,
-    };
-  } catch (error) {
-    log.error(`Direct edit failed: ${error instanceof Error ? error.message : String(error)}`);
-    return {
-      markdown,
-      success: false,
-      tokenUsage: createEmptyTokenUsage(),
-      description: `Edit failed: ${error instanceof Error ? error.message : 'Unknown error'}`,
-    };
-  }
+  // Direct edit now uses the smart fix approach
+  return applySmartFix(markdown, issue, deps);
 }
 
 /**
@@ -743,52 +848,8 @@ export async function addSection(
 }
 
 /**
- * Extracts key phrases from text for redundancy detection.
- */
-function extractKeyPhrases(text: string): Set<string> {
-  // Extract significant phrases (3+ consecutive words)
-  const phrases = new Set<string>();
-  const words = text.toLowerCase().replace(/[^\w\s]/g, '').split(/\s+/);
-  
-  for (let i = 0; i < words.length - 2; i++) {
-    const phrase = words.slice(i, i + 3).join(' ');
-    if (phrase.length > 10) { // Ignore very short phrases
-      phrases.add(phrase);
-    }
-  }
-  
-  return phrases;
-}
-
-/**
- * Checks if new content is too similar to existing content.
- * Returns true if redundancy is detected.
- */
-function detectRedundancy(existingContent: string, newContent: string): boolean {
-  const existingPhrases = extractKeyPhrases(existingContent);
-  const newPhrases = extractKeyPhrases(newContent);
-  
-  let matchCount = 0;
-  for (const phrase of newPhrases) {
-    if (existingPhrases.has(phrase)) {
-      matchCount++;
-    }
-  }
-  
-  // If more than 30% of new phrases already exist, it's redundant
-  const redundancyRatio = newPhrases.size > 0 ? matchCount / newPhrases.size : 0;
-  return redundancyRatio > 0.3;
-}
-
-/**
- * Expands an existing section with ONE focused paragraph.
- * Constrained to prevent bloat and redundancy.
- *
- * @param markdown - Current article markdown
- * @param issue - The issue describing what needs expansion
- * @param ctx - Fixer context
- * @param deps - Dependencies
- * @returns Fix result with updated markdown
+ * Expands an existing section - now delegates to applySmartFix.
+ * Kept for backwards compatibility.
  */
 export async function expandSection(
   markdown: string,
@@ -796,159 +857,7 @@ export async function expandSection(
   ctx: FixerContext,
   deps: FixerDeps
 ): Promise<FixResult> {
-  const log = deps.logger ?? createPrefixedLogger('[Fixer]');
-  const temperature = deps.temperature ?? FIXER_CONFIG.TEMPERATURE;
-
-  if (!issue.location) {
-    log.warn('Expand requested but no location specified');
-    return {
-      markdown,
-      success: false,
-      tokenUsage: createEmptyTokenUsage(),
-      description: 'No section location specified',
-    };
-  }
-
-  const existingContent = getSectionContent(markdown, issue.location);
-  if (!existingContent) {
-    log.warn(`Section "${issue.location}" not found for expansion`);
-    return {
-      markdown,
-      success: false,
-      tokenUsage: createEmptyTokenUsage(),
-      description: `Section "${issue.location}" not found`,
-    };
-  }
-
-  const expansionInstruction = issue.fixInstruction ?? issue.suggestion ?? 'Add more depth and detail';
-
-  log.info(`Expanding section "${issue.location}": ${expansionInstruction.slice(0, 50)}...`);
-
-  // Find section info from plan for context
-  const sectionPlan = ctx.plan.sections.find(
-    (s) => s.headline.toLowerCase() === issue.location!.toLowerCase()
-  );
-
-  // Get other sections for redundancy awareness
-  const otherSections = parseMarkdownH2Sections(markdown)
-    .filter((s) => s.heading.toLowerCase() !== issue.location!.toLowerCase() && !isSourcesSectionHeading(s.heading))
-    .map((s) => s.content)
-    .join('\n');
-
-  try {
-    const { object, usage } = await withRetry(
-      () =>
-        deps.generateObject({
-          model: deps.model,
-          schema: ExpandOutputSchema,
-          temperature,
-          maxOutputTokens: FIXER_CONFIG.MAX_OUTPUT_TOKENS_EXPAND,
-          system: `You are a gaming content specialist adding ONE focused paragraph to an article section.
-
-CRITICAL CONSTRAINTS:
-1. Write ONLY ONE paragraph (3-5 sentences max)
-2. Maximum ${FIXER_CONFIG.MAX_EXPAND_WORDS} words
-3. Address ONLY the specific expansion request
-4. DO NOT repeat information from the existing content
-5. DO NOT repeat information from other sections (provided below)
-6. DO NOT add generic filler or padding
-7. Every sentence must add NEW, SPECIFIC information
-
-REDUNDANCY CHECK:
-Before writing, scan the existing content. If the requested information is ALREADY covered (even partially), write a minimal clarification instead of a full paragraph.
-
-FORMAT:
-Return ONLY the new paragraph text - do not include the existing content.`,
-          prompt: `Add ONE focused paragraph to this section.
-
-GAME: ${ctx.gameContext.gameName}
-SECTION: ${issue.location}
-${sectionPlan ? `SECTION GOAL: ${sectionPlan.goal}` : ''}
-
-EXPANSION REQUEST: ${expansionInstruction}
-
-=== EXISTING SECTION CONTENT (DO NOT REPEAT) ===
-${existingContent}
-
-=== OTHER SECTIONS (DO NOT REPEAT) ===
-${otherSections.slice(0, 2000)}
-
-Write ONE paragraph (max ${FIXER_CONFIG.MAX_EXPAND_WORDS} words) that addresses the expansion request with NEW information only.`,
-        }),
-      { context: `Expand section "${issue.location}"`, signal: deps.signal }
-    );
-
-    const tokenUsage: TokenUsage = usage
-      ? { input: usage.inputTokens ?? 0, output: usage.outputTokens ?? 0 }
-      : createEmptyTokenUsage();
-
-    // Validate word count
-    if (object.wordCount > FIXER_CONFIG.MAX_EXPAND_WORDS * 1.5) {
-      log.warn(
-        `Expansion rejected: Too many words (${object.wordCount} > ${FIXER_CONFIG.MAX_EXPAND_WORDS})`
-      );
-      return {
-        markdown,
-        success: false,
-        tokenUsage,
-        description: `Expansion rejected - exceeded word limit (${object.wordCount} words)`,
-      };
-    }
-
-    // Check for redundancy
-    if (detectRedundancy(existingContent + '\n' + otherSections, object.newParagraph)) {
-      log.warn('Expansion rejected: New content is too similar to existing content');
-      return {
-        markdown,
-        success: false,
-        tokenUsage,
-        description: 'Expansion rejected - redundant with existing content',
-      };
-    }
-
-    // Append the new paragraph to the existing content
-    const expandedContent = existingContent.trim() + '\n\n' + object.newParagraph.trim();
-
-    // Replace the section with expanded content
-    const newMarkdown = replaceSection(markdown, issue.location, expandedContent);
-
-    if (!newMarkdown) {
-      log.error(`Failed to replace section "${issue.location}" after expansion`);
-      return {
-        markdown,
-        success: false,
-        tokenUsage,
-        description: `Failed to replace section "${issue.location}"`,
-      };
-    }
-
-    // Verify content actually increased
-    const success = newMarkdown.length > markdown.length;
-    const addedChars = newMarkdown.length - markdown.length;
-
-    log.info(
-      success
-        ? `Section "${issue.location}" expanded (+${addedChars} chars, ${object.wordCount} words)`
-        : 'Expansion did not add content'
-    );
-
-    return {
-      markdown: newMarkdown,
-      success,
-      tokenUsage,
-      description: `Expanded section "${issue.location}" with ${object.wordCount} words: ${object.explanation}`,
-    };
-  } catch (error) {
-    log.error(
-      `Section expansion failed: ${error instanceof Error ? error.message : String(error)}`
-    );
-    return {
-      markdown,
-      success: false,
-      tokenUsage: createEmptyTokenUsage(),
-      description: `Expansion failed: ${error instanceof Error ? error.message : 'Unknown error'}`,
-    };
-  }
+  return applySmartFix(markdown, issue, deps, ctx);
 }
 
 // ============================================================================
@@ -971,37 +880,50 @@ function groupIssuesBySection(issues: readonly ReviewIssue[]): Map<string, Revie
 }
 
 /**
- * Selects the highest priority fix strategy for a group of issues.
- * Uses FIXER_CONFIG.STRATEGY_PRIORITY to determine order.
+ * Categorizes issues in a section into batch-fixable vs special handling.
+ * 
+ * Batch-fixable: inline_insert, direct_edit, expand (can all be done in one LLM call)
+ * Special: regenerate, add_section (need specialized handling)
  */
-function selectBestStrategy(issues: readonly ReviewIssue[]): ReviewIssue | null {
-  const priorityOrder = FIXER_CONFIG.STRATEGY_PRIORITY;
+function categorizeIssues(issues: readonly ReviewIssue[]): {
+  batchable: ReviewIssue[];
+  special: ReviewIssue[];
+} {
+  const batchable: ReviewIssue[] = [];
+  const special: ReviewIssue[] = [];
 
-  // Filter out no_action issues
-  const actionableIssues = issues.filter((i) => i.fixStrategy !== 'no_action');
-  if (actionableIssues.length === 0) {
-    return null;
+  for (const issue of issues) {
+    if (issue.fixStrategy === 'no_action') {
+      continue;
+    }
+    
+    if (issue.fixStrategy === 'regenerate' || issue.fixStrategy === 'add_section') {
+      special.push(issue);
+    } else {
+      batchable.push(issue);
+    }
   }
 
-  // Sort by priority (lower index = higher priority)
-  const sorted = [...actionableIssues].sort((a, b) => {
-    const aPriority = priorityOrder.indexOf(a.fixStrategy as typeof priorityOrder[number]);
-    const bPriority = priorityOrder.indexOf(b.fixStrategy as typeof priorityOrder[number]);
-
-    // If strategy not in priority list, put it last
-    const aIdx = aPriority === -1 ? priorityOrder.length : aPriority;
-    const bIdx = bPriority === -1 ? priorityOrder.length : bPriority;
-
-    return aIdx - bIdx;
-  });
-
-  return sorted[0] ?? null;
+  return { batchable, special };
 }
 
 /**
- * Applies a single fix based on the issue's strategy.
+ * Selects the highest priority special fix (regenerate/add_section).
  */
-async function applyFix(
+function selectHighestPrioritySpecial(issues: readonly ReviewIssue[]): ReviewIssue | null {
+  if (issues.length === 0) return null;
+  
+  // Prefer regenerate over add_section
+  const regenerate = issues.find(i => i.fixStrategy === 'regenerate');
+  if (regenerate) return regenerate;
+  
+  return issues[0] ?? null;
+}
+
+/**
+ * Applies a special fix (regenerate or add_section) that can't be batched.
+ */
+async function applySpecialFix(
   markdown: string,
   issue: ReviewIssue,
   ctx: FixerContext,
@@ -1010,37 +932,19 @@ async function applyFix(
   const log = deps.logger ?? createPrefixedLogger('[Fixer]');
 
   switch (issue.fixStrategy) {
-    case 'inline_insert':
-      return applyInlineInsert(markdown, issue, deps);
-
-    case 'direct_edit':
-      return applyDirectEdit(markdown, issue, deps);
-
     case 'regenerate':
       return regenerateSection(markdown, issue, ctx, deps);
 
     case 'add_section':
       return addSection(markdown, issue, ctx, deps);
 
-    case 'expand':
-      return expandSection(markdown, issue, ctx, deps);
-
-    case 'no_action':
-      log.debug(`Skipping no_action issue: ${issue.message}`);
-      return {
-        markdown,
-        success: true,
-        tokenUsage: createEmptyTokenUsage(),
-        description: 'No action needed',
-      };
-
     default:
-      log.warn(`Unknown fix strategy: ${issue.fixStrategy}`);
+      log.warn(`applySpecialFix called with non-special strategy: ${issue.fixStrategy}`);
       return {
         markdown,
         success: false,
         tokenUsage: createEmptyTokenUsage(),
-        description: `Unknown strategy: ${issue.fixStrategy}`,
+        description: `Not a special strategy: ${issue.fixStrategy}`,
       };
   }
 }
@@ -1051,7 +955,11 @@ async function applyFix(
 
 /**
  * Runs the Fixer to apply fixes for identified issues.
- * This is called once per iteration; the main loop is in the generator.
+ * 
+ * Key improvements:
+ * - Batches ALL issues for a section into a single LLM call
+ * - Prevents grammar corruption from sequential edits
+ * - Handles special strategies (regenerate, add_section) separately
  *
  * @param markdown - Current article markdown
  * @param issues - Issues identified by the Reviewer
@@ -1094,53 +1002,77 @@ export async function runFixer(
   let currentMarkdown = markdown;
   const fixesApplied: FixApplied[] = [];
   let totalTokenUsage = createEmptyTokenUsage();
-  let directEditCount = 0;
+  let sectionsProcessed = 0;
 
   // Process each section's issues
   for (const [target, sectionIssues] of groupedIssues) {
-    // Select the best strategy for this section
-    const issueToFix = selectBestStrategy(sectionIssues);
-    if (!issueToFix) {
-      continue;
+    // Limit sections processed per iteration
+    if (sectionsProcessed >= FIXER_CONFIG.MAX_FIXES_PER_ITERATION) {
+      log.debug(`Section limit reached (${FIXER_CONFIG.MAX_FIXES_PER_ITERATION}), stopping iteration`);
+      break;
     }
 
-    // Limit direct edits per iteration
-    if (
-      issueToFix.fixStrategy === 'direct_edit' &&
-      directEditCount >= FIXER_CONFIG.MAX_DIRECT_EDITS_PER_ITERATION
-    ) {
-      log.debug(`Skipping direct edit for "${target}" - limit reached`);
-      continue;
-    }
+    // Categorize issues: batchable (inline_insert, direct_edit, expand) vs special (regenerate, add_section)
+    const { batchable, special } = categorizeIssues(sectionIssues);
 
-    log.info(
-      `Applying ${issueToFix.fixStrategy} to "${target}": ${issueToFix.message.slice(0, 50)}...`
-    );
+    // Handle special strategies first (they may regenerate the entire section)
+    if (special.length > 0) {
+      const specialIssue = selectHighestPrioritySpecial(special);
+      if (specialIssue) {
+        log.info(`Applying special fix (${specialIssue.fixStrategy}) to "${target}"`);
+        
+        const result = await applySpecialFix(currentMarkdown, specialIssue, ctx, deps);
+        
+        fixesApplied.push({
+          iteration,
+          strategy: specialIssue.fixStrategy,
+          target,
+          reason: specialIssue.message,
+          success: result.success,
+        });
 
-    const result = await applyFix(currentMarkdown, issueToFix, ctx, deps);
-
-    fixesApplied.push({
-      iteration,
-      strategy: issueToFix.fixStrategy,
-      target,
-      reason: issueToFix.message,
-      success: result.success,
-    });
-
-    if (result.success) {
-      currentMarkdown = result.markdown;
-      totalTokenUsage = addTokenUsage(totalTokenUsage, result.tokenUsage);
-
-      if (issueToFix.fixStrategy === 'direct_edit') {
-        directEditCount++;
+        if (result.success) {
+          currentMarkdown = result.markdown;
+          totalTokenUsage = addTokenUsage(totalTokenUsage, result.tokenUsage);
+          sectionsProcessed++;
+          // Skip batchable issues since we regenerated/replaced the section
+          continue;
+        } else {
+          log.warn(`Special fix failed for "${target}": ${result.description}`);
+        }
       }
-    } else {
-      log.warn(`Fix failed for "${target}": ${result.description}`);
+    }
+
+    // Handle batchable issues - fix ALL issues for this section in one call
+    if (batchable.length > 0 && target !== 'global') {
+      log.info(`Batch fixing ${batchable.length} issue(s) in "${target}"`);
+      
+      const result = await applyBatchFix(currentMarkdown, target, batchable, deps);
+      
+      // Record one fix entry per section (with count of issues addressed)
+      fixesApplied.push({
+        iteration,
+        strategy: batchable.length > 1 ? 'batch' as FixStrategy : batchable[0]!.fixStrategy,
+        target,
+        reason: batchable.map(i => i.message).join('; '),
+        success: result.success,
+      });
+
+      if (result.success) {
+        currentMarkdown = result.markdown;
+        totalTokenUsage = addTokenUsage(totalTokenUsage, result.tokenUsage);
+        log.info(`Batch fix successful: ${result.issuesAddressed} issue(s) addressed in "${target}"`);
+      } else {
+        log.warn(`Batch fix failed for "${target}": ${result.description}`);
+      }
+      
+      sectionsProcessed++;
     }
   }
 
+  const successCount = fixesApplied.filter((f) => f.success).length;
   log.info(
-    `Fixer iteration ${iteration} complete: ${fixesApplied.filter((f) => f.success).length}/${fixesApplied.length} fixes successful`
+    `Fixer iteration ${iteration} complete: ${successCount}/${fixesApplied.length} section fixes successful`
   );
 
   return {

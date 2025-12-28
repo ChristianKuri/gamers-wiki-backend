@@ -53,8 +53,9 @@ Choose the MINIMUM intervention needed:
 
 1. inline_insert (PREFERRED for missing context):
    - Use when: Adding a few words to an existing sentence (location, name, clarification)
-   - fixInstruction format: "In the sentence '[exact sentence]', insert '[text to insert]' after '[anchor word/phrase]'"
-   - Example: "In the sentence 'meet Purah who directs you', insert 'at Lookout Landing' after 'meet Purah'"
+   - fixInstruction format: "In the sentence '[FULL sentence with **bold** markers]', insert '[text]' after '[anchor word]'"
+   - CRITICAL: Quote the COMPLETE sentence, not a fragment. Include **bold** markers exactly as they appear.
+   - Example: "In the sentence 'Inside the **Research Center**, you will meet **Purah**, the director.', insert 'at Lookout Landing' after 'Research Center'"
 
 2. direct_edit (for replacements):
    - Use when: Replacing vague text with specific text (no new content)
@@ -181,14 +182,17 @@ ASK: "Is information completely missing (not just unclear)?"
 
 === FIXINSTRUCTION EXAMPLES ===
 
-GOOD inline_insert:
-"In the sentence 'Here, you must find Purah who provides crucial information', insert 'at Lookout Landing in North Hyrule Field' after 'find Purah'"
+GOOD inline_insert (note: FULL sentence with **bold** markers):
+"In the sentence 'Here, you must find **Purah**, the research director who provides crucial information.', insert 'at Lookout Landing' after 'find **Purah**'"
 
 GOOD direct_edit:
 "Replace 'the hidden fourth shrine' with 'Nachoyah Shrine (located in the Room of Awakening)'"
 
 GOOD expand:
 "Add ONE paragraph (max 100 words) specifying the exact location of the Archaic Warm Greaves relative to Gutanbac Shrine exit. Must include: direction from shrine, landmark (hollowed tree), how to reach it. Do not repeat existing content about cold resistance."
+
+BAD inline_insert (sentence fragment - will fail!):
+"In the sentence 'find Purah who provides', insert..." ← WRONG: This is a fragment, not the full sentence!
 
 BAD (too vague):
 "Add more location details" ← What sentence? What details?

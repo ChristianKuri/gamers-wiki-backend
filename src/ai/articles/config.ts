@@ -339,35 +339,19 @@ export const FIXER_CONFIG = {
    */
   MAX_FIXER_ITERATIONS: 3, // TEMP: Disabled for debugging
   /**
-   * Temperature for Fixer LLM calls (direct edit, expand).
-   * Moderate value to balance accuracy with stylistic flexibility.
+   * Temperature for Fixer LLM calls.
+   * Slightly higher to allow natural, varied edits.
    */
-  TEMPERATURE: 0.4,
+  TEMPERATURE: 0.5,
   /**
-   * Maximum number of direct edits to apply in a single iteration.
-   * Prevents runaway token usage when many minor issues exist.
+   * Maximum number of fixes to apply in a single iteration.
    */
-  MAX_DIRECT_EDITS_PER_ITERATION: 5,
+  MAX_FIXES_PER_ITERATION: 5,
   /**
-   * Maximum output tokens for direct edit operations.
-   * Should be enough for a few paragraph replacements.
+   * Maximum output tokens for smart fix operations.
+   * Give the LLM plenty of space to think and work.
    */
-  MAX_OUTPUT_TOKENS_DIRECT_EDIT: 1000,
-  /**
-   * Maximum output tokens for expand operations.
-   * Limited to encourage focused, single-paragraph expansions.
-   */
-  MAX_OUTPUT_TOKENS_EXPAND: 800,
-  /**
-   * Maximum output tokens for inline insert operations.
-   * Should be enough for the target sentence plus a few words of insertion.
-   */
-  MAX_OUTPUT_TOKENS_INLINE_INSERT: 500,
-  /**
-   * Maximum word count for expand operations.
-   * Prevents bloated expansions - forces focused additions.
-   */
-  MAX_EXPAND_WORDS: 150,
+  MAX_OUTPUT_TOKENS_SMART_FIX: 4000,
   /**
    * Priority order for fix strategies when a section has multiple issues.
    * Higher priority strategies are applied first (leftmost = highest priority).
@@ -586,9 +570,8 @@ function validateConfiguration(): void {
   validateNonNegative(FIXER_CONFIG.MAX_SECTION_RETRIES, 'FIXER_CONFIG.MAX_SECTION_RETRIES');
   validateNonNegative(FIXER_CONFIG.MAX_FIXER_ITERATIONS, 'FIXER_CONFIG.MAX_FIXER_ITERATIONS');
   validateTemperature(FIXER_CONFIG.TEMPERATURE, 'FIXER_CONFIG.TEMPERATURE');
-  validatePositive(FIXER_CONFIG.MAX_DIRECT_EDITS_PER_ITERATION, 'FIXER_CONFIG.MAX_DIRECT_EDITS_PER_ITERATION');
-  validatePositive(FIXER_CONFIG.MAX_OUTPUT_TOKENS_DIRECT_EDIT, 'FIXER_CONFIG.MAX_OUTPUT_TOKENS_DIRECT_EDIT');
-  validatePositive(FIXER_CONFIG.MAX_OUTPUT_TOKENS_EXPAND, 'FIXER_CONFIG.MAX_OUTPUT_TOKENS_EXPAND');
+  validatePositive(FIXER_CONFIG.MAX_FIXES_PER_ITERATION, 'FIXER_CONFIG.MAX_FIXES_PER_ITERATION');
+  validatePositive(FIXER_CONFIG.MAX_OUTPUT_TOKENS_SMART_FIX, 'FIXER_CONFIG.MAX_OUTPUT_TOKENS_SMART_FIX');
 
   // Retry Config
   validatePositive(RETRY_CONFIG.MAX_RETRIES, 'RETRY_CONFIG.MAX_RETRIES');

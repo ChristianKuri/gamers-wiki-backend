@@ -436,6 +436,7 @@ export interface ValidationIssue {
  * - regenerate: Rewrite entire section with feedback
  * - add_section: Create new section for coverage gaps
  * - expand: Add ONE focused paragraph to existing section (preserves existing content)
+ * - batch: Multiple issues fixed in a single pass (internal, used when >1 issue per section)
  * - no_action: Minor issue that doesn't warrant a fix
  */
 export type FixStrategy =
@@ -444,6 +445,7 @@ export type FixStrategy =
   | 'regenerate'
   | 'add_section'
   | 'expand'
+  | 'batch'
   | 'no_action';
 
 /**
