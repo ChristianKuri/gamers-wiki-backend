@@ -316,10 +316,11 @@ export interface ReviewIssue {
   readonly suggestion?: string;
   /**
    * Recommended fix strategy for autonomous recovery.
+   * - inline_insert: Surgical insertion of words/clauses (e.g., "at Lookout Landing")
    * - direct_edit: Minor text replacement (clichés, typos)
    * - regenerate: Rewrite entire section
    * - add_section: Create new section for coverage gaps
-   * - expand: Add content to existing section
+   * - expand: Add ONE focused paragraph to existing section
    * - no_action: Minor issue, skip fixing
    */
   readonly fixStrategy: FixStrategy;
@@ -430,13 +431,15 @@ export interface ValidationIssue {
 /**
  * Available fix strategies for the autonomous Fixer.
  *
+ * - inline_insert: Surgical insertion of words/clauses into existing sentences (e.g., adding location context)
  * - direct_edit: Minor text replacement (clichés, typos, style fixes)
  * - regenerate: Rewrite entire section with feedback
  * - add_section: Create new section for coverage gaps
- * - expand: Add content to existing section (preserves existing content)
+ * - expand: Add ONE focused paragraph to existing section (preserves existing content)
  * - no_action: Minor issue that doesn't warrant a fix
  */
 export type FixStrategy =
+  | 'inline_insert'
   | 'direct_edit'
   | 'regenerate'
   | 'add_section'

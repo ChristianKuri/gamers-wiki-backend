@@ -98,6 +98,25 @@ const DirectEditOutputSchema = z.object({
   explanation: z.string().describe('Brief explanation of what was changed'),
 });
 
+/**
+ * Schema for inline insert output - more targeted than direct edit.
+ */
+const InlineInsertOutputSchema = z.object({
+  originalSentence: z.string().describe('The original sentence that was modified'),
+  modifiedSentence: z.string().describe('The sentence with the insertion applied'),
+  insertedText: z.string().describe('The exact text that was inserted'),
+  explanation: z.string().describe('Brief explanation of what was inserted and where'),
+});
+
+/**
+ * Schema for expand output - constrained to prevent bloat.
+ */
+const ExpandOutputSchema = z.object({
+  newParagraph: z.string().describe('The single new paragraph to add (max 150 words)'),
+  explanation: z.string().describe('Brief explanation of what was added'),
+  wordCount: z.number().describe('Word count of the new paragraph'),
+});
+
 // ============================================================================
 // Markdown Manipulation Helpers
 // ============================================================================
@@ -233,6 +252,146 @@ export function getSectionContent(markdown: string, headline: string): string | 
 // ============================================================================
 
 /**
+ * Applies an inline insertion to add words/clauses to existing sentences.
+ * This is the most surgical fix strategy - used for adding location context,
+ * names, or brief clarifications without restructuring.
+ *
+ * @param markdown - Current article markdown
+ * @param issue - The issue with fixInstruction specifying what to insert where
+ * @param deps - Dependencies
+ * @returns Fix result with updated markdown
+ */
+export async function applyInlineInsert(
+  markdown: string,
+  issue: ReviewIssue,
+  deps: FixerDeps
+): Promise<FixResult> {
+  const log = deps.logger ?? createPrefixedLogger('[Fixer]');
+  const temperature = deps.temperature ?? FIXER_CONFIG.TEMPERATURE;
+
+  if (!issue.fixInstruction) {
+    log.warn('Inline insert requested but no fixInstruction provided');
+    return {
+      markdown,
+      success: false,
+      tokenUsage: createEmptyTokenUsage(),
+      description: 'No fix instruction provided',
+    };
+  }
+
+  // Extract section content if location is specified
+  let targetText = markdown;
+  let isFullArticle = true;
+
+  if (issue.location && issue.location !== 'global') {
+    const sectionContent = getSectionContent(markdown, issue.location);
+    if (sectionContent) {
+      targetText = sectionContent;
+      isFullArticle = false;
+    }
+  }
+
+  log.debug(`Applying inline insert: ${issue.fixInstruction.slice(0, 100)}...`);
+
+  try {
+    const { object, usage } = await withRetry(
+      () =>
+        deps.generateObject({
+          model: deps.model,
+          schema: InlineInsertOutputSchema,
+          temperature,
+          maxOutputTokens: FIXER_CONFIG.MAX_OUTPUT_TOKENS_INLINE_INSERT,
+          system: `You are a surgical text editor specializing in MINIMAL insertions.
+
+Your task: Insert a few words or a short clause into an existing sentence WITHOUT rewriting it.
+
+CRITICAL RULES:
+1. Insert ONLY the minimum necessary words (typically 2-10 words)
+2. DO NOT add new sentences
+3. DO NOT add new paragraphs
+4. DO NOT restructure the sentence
+5. DO NOT add explanations or elaborations
+6. Preserve the original sentence structure exactly
+7. The insertion should feel natural in context
+
+EXAMPLES:
+❌ BAD: Rewrote entire sentence
+❌ BAD: Added a new sentence after
+❌ BAD: Changed sentence structure
+✅ GOOD: "meet Purah" → "meet Purah at Lookout Landing"
+✅ GOOD: "the fourth shrine" → "the fourth shrine (Nachoyah Shrine)"
+✅ GOOD: "grants you the ability" → "grants you the ability at the Temple of Time"`,
+          prompt: `Insert the specified content into the target sentence.
+
+INSERT INSTRUCTION: ${issue.fixInstruction}
+
+TEXT TO SEARCH:
+${targetText}
+
+Find the target sentence and insert the required words. Return the original sentence and the modified sentence.`,
+        }),
+      { context: `Inline insert: ${issue.message.slice(0, 50)}`, signal: deps.signal }
+    );
+
+    const tokenUsage: TokenUsage = usage
+      ? { input: usage.inputTokens ?? 0, output: usage.outputTokens ?? 0 }
+      : createEmptyTokenUsage();
+
+    // Validate the insertion is minimal (not a full rewrite)
+    const originalWords = object.originalSentence.split(/\s+/).length;
+    const modifiedWords = object.modifiedSentence.split(/\s+/).length;
+    const addedWords = modifiedWords - originalWords;
+
+    if (addedWords > 20) {
+      log.warn(
+        `Inline insert rejected: Too many words added (${addedWords}). ` +
+          `This suggests a rewrite rather than insertion.`
+      );
+      return {
+        markdown,
+        success: false,
+        tokenUsage,
+        description: 'Insert rejected - added too many words (use expand instead)',
+      };
+    }
+
+    // Apply the change by replacing the original sentence with the modified one
+    let resultMarkdown: string;
+    if (isFullArticle) {
+      resultMarkdown = markdown.replace(object.originalSentence, object.modifiedSentence);
+    } else {
+      const modifiedSection = targetText.replace(object.originalSentence, object.modifiedSentence);
+      const replaced = replaceSection(markdown, issue.location!, modifiedSection);
+      resultMarkdown = replaced ?? markdown;
+    }
+
+    // Verify something actually changed
+    const success = resultMarkdown !== markdown;
+
+    log.info(
+      success
+        ? `Inline insert applied: "${object.insertedText}" (+${addedWords} words)`
+        : 'Inline insert had no effect'
+    );
+
+    return {
+      markdown: resultMarkdown,
+      success,
+      tokenUsage,
+      description: object.explanation,
+    };
+  } catch (error) {
+    log.error(`Inline insert failed: ${error instanceof Error ? error.message : String(error)}`);
+    return {
+      markdown,
+      success: false,
+      tokenUsage: createEmptyTokenUsage(),
+      description: `Insert failed: ${error instanceof Error ? error.message : 'Unknown error'}`,
+    };
+  }
+}
+
+/**
  * Applies a direct edit to fix minor text issues.
  * Uses an LLM to intelligently apply the edit instruction.
  *
@@ -280,14 +439,24 @@ export async function applyDirectEdit(
           model: deps.model,
           schema: DirectEditOutputSchema,
           temperature,
-          maxOutputTokens: 4000, // Increased to support full-article edits for long drafts
-          system: `You are a precise text editor. Your task is to apply specific edits to text while preserving all other content exactly as-is.
+          maxOutputTokens: FIXER_CONFIG.MAX_OUTPUT_TOKENS_DIRECT_EDIT,
+          system: `You are a surgical text editor. Your task is to make MINIMAL changes to fix specific issues.
 
-Rules:
+CRITICAL RULES:
 1. Apply ONLY the requested edit - do not make other changes
 2. Preserve all formatting, structure, and whitespace
 3. If the edit cannot be applied (text not found), return the original text unchanged
-4. Be surgical - change as little as possible to accomplish the goal`,
+4. Be SURGICAL - change as little as possible to accomplish the goal
+5. DO NOT add new paragraphs unless explicitly requested
+6. DO NOT elaborate or expand - just fix the specific issue
+7. DO NOT introduce redundancy - if similar content exists elsewhere, don't repeat it
+
+This is for MINOR fixes only:
+- Replacing vague terms with specific names
+- Fixing typos or clichés
+- Correcting factual errors in existing text
+
+For adding new content, use 'expand' or 'inline_insert' instead.`,
           prompt: `Apply this edit to the text below:
 
 EDIT INSTRUCTION: ${issue.fixInstruction}
@@ -295,7 +464,7 @@ EDIT INSTRUCTION: ${issue.fixInstruction}
 ORIGINAL TEXT:
 ${targetText}
 
-Return the edited text with the change applied.`,
+Return the edited text with the MINIMAL change applied.`,
         }),
       { context: `Direct edit: ${issue.message.slice(0, 50)}`, signal: deps.signal }
     );
@@ -320,6 +489,20 @@ Return the edited text with the change applied.`,
         success: false,
         tokenUsage,
         description: 'Edit rejected due to suspected truncation',
+      };
+    }
+
+    // Safety check: Reject if too much content was added (should use expand instead)
+    if (editedLength > originalLength * 1.3 && editedLength - originalLength > 200) {
+      log.warn(
+        `Direct edit rejected: Too much content added. ` +
+          `(Original: ${originalLength} chars, Edited: ${editedLength} chars). Use 'expand' instead.`
+      );
+      return {
+        markdown,
+        success: false,
+        tokenUsage,
+        description: 'Edit rejected - too much content added (use expand instead)',
       };
     }
 
@@ -560,7 +743,46 @@ export async function addSection(
 }
 
 /**
- * Expands an existing section with additional content.
+ * Extracts key phrases from text for redundancy detection.
+ */
+function extractKeyPhrases(text: string): Set<string> {
+  // Extract significant phrases (3+ consecutive words)
+  const phrases = new Set<string>();
+  const words = text.toLowerCase().replace(/[^\w\s]/g, '').split(/\s+/);
+  
+  for (let i = 0; i < words.length - 2; i++) {
+    const phrase = words.slice(i, i + 3).join(' ');
+    if (phrase.length > 10) { // Ignore very short phrases
+      phrases.add(phrase);
+    }
+  }
+  
+  return phrases;
+}
+
+/**
+ * Checks if new content is too similar to existing content.
+ * Returns true if redundancy is detected.
+ */
+function detectRedundancy(existingContent: string, newContent: string): boolean {
+  const existingPhrases = extractKeyPhrases(existingContent);
+  const newPhrases = extractKeyPhrases(newContent);
+  
+  let matchCount = 0;
+  for (const phrase of newPhrases) {
+    if (existingPhrases.has(phrase)) {
+      matchCount++;
+    }
+  }
+  
+  // If more than 30% of new phrases already exist, it's redundant
+  const redundancyRatio = newPhrases.size > 0 ? matchCount / newPhrases.size : 0;
+  return redundancyRatio > 0.3;
+}
+
+/**
+ * Expands an existing section with ONE focused paragraph.
+ * Constrained to prevent bloat and redundancy.
  *
  * @param markdown - Current article markdown
  * @param issue - The issue describing what needs expansion
@@ -607,25 +829,37 @@ export async function expandSection(
     (s) => s.headline.toLowerCase() === issue.location!.toLowerCase()
   );
 
+  // Get other sections for redundancy awareness
+  const otherSections = parseMarkdownH2Sections(markdown)
+    .filter((s) => s.heading.toLowerCase() !== issue.location!.toLowerCase() && !isSourcesSectionHeading(s.heading))
+    .map((s) => s.content)
+    .join('\n');
+
   try {
-    const { text, usage } = await withRetry(
+    const { object, usage } = await withRetry(
       () =>
-        deps.generateText({
+        deps.generateObject({
           model: deps.model,
+          schema: ExpandOutputSchema,
           temperature,
           maxOutputTokens: FIXER_CONFIG.MAX_OUTPUT_TOKENS_EXPAND,
-          system: `You are a gaming content specialist expanding an article section.
+          system: `You are a gaming content specialist adding ONE focused paragraph to an article section.
 
-Your task is to ADD 1-2 paragraphs of new content to an existing section.
+CRITICAL CONSTRAINTS:
+1. Write ONLY ONE paragraph (3-5 sentences max)
+2. Maximum ${FIXER_CONFIG.MAX_EXPAND_WORDS} words
+3. Address ONLY the specific expansion request
+4. DO NOT repeat information from the existing content
+5. DO NOT repeat information from other sections (provided below)
+6. DO NOT add generic filler or padding
+7. Every sentence must add NEW, SPECIFIC information
 
-Rules:
-1. Preserve ALL existing content exactly as-is
-2. Add new paragraphs AFTER the existing content
-3. Maintain the same tone, style, and formatting
-4. Focus on the specific expansion requested
-5. Do not repeat information already covered
-6. Output ONLY the expanded section content (no headings)`,
-          prompt: `Expand this section with more detail:
+REDUNDANCY CHECK:
+Before writing, scan the existing content. If the requested information is ALREADY covered (even partially), write a minimal clarification instead of a full paragraph.
+
+FORMAT:
+Return ONLY the new paragraph text - do not include the existing content.`,
+          prompt: `Add ONE focused paragraph to this section.
 
 GAME: ${ctx.gameContext.gameName}
 SECTION: ${issue.location}
@@ -633,10 +867,13 @@ ${sectionPlan ? `SECTION GOAL: ${sectionPlan.goal}` : ''}
 
 EXPANSION REQUEST: ${expansionInstruction}
 
-EXISTING CONTENT:
+=== EXISTING SECTION CONTENT (DO NOT REPEAT) ===
 ${existingContent}
 
-Write the expanded section with the original content followed by 1-2 new paragraphs addressing the expansion request.`,
+=== OTHER SECTIONS (DO NOT REPEAT) ===
+${otherSections.slice(0, 2000)}
+
+Write ONE paragraph (max ${FIXER_CONFIG.MAX_EXPAND_WORDS} words) that addresses the expansion request with NEW information only.`,
         }),
       { context: `Expand section "${issue.location}"`, signal: deps.signal }
     );
@@ -645,8 +882,35 @@ Write the expanded section with the original content followed by 1-2 new paragra
       ? { input: usage.inputTokens ?? 0, output: usage.outputTokens ?? 0 }
       : createEmptyTokenUsage();
 
+    // Validate word count
+    if (object.wordCount > FIXER_CONFIG.MAX_EXPAND_WORDS * 1.5) {
+      log.warn(
+        `Expansion rejected: Too many words (${object.wordCount} > ${FIXER_CONFIG.MAX_EXPAND_WORDS})`
+      );
+      return {
+        markdown,
+        success: false,
+        tokenUsage,
+        description: `Expansion rejected - exceeded word limit (${object.wordCount} words)`,
+      };
+    }
+
+    // Check for redundancy
+    if (detectRedundancy(existingContent + '\n' + otherSections, object.newParagraph)) {
+      log.warn('Expansion rejected: New content is too similar to existing content');
+      return {
+        markdown,
+        success: false,
+        tokenUsage,
+        description: 'Expansion rejected - redundant with existing content',
+      };
+    }
+
+    // Append the new paragraph to the existing content
+    const expandedContent = existingContent.trim() + '\n\n' + object.newParagraph.trim();
+
     // Replace the section with expanded content
-    const newMarkdown = replaceSection(markdown, issue.location, text.trim());
+    const newMarkdown = replaceSection(markdown, issue.location, expandedContent);
 
     if (!newMarkdown) {
       log.error(`Failed to replace section "${issue.location}" after expansion`);
@@ -660,10 +924,11 @@ Write the expanded section with the original content followed by 1-2 new paragra
 
     // Verify content actually increased
     const success = newMarkdown.length > markdown.length;
+    const addedChars = newMarkdown.length - markdown.length;
 
     log.info(
       success
-        ? `Section "${issue.location}" expanded (+${newMarkdown.length - markdown.length} chars)`
+        ? `Section "${issue.location}" expanded (+${addedChars} chars, ${object.wordCount} words)`
         : 'Expansion did not add content'
     );
 
@@ -671,7 +936,7 @@ Write the expanded section with the original content followed by 1-2 new paragra
       markdown: newMarkdown,
       success,
       tokenUsage,
-      description: `Expanded section "${issue.location}"`,
+      description: `Expanded section "${issue.location}" with ${object.wordCount} words: ${object.explanation}`,
     };
   } catch (error) {
     log.error(
@@ -745,6 +1010,9 @@ async function applyFix(
   const log = deps.logger ?? createPrefixedLogger('[Fixer]');
 
   switch (issue.fixStrategy) {
+    case 'inline_insert':
+      return applyInlineInsert(markdown, issue, deps);
+
     case 'direct_edit':
       return applyDirectEdit(markdown, issue, deps);
 

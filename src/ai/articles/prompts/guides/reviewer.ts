@@ -44,8 +44,37 @@ OUTPUT FORMAT:
 Return JSON with 'approved' status and 'issues'.
 For every issue, you MUST provide:
 - location: MUST match an EXACT headline from the PLAN or be "global".
-- fixStrategy: Choose the best recovery method.
-- fixInstruction: CLEAR step-by-step for the Fixer.`;
+- fixStrategy: Choose the MOST SURGICAL recovery method (see below).
+- fixInstruction: PRECISE instruction for the Fixer (see examples below).
+
+=== FIX STRATEGY SELECTION (CRITICAL) ===
+
+Choose the MINIMUM intervention needed:
+
+1. inline_insert (PREFERRED for missing context):
+   - Use when: Adding a few words to an existing sentence (location, name, clarification)
+   - fixInstruction format: "In the sentence '[exact sentence]', insert '[text to insert]' after '[anchor word/phrase]'"
+   - Example: "In the sentence 'meet Purah who directs you', insert 'at Lookout Landing' after 'meet Purah'"
+
+2. direct_edit (for replacements):
+   - Use when: Replacing vague text with specific text (no new content)
+   - fixInstruction format: "Replace '[exact text to find]' with '[replacement text]'"
+   - Example: "Replace 'the fourth shrine' with 'Nachoyah Shrine'"
+
+3. expand (LAST RESORT for missing information):
+   - Use when: Information is completely missing and needs a new paragraph
+   - fixInstruction format: "Add ONE paragraph explaining [specific topic]. Must include: [required details]. Do not repeat [existing coverage]."
+   - WARNING: Only use if inline_insert cannot solve the problem
+
+4. regenerate (rare):
+   - Use when: Section is fundamentally broken/wrong
+   - Almost never needed for location/naming issues
+
+AVOID THESE MISTAKES:
+❌ Using 'expand' when 'inline_insert' would work
+❌ Vague fixInstruction like "add location context"
+❌ Not quoting the exact sentence to modify
+❌ Using 'expand' for issues that just need a few words added`;
   },
 
   getUserPrompt(ctx: ReviewerPromptContext): string {
@@ -136,10 +165,35 @@ CRITICAL: For the 'location' field in your JSON output, you MUST use one of the 
 If an issue spans multiple sections or the whole article, use "global".
 DO NOT invent location names or combine headlines.
 
-Decide fixStrategy:
-- direct_edit: For vague names, missing locations in same sentence, typos, or minor factual errors
-- expand: For missing details/explanations within a section (e.g., adding spatial context)
-- regenerate: For sections that are fundamentally broken or outdated
+=== FIX STRATEGY DECISION TREE ===
+
+ASK: "Can this be fixed by adding 2-10 words to an existing sentence?"
+  → YES: Use inline_insert with EXACT sentence quote
+  → NO: Continue...
+
+ASK: "Can this be fixed by replacing text (no additions)?"
+  → YES: Use direct_edit with find/replace
+  → NO: Continue...
+
+ASK: "Is information completely missing (not just unclear)?"
+  → YES: Use expand (ONE paragraph max)
+  → NO: Use no_action (issue is minor)
+
+=== FIXINSTRUCTION EXAMPLES ===
+
+GOOD inline_insert:
+"In the sentence 'Here, you must find Purah who provides crucial information', insert 'at Lookout Landing in North Hyrule Field' after 'find Purah'"
+
+GOOD direct_edit:
+"Replace 'the hidden fourth shrine' with 'Nachoyah Shrine (located in the Room of Awakening)'"
+
+GOOD expand:
+"Add ONE paragraph (max 100 words) specifying the exact location of the Archaic Warm Greaves relative to Gutanbac Shrine exit. Must include: direction from shrine, landmark (hollowed tree), how to reach it. Do not repeat existing content about cold resistance."
+
+BAD (too vague):
+"Add more location details" ← What sentence? What details?
+"Fix the Purah introduction" ← How exactly?
+"Make the location explicit" ← Which location? Where to add it?
 
 Return JSON`;
   }

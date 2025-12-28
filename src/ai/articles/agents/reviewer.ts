@@ -109,7 +109,7 @@ export interface ReviewerDeps {
  * All valid fix strategy values as a const array.
  * Used to create the Zod enum for AI SDK schema.
  */
-const FIX_STRATEGY_VALUES = ['direct_edit', 'regenerate', 'add_section', 'expand', 'no_action'] as const;
+const FIX_STRATEGY_VALUES = ['inline_insert', 'direct_edit', 'regenerate', 'add_section', 'expand', 'no_action'] as const;
 
 /**
  * Schema for review issues.

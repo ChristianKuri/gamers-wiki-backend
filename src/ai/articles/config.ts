@@ -337,7 +337,7 @@ export const FIXER_CONFIG = {
    * Maximum number of Fixer iterations (Reviewer → Fix → Reviewer cycles).
    * Each iteration can apply multiple fixes, then re-reviews.
    */
-  MAX_FIXER_ITERATIONS: 0, // TEMP: Disabled for debugging
+  MAX_FIXER_ITERATIONS: 3, // TEMP: Disabled for debugging
   /**
    * Temperature for Fixer LLM calls (direct edit, expand).
    * Moderate value to balance accuracy with stylistic flexibility.
@@ -355,18 +355,29 @@ export const FIXER_CONFIG = {
   MAX_OUTPUT_TOKENS_DIRECT_EDIT: 1000,
   /**
    * Maximum output tokens for expand operations.
-   * Should be enough for 2-3 paragraphs of new content.
+   * Limited to encourage focused, single-paragraph expansions.
    */
-  MAX_OUTPUT_TOKENS_EXPAND: 1500,
+  MAX_OUTPUT_TOKENS_EXPAND: 800,
+  /**
+   * Maximum output tokens for inline insert operations.
+   * Should be enough for the target sentence plus a few words of insertion.
+   */
+  MAX_OUTPUT_TOKENS_INLINE_INSERT: 500,
+  /**
+   * Maximum word count for expand operations.
+   * Prevents bloated expansions - forces focused additions.
+   */
+  MAX_EXPAND_WORDS: 150,
   /**
    * Priority order for fix strategies when a section has multiple issues.
    * Higher priority strategies are applied first (leftmost = highest priority).
    * - regenerate: Complete rewrite fixes multiple issues at once
    * - add_section: Coverage gaps need new content
-   * - expand: Thin sections need more depth
-   * - direct_edit: Minor fixes last (may be obviated by other fixes)
+   * - inline_insert: Surgical insertions (most precise, low risk)
+   * - direct_edit: Minor fixes (low risk)
+   * - expand: Thin sections need more depth (higher risk of bloat)
    */
-  STRATEGY_PRIORITY: ['regenerate', 'add_section', 'expand', 'direct_edit'] as const,
+  STRATEGY_PRIORITY: ['regenerate', 'add_section', 'inline_insert', 'direct_edit', 'expand'] as const,
 } as const;
 
 // ============================================================================
