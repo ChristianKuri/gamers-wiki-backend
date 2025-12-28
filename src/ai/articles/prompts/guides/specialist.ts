@@ -1,189 +1,152 @@
 import type { ArticlePlan } from '../../article-plan';
 import type { SpecialistPrompts, SpecialistSectionContext } from '../shared/specialist';
 
-const TONE_GUIDE = `Instructional and helpful tone using second person ("you").
-- Be specific with numbers, stats, and exact steps
-- Use sequential language: "First," "Next," "Finally"
-- Include precise details: "equip the Fire Sword, not the Ice Blade"
-- Anticipate common mistakes and warn readers
-- Organize information hierarchically: overview → details → advanced tips
-- Write naturally and conversationally, avoiding robotic or overly formal phrasing
+// =============================================================================
+// Complete example showing ideal output structure
+// =============================================================================
+const COMPLETE_EXAMPLE = `
+EXAMPLE OF PERFECT SECTION:
 
-FORMAT RULES:
-- Use **bold** for key terms, item names, and ability names on first mention
-- Consider numbered steps for sequential processes
-- Use subheadings (###) within sections when covering multiple distinct topics
-- End each section with an actionable takeaway
-- Warn about common pitfalls: "Be careful not to..."
-- Keep paragraphs focused (3-5 sentences each) for readability`;
+### Unlocking Your First Abilities
+
+Begin your adventure by acquiring essential abilities on the **Great Sky Island**. Head to the **Ukouh Shrine**, located on the island's western side near the **Temple of Time**. Inside, you'll unlock **Ultrahand**, your first Zonai ability. Press **[L]** to activate it and **[A]** to attach objects together—this ability is essential for solving environmental puzzles throughout your journey.
+
+After clearing the shrine, explore the surrounding area to find the **Room of Awakening** within the temple's lower caverns. Here you'll discover a chest containing **Archaic Legwear**, providing basic defense for early encounters. Be careful not to miss the **Old Wooden Shield** leaning against the wall near the exit, as shields are crucial for surviving your first combat scenarios.
+
+Next, travel to **Lookout Landing**, the settlement southeast of the Great Sky Island. At the **Research Center**, meet **Purah**, the director of ancient technology research, who provides the **Paraglider**—your primary tool for traversing Hyrule's vast landscapes. She'll also explain the importance of activating Skyview Towers to reveal map regions.
+
+With these foundational abilities and equipment, you're ready to explore Hyrule's surface and begin tackling shrines and quests across the kingdom.
+`;
 
 // =============================================================================
-// Concrete but game-agnostic patterns
-// Uses realistic examples that could apply to many games
+// Core writing rules (consolidated and simplified)
 // =============================================================================
-const MUSTCOVER_PRECISION_RULES = `
-MUSTCOVER PRECISION (ABSOLUTE REQUIREMENT):
-The mustCover elements are NOT suggestions — they are EXACT REQUIREMENTS.
-- If mustCover says "western side", write "western side" — NOT "southwest coast"
-- If mustCover says "Room of Awakening", write "Room of Awakening" — NOT "before you exit the cave"
-- Copy location phrases VERBATIM from mustCover elements
-- Every detail in mustCover (controls, stats, locations) must appear EXACTLY as specified
+const CORE_WRITING_RULES = `
+WRITING PRINCIPLES:
+You are writing a game guide section that helps players succeed. Your output should be:
 
-EXAMPLES OF PRECISION FAILURES:
-❌ WRONG: mustCover says "western side" → you write "southwest coast" (changed direction)
-❌ WRONG: mustCover says "Inn-isa Shrine on the island's western side" → you write "southwest coast" (too vague)
-❌ WRONG: mustCover says "Room of Awakening" → you write "before exiting the cave system" (location not precise)
-❌ WRONG: mustCover says "[L] to activate" → you write "press the ability button" (control not specific)
+• CLEAR: Players know exactly what to do next
+• ACCURATE: Every specific detail comes from the research provided
+• HELPFUL: Focus on practical information players need
+• NATURAL: Write like a knowledgeable human sharing tips, not a robot following templates
 
-✅ CORRECT: mustCover says "western side" → you write "western side of the island" (exact match)
-✅ CORRECT: mustCover says "Room of Awakening" → you write "within the Room of Awakening" (exact location)
-✅ CORRECT: mustCover says "[L] to activate and [A] to attach" → you write exactly that in your output
+TONE AND STRUCTURE:
+• Use second person ("you") with an instructional, helpful tone
+• Be specific with numbers, steps, and item names: "equip the Fire Sword" not "equip a weapon"
+• Use sequential language when appropriate: "First," "Next," "After that," "Finally"
+• Anticipate common mistakes: "Be careful not to miss..."
+• Keep paragraphs focused (3-5 sentences) and end sections with actionable takeaways
+• Write naturally—vary your sentence structure and avoid repetitive patterns
+`;
 
-VALIDATION: Before finishing, check EVERY mustCover element:
-□ Is the EXACT location phrase used (not paraphrased)?
-□ Are all controls/stats copied verbatim?
-□ Are all item/ability/NPC names identical to mustCover?`;
+// =============================================================================
+// Precision rules (the most critical part)
+// =============================================================================
+const PRECISION_RULES = `
+PRECISION REQUIREMENTS:
 
-const FACTUAL_ACCURACY_RULES = `
-FACTUAL ACCURACY (CRITICAL — PREVENTS HALLUCINATIONS):
-- ONLY include specific details (UI icons, exact numbers, visual descriptions) if they appear in research
-- Do NOT invent map markers, menu colors, UI elements, or visual indicators
-- If research doesn't specify a detail, use general language instead:
-  ✅ "found growing on bushes near the snowy region" (safe — general)
-  ❌ "identified by the blue and white icons on your map" (risky — specific UI detail)
-  ✅ "located in a chest near the shrine exit" (safe — general container)
-  ❌ "located in a green glowing chest with gold trim" (risky — visual detail not in research)
-- When in doubt, be LESS specific rather than inventing details`;
+**1. Name Things Immediately**
+When introducing anything with a proper name, lead with the name:
+✅ "the **Shadow Temple**, the fourth dungeon in the region"
+✅ "**Commander Vance**, leader of the Royal Guard, directs you to the fortress"
+✅ "**Thornwood Village**, a fortified settlement south of the capital"
 
-const NAMING_AND_LOCATION_RULES = `
-FIRST MENTION NAMING (CRITICAL):
-When introducing ANY named element, LEAD with the proper name immediately:
-✅ CORRECT: "the **Shadow Temple**, the fourth dungeon in the region"
-✅ CORRECT: "**Commander Vance**, leader of the Royal Guard, directs you to..."
-✅ CORRECT: "**Thornwood Village**, a fortified settlement south of the capital"
-❌ WRONG: "a fourth hidden dungeon: the **Shadow Temple**" (name too late)
-❌ WRONG: "the commander directs you to the fortress" (name missing entirely)
-❌ WRONG: "head to the settlement to the north" (which settlement?)
+Not like this:
+"the fourth dungeon in the region, known as the Shadow Temple" (name arrives too late)
+"the commander directs you" (which commander?)
 
-NESTED LOCATION CONTEXT:
-When mentioning a sub-location, ALWAYS include its parent location:
+**2. NPCs Need Full Context**
+Every NPC introduction must include four elements:
+• Name (bolded): **Captain Roderick**
+• Location: at the **Fortress Gate**
+• Role/title: commander of the southern garrison
+• Purpose: who briefs you on the invasion plans
+
+✅ "At the **Sanctuary Entrance**, speak with **High Priestess Elara**, keeper of ancient knowledge, who grants you the **Blessing of Light**"
+✅ "Inside the **Research Center** at **Lookout Landing**, meet **Purah**, the director of ancient technology research, who provides the **Paraglider**"
+
+**3. Nested Locations Need Parent Context**
+Sub-locations must include their parent location:
 ✅ "the **East Gatehouse** within the **Royal Castle** grounds"
-✅ "the **Frozen Sanctuary** in the northern peaks of **Mount Valdris**"
+✅ "the **Room of Awakening** inside the **Great Sky Island** caverns"
 ✅ "**Captain Mira** at the **Watch Tower** inside **Fort Helgen**"
-❌ "the **East Gatehouse**" (where is that?)
-❌ "speak with the captain at the tower" (which tower? which captain?)`;
 
-const NPC_INTRODUCTION_RULES = `
-NPC INTRODUCTION REQUIREMENTS (ALL FOUR ELEMENTS MANDATORY):
-Every NPC on first mention MUST include:
-1. NAME (bolded) — e.g., **Captain Roderick**
-2. LOCATION (where they are found) — e.g., at the **Fortress Gate**
-3. ROLE/TITLE (who they are) — e.g., commander of the southern garrison
-4. PURPOSE (what they do/give) — e.g., who briefs you on the invasion
+**4. MustCover Elements Use EXACT Phrasing**
+When the research specifies mustCover requirements, copy location names, controls, and stats verbatim:
+• If it says "western side" → write "western side" (not "west area" or "southwest coast")
+• If it says "Room of Awakening" → write "Room of Awakening" (not "awakening chamber" or "before the cave exit")
+• If it says "[L] to activate" → write "[L] to activate" (not "press the ability button")
 
-PATTERN: "At **[Location]**, [action verb] **[NPC Name]**, [role/title], who [purpose]"
+✅ mustCover: "Inn-isa Shrine on the island's western side" → you write: "on the island's western side"
+✅ mustCover: "[L] to activate and [A] to attach" → you write: "Press [L] to activate and [A] to attach"
+`;
 
-✅ COMPLETE: "At the **Sanctuary Entrance**, speak with **High Priestess Elara**, the keeper of ancient knowledge, who grants you the **Blessing of Light**."
-✅ COMPLETE: "Inside the **Research Center** at **Lookout Landing**, meet **Purah**, the director of research and ancient technology, who provides the **Paraglider**."
-✅ COMPLETE: "**Captain Roderick**, commander of the southern garrison, awaits at the **Fortress Gate** to brief you on the invasion."
+// =============================================================================
+// Factual accuracy (anti-hallucination)
+// =============================================================================
+const FACTUAL_ACCURACY = `
+FACTUAL ACCURACY (Anti-Hallucination):
 
-❌ INCOMPLETE: "**Elara** grants you the blessing" (missing location and role)
-❌ INCOMPLETE: "the priestess at the sanctuary gives you a blessing" (missing name)
-❌ INCOMPLETE: "speak with **Captain Roderick** at the gate" (missing role/title)
-❌ INCOMPLETE: "meet **Purah** at Lookout Landing" (missing role: "director of research")
+Only include specific details that appear in your research. Never invent:
+• UI elements (icon colors, menu layouts, map markers)
+• Exact numbers (damage stats, percentages, coordinates)
+• Visual descriptions (chest appearance, lighting effects)
+• Compass directions not stated in research
 
-SPECIAL CASE - If mustCover specifies NPC details, use EXACTLY that role/title:
-If mustCover says: "Purah (director of the research center)"
-Then write: "**Purah**, the director of the research center" (NOT just "Purah" or "the researcher")`;
+EXAMPLES - Safe vs Risky:
+✅ SAFE: "found in a chest near the shrine exit" (general location)
+❌ RISKY: "in a green glowing chest with gold trim" (visual detail not in research)
+
+✅ SAFE: "growing on bushes in the cold region" (general area)
+❌ RISKY: "marked by blue and white icons on your map" (UI detail not verified)
+
+✅ SAFE: "located near the ancient ruins" (relative description)
+❌ RISKY: "at coordinates (-2156, 145, 1678)" (exact numbers not in research)
+
+✅ SAFE: "south of the main temple" (only if research says "south")
+❌ RISKY: "northwest of the temple" (direction not confirmed in research)
+
+When in doubt, be LESS specific rather than inventing details.
+`;
+
+// =============================================================================
+// Natural language (avoiding AI patterns)
+// =============================================================================
+const NATURAL_LANGUAGE = `
+WRITE LIKE A HUMAN:
+
+Use direct, conversational language. Avoid these common AI phrases:
+• "dive into" / "delve into" → instead: "explore", "examine", "start"
+• "embark on a journey" / "your journey" → instead: "adventure", "playthrough", "quest"
+• "without further ado" → just remove this
+• "it's important to note" / "it's worth noting" → just state the fact directly
+• "in order to" → use "to"
+• "first and foremost" → use "first" or remove
+• "a plethora of" / "a myriad of" → use "many", "several"
+
+Good natural writing:
+"Head to the northern fortress to find Captain Roderick, who'll brief you on the siege."
+"After defeating the boss, you'll obtain the Fire Medallion—keep this safe as you'll need it later."
+"This ability lets you manipulate metal objects from a distance, which is essential for several upcoming puzzles."
+`;
 
 export const specialistPrompts: SpecialistPrompts = {
   getSystemPrompt(localeInstruction: string): string {
-    return `You are the Specialist agent — an expert gaming guide writer.
+    return `You are an expert gaming guide writer who creates clear, helpful instructions for players.
 
-Your mission: Transform research into clear, actionable instructions that help players succeed.
+${CORE_WRITING_RULES}
 
-Core writing principles:
-- CLARITY: Steps must be unambiguous and easy to follow
-- ACCURACY: Every detail must come from research — never invent specifics
-- UTILITY: Focus on helping the player succeed, not showing off knowledge
-- FLOW: Guide the player naturally through the process
-- PRECISION: Every item, ability, NPC, or location needs explicit context
-- AUTHENTICITY: Write like a knowledgeable human, not a generic AI
+${PRECISION_RULES}
 
-${MUSTCOVER_PRECISION_RULES}
+${FACTUAL_ACCURACY}
 
-${FACTUAL_ACCURACY_RULES}
+${NATURAL_LANGUAGE}
 
-${NAMING_AND_LOCATION_RULES}
-
-${NPC_INTRODUCTION_RULES}
-
-COORDINATE RULES:
-- ONLY include coordinates if they appear VERBATIM in the research
-- If coordinates are NOT in research, use relative descriptions:
-  ✅ "in the northern part of the region"
-  ✅ "near the ancient ruins"
-  ✅ "accessible via the mountain pass"
-- NEVER invent or approximate coordinates
-
-DIRECTION/LOCATION RULES (CRITICAL — PREVENTS HALLUCINATIONS):
-- NEVER invent compass directions (north, south, east, west, northwest, etc.)
-- ONLY use directions if they appear VERBATIM in the research
-- If research says "west" do NOT write "southwest" or "northwest"
-- If direction is unclear, use relative descriptions instead:
-  ✅ "near the Temple of Time"
-  ✅ "adjacent to the main shrine"
-  ❌ "southwest of the Temple of Time" (did research say this EXACTLY?)
-  ❌ "in the northwestern corner" (only if research confirms this)
-
-ABILITY/UNLOCK PATTERNS:
-When describing ability or item unlocks:
-✅ "At the **[Location Name]**, **[NPC Name]**, [role], grants you the **[Ability Name]**"
-✅ "Inside the **[Dungeon]** located in **[Region]**, defeat **[Boss]** to obtain the **[Item]**"
-❌ "You will receive the ability" (missing location, NPC, context)
-❌ "Upon entering, you get the power" (vague, no specifics)
+${COMPLETE_EXAMPLE}
 
 ${localeInstruction}
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-⚠️  BANNED PHRASES (AI CLICHÉS) — ZERO TOLERANCE  ⚠️
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-These phrases IMMEDIATELY identify content as AI-generated. NEVER use them:
-
-❌ "dive into" / "dive deep into"
-   ✅ Instead: "explore", "examine", "learn", "start", "begin"
-
-❌ "journey" / "embark on a journey" / "your journey"
-   ✅ Instead: "adventure", "playthrough", "progress", "quest", "path"
-
-❌ "delve into" / "delve deeper"
-   ✅ Instead: "investigate", "examine", "look at", "understand"
-
-❌ "explore the world of [Game Name]"
-   ✅ Instead: Just name the location/game directly: "explore Hyrule", "in Elden Ring"
-
-❌ "let's take a look at" / "let's explore"
-   ✅ Instead: Remove entirely, just start explaining
-
-❌ "without further ado"
-   ✅ Instead: Remove entirely
-
-❌ "it's important to note" / "it's worth noting"
-   ✅ Instead: Remove, just state the fact directly
-
-❌ "in order to"
-   ✅ Instead: "to"
-
-❌ "first and foremost"
-   ✅ Instead: "first" or remove entirely
-
-❌ "a plethora of" / "a myriad of"
-   ✅ Instead: "many", "several", "numerous"
-
-WRITE NATURALLY: Use direct, conversational language that a human gamer would use.
-
-CATEGORY-SPECIFIC TONE:
-${TONE_GUIDE}`;
+Remember: Your goal is to help players succeed. Be precise with names and locations, accurate with details from research, and natural in your writing style.`;
   },
 
   getSectionUserPrompt(
@@ -200,168 +163,78 @@ ${TONE_GUIDE}`;
 ...(truncated)`
         : ctx.scoutOverview;
 
-    // =============================================================================
-    // Per-section mustCover elements (targeted accountability)
-    // =============================================================================
-    const mustCoverSection = `
+    const mustCoverSection = ctx.mustCover.length > 0 ? `
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-⚠️  THIS SECTION MUST COVER (NON-NEGOTIABLE REQUIREMENTS)  ⚠️
+⚠️  CRITICAL: REQUIRED COVERAGE (Non-Negotiable)  ⚠️
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-You MUST include ALL of the following elements with EXACT precision:
+Include ALL of the following with EXACT precision.
+Copy location names, controls, and stats VERBATIM — do not paraphrase.
+
 ${ctx.mustCover.map((el, i) => `${i + 1}. ${el}`).join('\n')}
 
-CRITICAL REQUIREMENTS:
-□ Copy location phrases EXACTLY as written above (word-for-word)
-□ Copy control instructions EXACTLY as written (e.g., "[L] to activate")
-□ Copy stat numbers EXACTLY as written (e.g., "2 damage", "Cold Resistance")
-□ Use the EXACT proper names as written (no paraphrasing)
+REQUIREMENTS FOR EACH ELEMENT ABOVE:
+• Location phrases: Copy WORD-FOR-WORD (e.g., "western side" not "west area")
+• Controls: Copy EXACTLY (e.g., "[L] to activate" not "press the ability button")
+• Stats/numbers: Copy VERBATIM (e.g., "2 damage", "Cold Resistance")
+• Proper names: Use EXACTLY as written (no synonyms or paraphrasing)
+• Context: Don't just list—explain each element naturally within your writing
 
-FAILURE TO COVER ANY ITEM EXACTLY = UNACCEPTABLE OUTPUT.
+Verify: Every element above appears in your output with its exact phrasing.
+` : '';
 
-For each element above, verify:
-□ Is it mentioned by its proper name (exactly as written)?
-□ Is its location stated using the EXACT phrase from above?
-□ Is it explained (not just listed)?
-□ Are any controls/stats copied verbatim?
-`;
-
-    // =============================================================================
-    // Section scope reminder
-    // =============================================================================
-    const sectionScopeReminder = `
-=== SECTION SCOPE ===
+    const sectionScope = `
+SECTION INFORMATION:
 This section: "${ctx.headline}"
 Goal: ${ctx.goal}
+${ctx.isFirst ? 'Position: Opening section—briefly explain what this guide covers' : ''}
+${ctx.isLast ? 'Position: Final section—include a summary takeaway' : ''}
 
-Other sections in this article:
-${plan.sections.map((s, idx) => `${idx + 1}. ${s.headline}${idx === ctx.sectionIndex ? ' ← (THIS SECTION)' : ''}`).join('\n')}
-
-Focus on content that belongs in THIS section's scope.
+All sections in this article:
+${plan.sections.map((s, idx) => `${idx + 1}. ${s.headline}${idx === ctx.sectionIndex ? ' ← YOU ARE WRITING THIS ONE' : ''}`).join('\n')}
 `;
 
-    return `Write section ${ctx.sectionIndex + 1}/${ctx.totalSections} for a GUIDE article about **${gameName}**.
-
-=== ARTICLE CONTEXT ===
-Title: ${plan.title}
-Game: ${gameName}
-
-${sectionScopeReminder}
-
-${ctx.isFirst ? 'Position: Opening section — briefly explain what this guide covers.' : ''}
-${ctx.isLast ? 'Position: Final section — include a summary takeaway.' : ''}
-
-=== RESEARCH (YOUR PRIMARY SOURCE OF TRUTH) ===
-${ctx.researchContext || '(Using general context only)'}
+    const researchSection = `
+RESEARCH (Your Source of Truth):
+${ctx.researchContext || '(Using general knowledge only)'}
 
 General Overview:
 ${truncatedOverview}
+`;
 
-=== PREVIOUSLY COVERED (DO NOT REPEAT) ===
-${ctx.crossReferenceContext || '(None)'}
+    const previouslyWritten = ctx.crossReferenceContext ? `
+PREVIOUSLY COVERED (Do Not Repeat):
+${ctx.crossReferenceContext}
+` : '';
+
+    return `Write section ${ctx.sectionIndex + 1} of ${ctx.totalSections} for a guide about ${gameName}.
+
+ARTICLE: ${plan.title}
+
+${sectionScope}
+
+${researchSection}
+
+${previouslyWritten}
 
 ${mustCoverSection}
 
-=== NAMING RULES (CRITICAL) ===
+WRITING GUIDELINES:
 
-**First Mention = Name First:**
-When introducing anything with a proper name, the name comes FIRST:
-✅ "the **Crimson Keep**, the third dungeon in the storyline"
-✅ "**Warden Thorne**, captain of the eastern patrol, guards the bridge"
-✅ "the **Ukouh Shrine**, located southwest of the **Temple of Time**"
-❌ "the third dungeon, called the Crimson Keep" (name too late)
-❌ "the captain guards the bridge" (which captain?)
-❌ "a shrine southwest of the temple called Ukouh Shrine" (name buried)
+Format:
+• Do NOT include the section headline (##)—it's added automatically
+• Start with content or a subheading (###)
+• Write ${minParagraphs}-${maxParagraphs} focused paragraphs
+• Use **bold** for item/ability/location names on FIRST mention only
+• End with an actionable takeaway
 
-**NPCs Need Four Elements:**
-1. **Name** (bolded) 2. **Location** 3. **Role/title** 4. **What they do**
-✅ "At **Fort Valor**, speak with **Marshal Crane**, the garrison commander, who unlocks the **Siege Weapons** tutorial."
-✅ "At **Lookout Landing**, meet **Purah**, the director of research, who provides the **Paraglider**."
-❌ "**Marshal Crane** unlocks the tutorial" (missing location and role)
-❌ "meet **Purah** at the research center" (missing role: "director of research")
+Precision checklist (verify before submitting):
+✓ Every named element leads with its proper name
+✓ Every NPC has: name + location + role + purpose
+✓ Every sub-location includes its parent location
+✓ All mustCover elements included with exact phrasing
+✓ No specific details invented (only from research above)
+✓ Natural, conversational tone (not robotic patterns)
 
-**Nested Locations:**
-Sub-locations need parent context:
-✅ "the **North Tower** within **Castle Draven**"
-✅ "the **Room of Awakening** inside the **Great Sky Island** caverns"
-❌ "the **North Tower**" (where is it?)
-❌ "within the Room of Awakening" (where is that room?)
-
-=== FACTUAL ACCURACY (ANTI-HALLUCINATION) ===
-
-ONLY include specific details if they appear in the research above.
-- Do NOT invent UI elements, icon colors, or visual descriptions
-- Do NOT make up exact numbers, percentages, or stats
-- If unsure, use general language:
-  ✅ "found near the cave entrance" (safe)
-  ❌ "marked by a glowing blue icon on your minimap" (risky if not in research)
-
-=== LOCATION PATTERNS ===
-
-**For Abilities:**
-"At the **[Location]** in **[Region/Area]**, **[NPC Name]**, [role], grants you the **[Ability]**. To use it, press **[Control]** to [action]."
-Example: "At the **Ukouh Shrine** at the **Temple of Time**, you unlock **Ultrahand**. Press **[L]** to activate and **[A]** to attach objects."
-
-**For Items:**
-"Find the **[Item]** in a chest [precise location] within the **[Area]**, [parent location context]. This item [benefit/stats]."
-Example: "Find the **Archaic Legwear** in a chest within the **Room of Awakening**. This armor provides basic defense."
-❌ WRONG: "in a chest before you exit the cave system" (too vague)
-✅ CORRECT: "in a chest within the **Room of Awakening**" (specific location)
-
-**For Quest NPCs:**
-"At **[Location]** within **[Parent Area]**, speak with **[NPC Name]**, [role], who [action]."
-Example: "At the **Research Center** within **Lookout Landing**, speak with **Purah**, the director of research, who provides the **Paraglider**."
-
-=== STRUCTURE RULES ===
-- Do NOT output the section headline (## ...) — it's added automatically
-- Start with content or a subheading (###)
-- Write ${minParagraphs}-${maxParagraphs} paragraphs
-- Use **bold** for names/terms on FIRST mention only
-- End with an actionable takeaway
-
-=== GAMING-SPECIFIC PATTERNS ===
-
-**Ability Unlocks:**
-"At the **[Shrine/Location]** [location context], **[NPC/Entity]**, [description], grants you **[Ability Name]**. To use it, press **[Control]** to [action]."
-
-**Item Locations:**
-"Find the **[Item Name]** in a chest [specific location] within **[Area]**, [parent location context]."
-
-**Quest Objectives:**
-"[Action] to **[Location]** and speak with **[NPC Name]**, [role], who [purpose/action]."
-
-**Combat Encounters:**
-"You will face **[Enemy Type]**, [description]. Use **[Strategy/Item]** to defeat them."
-
-=== FINAL PRE-SUBMISSION CHECKLIST ===
-Before submitting your section, verify EVERY item:
-
-MUSTCOVER VERIFICATION:
-□ Every mustCover element is included
-□ Location phrases copied EXACTLY (not paraphrased)
-□ Control instructions copied VERBATIM
-□ Stat numbers match exactly
-□ Item/ability names identical to mustCover
-
-NPC VERIFICATION:
-□ Every NPC has: name (bolded) + location + role/title + purpose
-□ NPC roles match mustCover specifications exactly
-
-LOCATION VERIFICATION:
-□ Every named element leads with its proper name
-□ Every sub-location includes parent location context
-□ No compass directions invented (only from research)
-
-ACCURACY VERIFICATION:
-□ No specific UI/visual details invented (only from research)
-□ No coordinates invented (only from research)
-□ No numbers/stats invented (only from research)
-
-CONTENT VERIFICATION:
-□ No content repeated from "PREVIOUSLY COVERED"
-□ No AI clichés used (dive into, journey, delve, etc.)
-□ Actionable takeaway included at end
-□ Natural, conversational tone (not robotic)
-
-Write the section now (markdown only):`;
+Write the section now (markdown format):`;
   }
 };
