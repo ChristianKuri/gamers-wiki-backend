@@ -206,6 +206,12 @@ export const EDITOR_CONFIG = {
   TEMPERATURE: 0.4,
   /** Number of overview lines to include in prompt */
   OVERVIEW_LINES_IN_PROMPT: 10,
+  /**
+   * Timeout for Editor generateObject calls in milliseconds.
+   * If the LLM takes longer than this, abort and retry.
+   * 30 seconds should be plenty for plan generation.
+   */
+  TIMEOUT_MS: 30000,
 } as const;
 
 // ============================================================================

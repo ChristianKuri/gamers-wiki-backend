@@ -153,17 +153,29 @@ export async function runEditor(
   log.info(`  Category: ${effectiveCategorySlug || 'auto-detect'}`);
   
   const startTime = Date.now();
-  log.info(`  Calling generateObject...`);
+  log.info(`  Calling generateObject (timeout: ${EDITOR_CONFIG.TIMEOUT_MS}ms per attempt)...`);
+
+  // Helper to create a fresh timeout signal for each attempt
+  // This ensures each retry gets its own 30s window
+  const createTimeoutSignal = (): AbortSignal => {
+    const timeoutSignal = AbortSignal.timeout(EDITOR_CONFIG.TIMEOUT_MS);
+    return deps.signal 
+      ? AbortSignal.any([deps.signal, timeoutSignal])
+      : timeoutSignal;
+  };
 
   const { object: rawPlan, usage } = await withRetry(
-    () =>
-      deps.generateObject({
+    () => {
+      const attemptSignal = createTimeoutSignal();
+      return deps.generateObject({
         model: deps.model,
         temperature,
         schema: ArticlePlanSchema,
         system: systemPrompt,
         prompt: userPrompt,
-      }),
+        abortSignal: attemptSignal,
+      });
+    },
     { context: 'Editor article plan generation', signal: deps.signal }
   );
 
