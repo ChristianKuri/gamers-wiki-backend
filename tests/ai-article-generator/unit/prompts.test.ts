@@ -663,7 +663,8 @@ describe('Specialist Prompts', () => {
       const prompt = getSpecialistSectionUserPrompt(ctx, plan, 'Elden Ring', 2500, 2, 5);
 
       expect(prompt).toContain('Elden Ring: Complete Beginner Guide');
-      expect(prompt).toContain('GUIDE article');
+      // New prompt format uses "for a guide about" instead of "GUIDE article"
+      expect(prompt).toContain('for a guide about');
       expect(prompt).toContain('Elden Ring');
     });
 
@@ -678,8 +679,8 @@ describe('Specialist Prompts', () => {
 
       const prompt = getSpecialistSectionUserPrompt(ctx, plan, 'Elden Ring', 2500, 2, 5);
 
-      // Prompt uses "section 2/3" format
-      expect(prompt).toContain('section 2/3');
+      // Prompt uses "section X of Y" format
+      expect(prompt).toContain('section 2 of 3');
       expect(prompt).toContain('Character Builds');
       expect(prompt).toContain('Cover popular builds');
     });
@@ -751,14 +752,15 @@ describe('Specialist Prompts', () => {
       expect(prompt).toContain('Boss strategies');
     });
 
-    it('includes naming rules for guides', () => {
+    it('includes precision requirements for guides', () => {
       const plan = createMockArticlePlan();
       const ctx = createSectionContext();
 
       const prompt = getSpecialistSectionUserPrompt(ctx, plan, 'Elden Ring', 2500, 2, 5);
 
-      expect(prompt).toContain('NAMING RULES');
-      expect(prompt).toContain('First Mention');
+      // The system prompt contains precision rules, user prompt contains writing guidelines
+      expect(prompt).toContain('Precision checklist');
+      expect(prompt).toContain('FIRST mention');
     });
 
     it('truncates long scout overview', () => {
@@ -772,13 +774,13 @@ describe('Specialist Prompts', () => {
       expect(prompt).not.toContain('A'.repeat(200));
     });
 
-    it('includes section scope and headline in prompt', () => {
+    it('includes section information and headline in prompt', () => {
       const plan = createMockArticlePlan();
       const ctx = createSectionContext({ headline: 'Combat Mechanics' });
 
       const prompt = getSpecialistSectionUserPrompt(ctx, plan, 'Elden Ring', 2500, 2, 5);
 
-      expect(prompt).toContain('SECTION SCOPE');
+      expect(prompt).toContain('SECTION INFORMATION');
       expect(prompt).toContain('Combat Mechanics');
     });
 

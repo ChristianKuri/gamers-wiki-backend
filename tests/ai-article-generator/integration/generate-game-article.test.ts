@@ -112,7 +112,12 @@ describe('generateGameArticleDraft (integration-ish)', () => {
         const userText = body.messages.find((m) => m.role === 'user')?.content ?? '';
 
         // Only override the Editor plan generation; allow everything else to be generic.
-        if (userText.includes('Return ONLY valid JSON')) {
+        // Detect article plan prompts (various formats)
+        const isPlanPrompt = userText.includes('Return ONLY valid JSON') ||
+          userText.includes('=== OUTPUT REQUIREMENTS ===') ||
+          userText.includes('=== STRUCTURAL REQUIREMENTS ===');
+
+        if (isPlanPrompt) {
           // Must have at least 4 sections (MIN_SECTIONS = 4)
           const plan = {
             title: 'Test Plan With Duplicate Queries',
@@ -120,11 +125,12 @@ describe('generateGameArticleDraft (integration-ish)', () => {
             excerpt:
               'This is a test excerpt that is deliberately between 120 and 160 characters to satisfy the schema constraints for validation.',
             tags: ['test'],
+            requiredElements: ['Element A', 'Element B', 'Element C', 'Element D'],
             sections: [
-              { headline: 'A', goal: 'g', researchQueries: [duplicateQuery] },
-              { headline: 'B', goal: 'g', researchQueries: [duplicateQuery] },
-              { headline: 'C', goal: 'g', researchQueries: [duplicateQuery] },
-              { headline: 'D', goal: 'g', researchQueries: [duplicateQuery] },
+              { headline: 'A', goal: 'g', researchQueries: [duplicateQuery], mustCover: ['Element A'] },
+              { headline: 'B', goal: 'g', researchQueries: [duplicateQuery], mustCover: ['Element B'] },
+              { headline: 'C', goal: 'g', researchQueries: [duplicateQuery], mustCover: ['Element C'] },
+              { headline: 'D', goal: 'g', researchQueries: [duplicateQuery], mustCover: ['Element D'] },
             ],
             safety: { noPrices: true, noScoresUnlessReview: true },
           };
@@ -176,7 +182,12 @@ describe('generateGameArticleDraft (integration-ish)', () => {
 
         const userText = messages.find((m) => m.role === 'user')?.content ?? '';
 
-        if (userText.includes('Return ONLY valid JSON')) {
+        // Detect article plan prompts (various formats)
+        const isPlanPrompt = userText.includes('Return ONLY valid JSON') ||
+          userText.includes('=== OUTPUT REQUIREMENTS ===') ||
+          userText.includes('=== STRUCTURAL REQUIREMENTS ===');
+
+        if (isPlanPrompt) {
           // Must have at least 4 sections (MIN_SECTIONS = 4)
           const plan = {
             title: 'Test Plan With Duplicate Queries',
@@ -184,11 +195,12 @@ describe('generateGameArticleDraft (integration-ish)', () => {
             excerpt:
               'This is a test excerpt that is deliberately between 120 and 160 characters to satisfy the schema constraints for validation.',
             tags: ['test'],
+            requiredElements: ['Element A', 'Element B', 'Element C', 'Element D'],
             sections: [
-              { headline: 'A', goal: 'g', researchQueries: [duplicateQuery] },
-              { headline: 'B', goal: 'g', researchQueries: [duplicateQuery] },
-              { headline: 'C', goal: 'g', researchQueries: [duplicateQuery] },
-              { headline: 'D', goal: 'g', researchQueries: [duplicateQuery] },
+              { headline: 'A', goal: 'g', researchQueries: [duplicateQuery], mustCover: ['Element A'] },
+              { headline: 'B', goal: 'g', researchQueries: [duplicateQuery], mustCover: ['Element B'] },
+              { headline: 'C', goal: 'g', researchQueries: [duplicateQuery], mustCover: ['Element C'] },
+              { headline: 'D', goal: 'g', researchQueries: [duplicateQuery], mustCover: ['Element D'] },
             ],
             safety: { noPrices: true, noScoresUnlessReview: true },
           };
@@ -264,14 +276,28 @@ describe('generateGameArticleDraft (integration-ish)', () => {
       excerpt:
         'Discover the most powerful weapons in the game, ranked by damage output, versatility, and how easy they are to obtain early.',
       tags: ['weapons', 'best gear', 'top 10'],
+      requiredElements: ['Sword info', 'Greatsword info', 'Halberd info', 'Dagger info'],
       sections: [
-        { headline: 'Sword of Legends', goal: 'desc', researchQueries: ['q1'] },
-        { headline: 'Moonlight Greatsword', goal: 'desc', researchQueries: ['q2'] },
-        { headline: 'Dragon Halberd', goal: 'desc', researchQueries: ['q3'] },
-        { headline: 'Shadow Dagger', goal: 'desc', researchQueries: ['q4'] },
+        { headline: 'Sword of Legends', goal: 'desc', researchQueries: ['q1'], mustCover: ['Sword info'] },
+        { headline: 'Moonlight Greatsword', goal: 'desc', researchQueries: ['q2'], mustCover: ['Greatsword info'] },
+        { headline: 'Dragon Halberd', goal: 'desc', researchQueries: ['q3'], mustCover: ['Halberd info'] },
+        { headline: 'Shadow Dagger', goal: 'desc', researchQueries: ['q4'], mustCover: ['Dagger info'] },
       ],
       safety: { noPrices: true, noScoresUnlessReview: true },
     };
+
+    // Helper to detect article plan prompts (covers all category-specific and generic formats)
+    const isPlanPrompt = (text: string) => text.includes('Return ONLY valid JSON') ||
+      text.includes('=== OUTPUT REQUIREMENTS ===') ||
+      text.includes('=== STRUCTURAL REQUIREMENTS ===') ||
+      text.includes('=== OUTPUT FORMAT ===') ||
+      text.includes('Create a COMPLETE') ||
+      text.includes('Design a LIST article plan') ||
+      text.includes('Design an article plan');
+
+    // Helper to detect section writing prompts
+    const isSectionPrompt = (text: string) => text.includes('Write the next section') ||
+      /Write section \d+ of \d+/i.test(text);
 
     server.use(
       http.post('https://api.tavily.com/search', async ({ request }) => {
@@ -290,7 +316,7 @@ describe('generateGameArticleDraft (integration-ish)', () => {
         const userText = body.messages.find((m) => m.role === 'user')?.content ?? '';
 
         // Return lists plan for Editor
-        if (userText.includes('Return ONLY valid JSON')) {
+        if (isPlanPrompt(userText)) {
           return HttpResponse.json({
             id: 'mock',
             object: 'chat.completion',
@@ -302,8 +328,8 @@ describe('generateGameArticleDraft (integration-ish)', () => {
         }
 
         // Track section write order
-        if (userText.includes('Write the next section')) {
-          const headlineMatch = userText.match(/headline:\s*"([^"]+)"/i) || userText.match(/Headline:\s*([^\n]+)/i);
+        if (isSectionPrompt(userText)) {
+          const headlineMatch = userText.match(/headline:\s*"([^"]+)"/i) || userText.match(/Headline:\s*([^\n]+)/i) || userText.match(/This section: "([^"]+)"/);
           const headline = headlineMatch?.[1] || 'unknown';
           sectionWriteOrder.push(headline);
         }
@@ -333,7 +359,7 @@ describe('generateGameArticleDraft (integration-ish)', () => {
 
         const userText = messages.find((m) => m.role === 'user')?.content ?? '';
 
-        if (userText.includes('Return ONLY valid JSON')) {
+        if (isPlanPrompt(userText)) {
           return HttpResponse.json({
             id: 'mock',
             object: 'response',
@@ -345,8 +371,8 @@ describe('generateGameArticleDraft (integration-ish)', () => {
           });
         }
 
-        if (userText.includes('Write the next section')) {
-          const headlineMatch = userText.match(/headline:\s*"([^"]+)"/i) || userText.match(/Headline:\s*([^\n]+)/i);
+        if (isSectionPrompt(userText)) {
+          const headlineMatch = userText.match(/headline:\s*"([^"]+)"/i) || userText.match(/Headline:\s*([^\n]+)/i) || userText.match(/This section: "([^"]+)"/);
           const headline = headlineMatch?.[1] || 'unknown';
           sectionWriteOrder.push(headline);
         }
@@ -612,14 +638,25 @@ describe('generateGameArticleDraft (integration-ish)', () => {
         excerpt:
           'Learn the basics of Test Game with this comprehensive beginner guide covering everything new players need to know to get started.',
         tags: ['beginner', 'guide', 'tips'],
+        requiredElements: ['Getting started info', 'Basic controls', 'First mission', 'Tips and tricks'],
         sections: [
-          { headline: 'Getting Started', goal: 'intro', researchQueries: ['q1'] },
-          { headline: 'Basic Controls', goal: 'controls', researchQueries: ['q2'] },
-          { headline: 'First Mission', goal: 'mission', researchQueries: ['q3'] },
-          { headline: 'Tips and Tricks', goal: 'tips', researchQueries: ['q4'] },
+          { headline: 'Getting Started', goal: 'intro', researchQueries: ['q1'], mustCover: ['Getting started info'] },
+          { headline: 'Basic Controls', goal: 'controls', researchQueries: ['q2'], mustCover: ['Basic controls'] },
+          { headline: 'First Mission', goal: 'mission', researchQueries: ['q3'], mustCover: ['First mission'] },
+          { headline: 'Tips and Tricks', goal: 'tips', researchQueries: ['q4'], mustCover: ['Tips and tricks'] },
         ],
         safety: { noScoresUnlessReview: true },
       };
+
+      // Helper to detect article plan prompts
+      const isPlanPrompt = (text: string) => text.includes('Return ONLY valid JSON') ||
+        text.includes('=== OUTPUT FORMAT ===') ||
+        text.includes('=== STRUCTURAL REQUIREMENTS ===') ||
+        text.includes('Create a COMPLETE');
+
+      // Helper to detect section writing prompts
+      const isSectionPrompt = (text: string) => text.includes('Write the next section') ||
+        /Write section \d+ of \d+/i.test(text);
 
       server.use(
         http.post('https://api.tavily.com/search', async ({ request }) => {
@@ -637,7 +674,7 @@ describe('generateGameArticleDraft (integration-ish)', () => {
           };
           const userText = body.messages.find((m) => m.role === 'user')?.content ?? '';
 
-          if (userText.includes('Return ONLY valid JSON')) {
+          if (isPlanPrompt(userText)) {
             return HttpResponse.json({
               id: 'mock',
               object: 'chat.completion',
@@ -648,8 +685,8 @@ describe('generateGameArticleDraft (integration-ish)', () => {
             });
           }
 
-          if (userText.includes('Write the next section')) {
-            const headlineMatch = userText.match(/headline:\s*"([^"]+)"/i) || userText.match(/Headline:\s*([^\n]+)/i);
+          if (isSectionPrompt(userText)) {
+            const headlineMatch = userText.match(/headline:\s*"([^"]+)"/i) || userText.match(/Headline:\s*([^\n]+)/i) || userText.match(/This section: "([^"]+)"/);
             const headline = headlineMatch?.[1] || 'unknown';
             sectionWriteOrder.push(headline);
           }
@@ -679,7 +716,7 @@ describe('generateGameArticleDraft (integration-ish)', () => {
 
           const userText = messages.find((m) => m.role === 'user')?.content ?? '';
 
-          if (userText.includes('Return ONLY valid JSON')) {
+          if (isPlanPrompt(userText)) {
             return HttpResponse.json({
               id: 'mock',
               object: 'response',
@@ -691,8 +728,8 @@ describe('generateGameArticleDraft (integration-ish)', () => {
             });
           }
 
-          if (userText.includes('Write the next section')) {
-            const headlineMatch = userText.match(/headline:\s*"([^"]+)"/i) || userText.match(/Headline:\s*([^\n]+)/i);
+          if (isSectionPrompt(userText)) {
+            const headlineMatch = userText.match(/headline:\s*"([^"]+)"/i) || userText.match(/Headline:\s*([^\n]+)/i) || userText.match(/This section: "([^"]+)"/);
             const headline = headlineMatch?.[1] || 'unknown';
             sectionWriteOrder.push(headline);
           }
@@ -741,14 +778,21 @@ describe('generateGameArticleDraft (integration-ish)', () => {
         excerpt:
           'Discover the most powerful weapons in Test Game, ranked by damage output and versatility for both beginners and veteran players.',
         tags: ['weapons', 'top 5', 'gear'],
+        requiredElements: ['Legendary Sword info', 'Dragon Bow info', 'Magic Staff info', 'Shadow Dagger info'],
         sections: [
-          { headline: 'Legendary Sword', goal: 'desc', researchQueries: ['q1'] },
-          { headline: 'Dragon Bow', goal: 'desc', researchQueries: ['q2'] },
-          { headline: 'Magic Staff', goal: 'desc', researchQueries: ['q3'] },
-          { headline: 'Shadow Dagger', goal: 'desc', researchQueries: ['q4'] },
+          { headline: 'Legendary Sword', goal: 'desc', researchQueries: ['q1'], mustCover: ['Legendary Sword info'] },
+          { headline: 'Dragon Bow', goal: 'desc', researchQueries: ['q2'], mustCover: ['Dragon Bow info'] },
+          { headline: 'Magic Staff', goal: 'desc', researchQueries: ['q3'], mustCover: ['Magic Staff info'] },
+          { headline: 'Shadow Dagger', goal: 'desc', researchQueries: ['q4'], mustCover: ['Shadow Dagger info'] },
         ],
         safety: { noScoresUnlessReview: true },
       };
+
+      // Helper to detect article plan prompts
+      const isPlanPrompt = (text: string) => text.includes('Return ONLY valid JSON') ||
+        text.includes('=== OUTPUT FORMAT ===') ||
+        text.includes('=== STRUCTURAL REQUIREMENTS ===') ||
+        text.includes('Design a LIST article plan');
 
       server.use(
         http.post('https://api.tavily.com/search', async ({ request }) => {
@@ -766,7 +810,7 @@ describe('generateGameArticleDraft (integration-ish)', () => {
           };
           const userText = body.messages.find((m) => m.role === 'user')?.content ?? '';
 
-          if (userText.includes('Return ONLY valid JSON')) {
+          if (isPlanPrompt(userText)) {
             return HttpResponse.json({
               id: 'mock',
               object: 'chat.completion',
@@ -802,7 +846,7 @@ describe('generateGameArticleDraft (integration-ish)', () => {
 
           const userText = messages.find((m) => m.role === 'user')?.content ?? '';
 
-          if (userText.includes('Return ONLY valid JSON')) {
+          if (isPlanPrompt(userText)) {
             return HttpResponse.json({
               id: 'mock',
               object: 'response',
@@ -1094,20 +1138,28 @@ describe('generateGameArticleDraft (integration-ish)', () => {
     it('fails early with EDITOR_FAILED when plan has duplicate headlines', async () => {
       // Override OpenRouter to return a plan with duplicate section headlines
       // Must have at least 4 sections (MIN_SECTIONS = 4) so Zod passes and custom validation runs
+      // Note: We need mustCover to pass Zod schema validation, but the duplicate headlines will fail custom validation
       const invalidPlan = {
         title: 'Test Article With Invalid Plan Structure',
         categorySlug: 'guides',
         excerpt:
           'This is a test excerpt that is deliberately between 120 and 160 characters to satisfy the schema constraints for validation.',
         tags: ['test'],
+        requiredElements: ['Element 1', 'Element 2', 'Element 3', 'Element 4'],
         sections: [
-          { headline: 'Same Headline', goal: 'Goal 1', researchQueries: ['query 1'] },
-          { headline: 'Same Headline', goal: 'Goal 2', researchQueries: ['query 2'] },
-          { headline: 'Different', goal: 'Goal 3', researchQueries: ['query 3'] },
-          { headline: 'Another Different', goal: 'Goal 4', researchQueries: ['query 4'] },
+          { headline: 'Same Headline', goal: 'Goal 1', researchQueries: ['query 1'], mustCover: ['Element 1'] },
+          { headline: 'Same Headline', goal: 'Goal 2', researchQueries: ['query 2'], mustCover: ['Element 2'] },
+          { headline: 'Different', goal: 'Goal 3', researchQueries: ['query 3'], mustCover: ['Element 3'] },
+          { headline: 'Another Different', goal: 'Goal 4', researchQueries: ['query 4'], mustCover: ['Element 4'] },
         ],
         safety: { noScoresUnlessReview: true },
       };
+
+      // Helper to detect article plan prompts
+      const isPlanPrompt = (text: string) => text.includes('Return ONLY valid JSON') ||
+        text.includes('=== OUTPUT FORMAT ===') ||
+        text.includes('=== STRUCTURAL REQUIREMENTS ===') ||
+        text.includes('Create a COMPLETE');
 
       server.use(
         http.post('https://openrouter.ai/api/v1/chat/completions', async ({ request }) => {
@@ -1118,7 +1170,7 @@ describe('generateGameArticleDraft (integration-ish)', () => {
           const userText = body.messages.find((m) => m.role === 'user')?.content ?? '';
 
           // Editor plan generation (structured output request)
-          if (userText.includes('Return ONLY valid JSON')) {
+          if (isPlanPrompt(userText)) {
             return HttpResponse.json({
               id: 'mock',
               object: 'chat.completion',
@@ -1168,7 +1220,7 @@ describe('generateGameArticleDraft (integration-ish)', () => {
 
           const userText = messages.find((m) => m.role === 'user')?.content ?? '';
 
-          if (userText.includes('Return ONLY valid JSON')) {
+          if (isPlanPrompt(userText)) {
             return HttpResponse.json({
               id: 'mock',
               object: 'response',
@@ -1230,14 +1282,21 @@ describe('generateGameArticleDraft (integration-ish)', () => {
         excerpt:
           'This is a test excerpt that is deliberately between 120 and 160 characters to satisfy the schema constraints for validation.',
         tags: ['test'],
+        requiredElements: ['Element 1', 'Element 2', 'Element 3', 'Element 4'],
         sections: [
-          { headline: 'Section One', goal: '   ', researchQueries: ['query 1'] }, // Whitespace-only
-          { headline: 'Section Two', goal: 'Valid goal', researchQueries: ['query 2'] },
-          { headline: 'Section Three', goal: 'Another goal', researchQueries: ['query 3'] },
-          { headline: 'Section Four', goal: 'Yet another goal', researchQueries: ['query 4'] },
+          { headline: 'Section One', goal: '   ', researchQueries: ['query 1'], mustCover: ['Element 1'] }, // Whitespace-only
+          { headline: 'Section Two', goal: 'Valid goal', researchQueries: ['query 2'], mustCover: ['Element 2'] },
+          { headline: 'Section Three', goal: 'Another goal', researchQueries: ['query 3'], mustCover: ['Element 3'] },
+          { headline: 'Section Four', goal: 'Yet another goal', researchQueries: ['query 4'], mustCover: ['Element 4'] },
         ],
         safety: { noScoresUnlessReview: true },
       };
+
+      // Helper to detect article plan prompts
+      const isPlanPrompt = (text: string) => text.includes('Return ONLY valid JSON') ||
+        text.includes('=== OUTPUT FORMAT ===') ||
+        text.includes('=== STRUCTURAL REQUIREMENTS ===') ||
+        text.includes('Create a COMPLETE');
 
       server.use(
         http.post('https://openrouter.ai/api/v1/chat/completions', async ({ request }) => {
@@ -1247,7 +1306,7 @@ describe('generateGameArticleDraft (integration-ish)', () => {
           };
           const userText = body.messages.find((m) => m.role === 'user')?.content ?? '';
 
-          if (userText.includes('Return ONLY valid JSON')) {
+          if (isPlanPrompt(userText)) {
             return HttpResponse.json({
               id: 'mock',
               object: 'chat.completion',
@@ -1295,7 +1354,7 @@ describe('generateGameArticleDraft (integration-ish)', () => {
 
           const userText = messages.find((m) => m.role === 'user')?.content ?? '';
 
-          if (userText.includes('Return ONLY valid JSON')) {
+          if (isPlanPrompt(userText)) {
             return HttpResponse.json({
               id: 'mock',
               object: 'response',
@@ -1420,14 +1479,31 @@ describe('generateGameArticleDraft (integration-ish)', () => {
         categorySlug: 'guides',
         excerpt: 'This is a test excerpt that is deliberately between 120 and 160 characters to satisfy the schema constraints for validation.',
         tags: ['test'],
+        requiredElements: ['Element 1', 'Element 2', 'Element 3', 'Element 4'],
         sections: [
-          { headline: 'Section 1', goal: 'Goal 1', researchQueries: ['query 1'] },
-          { headline: 'Section 2', goal: 'Goal 2', researchQueries: ['query 2'] },
-          { headline: 'Section 3', goal: 'Goal 3', researchQueries: ['query 3'] },
-          { headline: 'Section 4', goal: 'Goal 4', researchQueries: ['query 4'] },
+          { headline: 'Section 1', goal: 'Goal 1', researchQueries: ['query 1'], mustCover: ['Element 1'] },
+          { headline: 'Section 2', goal: 'Goal 2', researchQueries: ['query 2'], mustCover: ['Element 2'] },
+          { headline: 'Section 3', goal: 'Goal 3', researchQueries: ['query 3'], mustCover: ['Element 3'] },
+          { headline: 'Section 4', goal: 'Goal 4', researchQueries: ['query 4'], mustCover: ['Element 4'] },
         ],
         safety: { noScoresUnlessReview: true },
       };
+
+      // Helpers for prompt detection
+      const isPlanPrompt = (text: string) => text.includes('Return ONLY valid JSON') ||
+        text.includes('=== OUTPUT FORMAT ===') ||
+        text.includes('=== STRUCTURAL REQUIREMENTS ===') ||
+        text.includes('Create a COMPLETE');
+
+      const isReviewerPrompt = (text: string) => {
+        const lower = text.toLowerCase();
+        return (lower.includes('review this') && lower.includes('article draft')) &&
+          (lower.includes('=== plan details ===') || lower.includes('=== article plan ===')) &&
+          lower.includes('=== article content ===');
+      };
+
+      const isSectionPrompt = (text: string) => text.includes('Write the next section') ||
+        /Write section \d+ of \d+/i.test(text);
 
       // Override Reviewer handler to return rejection
       server.use(
@@ -1449,11 +1525,7 @@ describe('generateGameArticleDraft (integration-ish)', () => {
           const lowerUserText = userText.toLowerCase();
 
           // Check if this is a Reviewer prompt (check FIRST to avoid false matches)
-          if (
-            lowerUserText.includes('review the following article draft') &&
-            lowerUserText.includes('=== article plan ===') &&
-            lowerUserText.includes('=== article content ===')
-          ) {
+          if (isReviewerPrompt(userText)) {
             const rejectionResponse = {
               approved: false,
               issues: [
@@ -1498,11 +1570,7 @@ describe('generateGameArticleDraft (integration-ish)', () => {
           }
 
           // Handle ArticlePlan prompts (Editor phase)
-          if (
-            userText.includes('Plan an article about the game') ||
-            userText.includes('Return ONLY valid JSON') ||
-            userText.includes('categorySlug must be one of')
-          ) {
+          if (isPlanPrompt(userText)) {
             return HttpResponse.json({
               id: 'mock-response-id',
               object: 'response',
@@ -1544,7 +1612,7 @@ describe('generateGameArticleDraft (integration-ish)', () => {
           }
 
           // Handle section writing prompts
-          if (userText.includes('Write the next section of a game article')) {
+          if (isSectionPrompt(userText)) {
             return HttpResponse.json({
               id: 'mock-response-id',
               object: 'response',
