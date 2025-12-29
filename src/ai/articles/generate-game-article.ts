@@ -1170,7 +1170,9 @@ export async function generateGameArticleDraft(
     };
 
     // PHASE 1: Fix all issues (up to MAX_FIXER_ITERATIONS)
+    // Stop early if article is APPROVED - don't risk introducing regressions
     while (
+      !reviewerOutput.approved &&
       actionableIssues.length > 0 &&
       fixerIterations < FIXER_CONFIG.MAX_FIXER_ITERATIONS
     ) {

@@ -86,6 +86,11 @@ LOCATION VERIFICATION PATTERNS:
 - NPC introductions: Must state WHERE they first appear, WHO they are (name and role), WHAT they do
 - Relative locations: Must provide context (e.g. "[direction] of [X]", "inside [Y]", "near [Z]")
 
+=== APPROVAL DECISION ===
+
+Use your judgment to decide if the article is complete and accurate. An article with minor issues is still a good article and should generally be approved.
+Don't let perfectionism block publication of useful content.
+
 OUTPUT FORMAT:
 Return JSON with 'approved' status and 'issues'.
 For every issue, you MUST provide:
@@ -220,11 +225,14 @@ Only check these AFTER completing the checklist verification:
 4. Button prompts and inputs:
    - Are control inputs provided where helpful?
    - category: "coverage", severity: "minor"
+   - fixStrategy: "no_action" (informational only - do NOT fix)
 
-PRIORITY 3 - STYLE (LOWEST):
-- Grammar issues, awkward phrasing
+PRIORITY 3 - STYLE (LOWEST - DO NOT FIX):
+- Grammar issues, awkward phrasing, AI clichés
 - category: "style", severity: "minor"
-- Only flag if truly problematic
+- fixStrategy: "no_action" (informational only)
+- These are NEVER worth fixing - they risk introducing regressions
+- Only flag if truly egregious, but ALWAYS use no_action
 
 CRITICAL: For the 'location' field in your JSON output, you MUST use one of the exact headlines listed above.
 If an issue spans multiple sections or the whole article, use "global".
@@ -251,6 +259,10 @@ ASK #4: "Can this be fixed by replacing text (no additions)?"
 ASK #5: "Is information missing that needs a new paragraph?"
   → YES: Use expand (ONE focused paragraph)
   → NO: Use no_action (issue is minor style preference)
+
+ASK #6: "Is this a button prompt format or style/grammar issue?"
+  → YES: Use no_action (minor issues are informational only, fixing risks regressions)
+  → These issues are logged but NEVER acted upon
 
 === FIXINSTRUCTION EXAMPLES ===
 
