@@ -179,7 +179,14 @@ REQUIREMENTS FOR EACH ELEMENT ABOVE:
 • Proper names: Use EXACTLY as written (no synonyms or paraphrasing)
 • Context: Don't just list—explain each element naturally within your writing
 
-Verify: Every element above appears in your output with its exact phrasing.
+⚠️ MANDATORY VERIFICATION (Do this BEFORE finishing):
+For EACH numbered item above, search your output:
+  □ Item 1 — appears in my text? YES/NO
+  □ Item 2 — appears in my text? YES/NO
+  ... and so on
+If ANY item shows NO → ADD IT before submitting!
+
+Missing even ONE mustCover item = INCOMPLETE SECTION = article fails review.
 ` : '';
 
     const sectionScope = `

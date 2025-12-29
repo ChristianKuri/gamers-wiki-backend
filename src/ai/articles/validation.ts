@@ -1150,6 +1150,47 @@ export function validateArticlePlan(plan: ArticlePlan): ValidationIssue[] {
     issues.push(issue('error', `Plan has ${emptyTags.length} empty tag(s)`));
   }
 
+  // Validate requiredElements <-> mustCover consistency
+  // Every requiredElement should appear in exactly one section's mustCover
+  if (plan.requiredElements && plan.requiredElements.length > 0) {
+    // Collect all mustCover items from all sections
+    const allMustCover = new Set<string>();
+    for (const section of plan.sections) {
+      if (section.mustCover) {
+        for (const item of section.mustCover) {
+          allMustCover.add(item);
+        }
+      }
+    }
+
+    // Find requiredElements that aren't in any mustCover (uses normalized comparison)
+    const unassignedElements: string[] = [];
+    for (const element of plan.requiredElements) {
+      // Normalize for comparison (case-insensitive, trim whitespace)
+      const normalizedElement = element.trim().toLowerCase();
+      const found = Array.from(allMustCover).some(
+        (mc) => mc.trim().toLowerCase() === normalizedElement
+      );
+      if (!found) {
+        unassignedElements.push(element);
+      }
+    }
+
+    if (unassignedElements.length > 0) {
+      // Truncate long elements for readability
+      const truncated = unassignedElements.map((e) => 
+        e.length > 60 ? e.slice(0, 57) + '...' : e
+      );
+      issues.push(
+        issue(
+          'error',
+          `${unassignedElements.length} required element(s) not assigned to any section's mustCover: ${truncated.join('; ')}. ` +
+            `Every requiredElement must appear in exactly one section's mustCover array.`
+        )
+      );
+    }
+  }
+
   return issues;
 }
 

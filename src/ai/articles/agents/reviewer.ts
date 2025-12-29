@@ -267,10 +267,21 @@ export function countIssuesBySeverity(
 
 /**
  * Determines if the article should be rejected based on issues.
- * An article is rejected if it has any critical issues.
+ * An article is rejected if it has any critical issues with ACTIONABLE fix strategies.
+ * 
+ * Critical issues with "no_action" are informational and don't block approval
+ * (e.g., section placement notes where content exists but in a different section).
  */
 export function shouldRejectArticle(issues: readonly ReviewIssue[]): boolean {
-  return issues.some((i) => i.severity === 'critical');
+  return issues.some((i) => i.severity === 'critical' && i.fixStrategy !== 'no_action');
+}
+
+/**
+ * Checks if there are actionable critical issues that should prevent approval.
+ * Used to validate/override LLM's approval decision.
+ */
+export function hasActionableCriticalIssues(issues: readonly ReviewIssue[]): boolean {
+  return issues.some((i) => i.severity === 'critical' && i.fixStrategy !== 'no_action');
 }
 
 /**
@@ -358,8 +369,21 @@ export async function runReviewer(
   const validIssues = filterValidIssues(object.issues, log);
 
   const counts = countIssuesBySeverity(validIssues);
+  
+  // Validate approval decision: override if LLM approved with actionable critical issues
+  // This catches the "approved: true with critical issues" bug
+  let finalApproved = object.approved;
+  const hasBlockingIssues = hasActionableCriticalIssues(validIssues);
+  
+  if (object.approved && hasBlockingIssues) {
+    log.warn(
+      `LLM approved but has ${counts.critical} actionable critical issue(s) - overriding to NEEDS REVISION`
+    );
+    finalApproved = false;
+  }
+  
   log.info(
-    `Review complete: ${object.approved ? 'APPROVED' : 'NEEDS REVISION'} ` +
+    `Review complete: ${finalApproved ? 'APPROVED' : 'NEEDS REVISION'} ` +
       `(${counts.critical} critical, ${counts.major} major, ${counts.minor} minor issues)`
   );
 
@@ -371,7 +395,7 @@ export async function runReviewer(
   }
 
   return {
-    approved: object.approved,
+    approved: finalApproved,
     issues: validIssues,
     suggestions: object.suggestions,
     tokenUsage,

@@ -18,19 +18,40 @@ covers ALL required elements from the plan. This is a BINARY check for each item
 
 FOR EACH REQUIRED ELEMENT in the plan:
 1. SEARCH the article: Does this item/ability/NPC appear BY NAME?
-2. If NOT FOUND → CRITICAL issue (category: "checklist", fixStrategy: "expand")
+2. If NOT FOUND ANYWHERE → CRITICAL issue (category: "checklist", fixStrategy: "expand")
 3. If FOUND but location/how-to missing → MAJOR issue with specific details
+4. If FOUND but in a DIFFERENT section → See "SECTION PLACEMENT" below
 
-CHECKLIST FAILURES ARE ALWAYS HIGH PRIORITY:
-- Missing armor piece when other armor mentioned = CRITICAL
-- Missing ability when other abilities from same area explained = CRITICAL  
-- Missing key NPC who gives important item = CRITICAL
-- Item mentioned but location not stated = MAJOR
+CHECKLIST SEVERITY GUIDE:
+- Item/ability/NPC completely MISSING = CRITICAL (must add content)
+- Item mentioned but location not stated = MAJOR (needs detail)
+- Item in different section than planned = MAJOR (see section placement rules)
+
+=== SECTION PLACEMENT (IMPORTANT FOR WALKTHROUGHS) ===
+
+When an item appears in a DIFFERENT section than the plan specified:
+
+✅ ACCEPTABLE (NOT an issue) if:
+- The item is on the natural path to that section's destination
+- Example: "Pondside Cave" chest mentioned in "In-isa Shrine" section is OK
+  because the cave is ON THE PATH to In-isa Shrine
+- The ordering makes narrative sense for a walkthrough
+
+⚠️ MAJOR issue (NOT critical) if:
+- The item is mentioned but in a completely unrelated section
+- The placement would confuse a player following the guide sequentially
+- Use fixStrategy: "no_action" and note the ideal placement
+
+❌ DO NOT mark section placement as CRITICAL:
+- Content EXISTS - the player will find the information
+- Walkthroughs have natural flow that may differ from rigid plan assignments
+- Only MISSING content is CRITICAL
 
 EXAMPLE CHECKLIST ANALYSIS:
 Plan requires: Archaic Legwear, Archaic Tunic, Archaic Warm Greaves
 Article contains: "Archaic Legwear" (✓), "Archaic Warm Greaves" (✓)
 Article missing: "Archaic Tunic" (✗) → CRITICAL: Item completely absent
+Article has Tunic in different section (✓ but ⚠️) → MAJOR at most, or acceptable
 
 DO NOT PROCEED TO PASS 2 until you have checked EVERY required element.
 
@@ -86,10 +107,28 @@ LOCATION VERIFICATION PATTERNS:
 - NPC introductions: Must state WHERE they first appear, WHO they are (name and role), WHAT they do
 - Relative locations: Must provide context (e.g. "[direction] of [X]", "inside [Y]", "near [Z]")
 
-=== APPROVAL DECISION ===
+=== APPROVAL DECISION (CRITICAL - READ CAREFULLY) ===
 
-Use your judgment to decide if the article is complete and accurate. An article with minor issues is still a good article and should generally be approved.
-Don't let perfectionism block publication of useful content.
+The 'approved' field determines if the article is ready for publication.
+
+APPROVE (approved: true) when:
+- All required elements from the checklist are covered (exist in the article)
+- No CRITICAL issues with actionable fix strategies remain
+- The article would be helpful to a player, even with minor issues
+
+DO NOT APPROVE (approved: false) when:
+- Any required element is completely MISSING from the article
+- There are CRITICAL issues that have fixStrategy OTHER than "no_action"
+- The article has structural issues that break readability
+
+IMPORTANT: An article can have issues AND still be approved:
+- Minor/major issues with "no_action" = can still approve
+- Section placement notes (informational) = can still approve
+- Style suggestions = can still approve
+
+The key question: "Can a player use this guide successfully as-is?"
+- YES → approved: true (even with noted issues)
+- NO → approved: false (needs fixes first)
 
 OUTPUT FORMAT:
 Return JSON with 'approved' status and 'issues'.
@@ -193,12 +232,32 @@ ${ctx.researchSummary}
 
 === ISSUE PRIORITY ORDER ===
 
-PRIORITY 0 - CHECKLIST FAILURES (FROM PASS 1):
-These are the MOST IMPORTANT issues. If a required element is missing:
+PRIORITY 0 - MISSING CONTENT (FROM PASS 1):
+If a required element is completely ABSENT from the article:
+
+STEP 1: Find which section should contain this element
+  → Look at "Sections and their required coverage" above
+  → Find which section has this element in its "Must cover:" list
+  → Use THAT section headline as the "location" field
+
+STEP 2: Create the issue
 - severity: "critical"
-- category: "checklist"  
+- category: "checklist"
+- location: "[Section headline from mustCover lookup]" ← CRITICAL: Use the PLANNED section!
 - fixStrategy: "expand"
-- fixInstruction: "Add paragraph about [ITEM NAME] in section '[SECTION]'. Must include: location, how to find/get it, why it matters."
+- fixInstruction: "Add paragraph about [ITEM NAME]. Must include: location, how to find/get it, why it matters."
+
+⚠️ COMMON MISTAKE: Using a random or "related" section instead of the planned section.
+The Fixer uses the "location" field to know WHERE to add content - if you use the wrong
+section, the content will be added to the wrong place!
+
+PRIORITY 0.5 - SECTION PLACEMENT (FROM PASS 1):
+If a required element EXISTS but in a different section than planned:
+- ASK: Does the placement make narrative sense for a walkthrough?
+- If YES (item is on the path to that area): NOT an issue, skip it
+- If NO (truly misplaced): severity: "major", category: "checklist", fixStrategy: "no_action"
+  - Note: This is informational only - the content EXISTS, just note ideal placement
+- NEVER mark section placement as "critical" - content is not missing!
 
 PRIORITY 1 - STRUCTURAL ISSUES:
 - Duplicate headers, empty sections, broken markdown
@@ -240,10 +299,25 @@ DO NOT invent location names or combine headlines.
 
 === FIX STRATEGY DECISION TREE ===
 
-ASK #1: "Is a REQUIRED ELEMENT completely missing from the article?" (checklist failure)
-  → YES: CRITICAL issue, category: "checklist", fixStrategy: "expand"
-  → Example: "Add paragraph about the **Archaic Tunic** in section 'Combat Basics and the Fuse Ability'. 
-     Must include: location (chest in Pondside Cave near In-isa Shrine), how to find it, why it matters (first chest armor)."
+ASK #1: "Is a REQUIRED ELEMENT completely MISSING from the article?"
+  → Search for the item name. Does it appear ANYWHERE in the article?
+  → If NOT FOUND anywhere:
+    1. Look up which section has this item in its "Must cover:" list
+    2. Use THAT section as the "location" field
+    3. Create CRITICAL issue, category: "checklist", fixStrategy: "expand"
+  
+  EXAMPLE LOOKUP:
+  Missing item: "Archaic Tunic"
+  Plan shows: "- The Awakening and the Purah Pad
+                  Must cover: Archaic Tunic; Archaic Legwear; ..."
+  → location: "The Awakening and the Purah Pad" (from mustCover lookup!)
+  → NOT "In-isa Shrine" just because the cave is near there
+
+ASK #1.5: "Is the element FOUND but in a DIFFERENT section than planned?"
+  → Does the placement make narrative sense? (Is the item on the path to that section's area?)
+  → If YES: NOT an issue - walkthrough flow is more important than rigid plan matching
+  → If NO: MAJOR issue (not critical!), category: "checklist", fixStrategy: "no_action"
+    - This is informational - the content EXISTS and players will find it
 
 ASK #2: "Is there a structural issue?" (duplicate headers, empty sections)
   → YES: CRITICAL issue, category: "structure", fixStrategy: "direct_edit"
@@ -266,14 +340,25 @@ ASK #6: "Is this a button prompt format or style/grammar issue?"
 
 === FIXINSTRUCTION EXAMPLES ===
 
-GOOD checklist issue (required element missing):
+GOOD checklist issue (required element missing - note the mustCover lookup!):
+Plan says: "- The Awakening and the Purah Pad
+              Must cover: Archaic Tunic; Archaic Legwear; Steward Construct"
+Item missing: "Archaic Tunic"
+→ location comes from mustCover: "The Awakening and the Purah Pad"
+
 {
   "severity": "critical",
   "category": "checklist",
-  "location": "Combat Basics and the Fuse Ability",
-  "message": "CHECKLIST FAILURE: The plan requires 'Archaic Tunic (chest in Pondside Cave...)' but this item does not appear anywhere in the article.",
+  "location": "The Awakening and the Purah Pad",
+  "message": "CHECKLIST FAILURE: The plan requires 'Archaic Tunic' in section 'The Awakening and the Purah Pad' (per mustCover) but this item does not appear anywhere in the article.",
   "fixStrategy": "expand",
-  "fixInstruction": "Add paragraph about the **Archaic Tunic** found in Pondside Cave. Must include: location (chest inside Pondside Cave, accessible from the path to In-isa Shrine), how to find it (look for the cave entrance with a cooking pot nearby), why it matters (first chest armor piece, completes the Archaic set with Legwear and Warm Greaves)."
+  "fixInstruction": "Add paragraph about the **Archaic Tunic** found in Pondside Cave. Must include: location (chest inside Pondside Cave, on the path from the starting area), how to find it, why it matters (first chest armor piece)."
+}
+
+❌ BAD - wrong location (didn't look up mustCover):
+{
+  "location": "In-isa Shrine: Fuse and Combat Basics",  ← WRONG! Not from mustCover!
+  ...
 }
 
 GOOD inline_insert (note: FULL sentence with **bold** markers):

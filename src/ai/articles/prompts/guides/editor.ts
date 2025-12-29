@@ -124,11 +124,25 @@ ${buildRequiredElementHints(ctx.instruction, ctx.genres)}
 The "requiredElements" array must contain EVERY element you extracted in Phase 1.
 Each section's "mustCover" must contain elements from requiredElements (copy EXACT strings).
 
-VALIDATION CHECKLIST (verify before output):
+██████████████████████████████████████████████████████████████████████████████
+██  CRITICAL VALIDATION STEP (DO THIS BEFORE OUTPUTTING JSON!)              ██
+██████████████████████████████████████████████████████████████████████████████
+
+Before generating the final JSON, mentally verify this mapping:
+
+For EACH item in requiredElements, confirm it appears in EXACTLY ONE section's mustCover:
+  requiredElements[0] → sections[?].mustCover  (which section?)
+  requiredElements[1] → sections[?].mustCover  (which section?)
+  ... and so on for ALL elements
+
+⚠️ COMMON BUG: Adding an item to requiredElements but forgetting to put it in ANY mustCover!
+This causes the Specialist to NOT write about that item, making the article incomplete.
+
+VERIFICATION CHECKLIST:
+□ Count requiredElements: N items
+□ Sum all mustCover arrays: should also equal N items
+□ If counts don't match → FIX IT before outputting!
 □ Every item from Scout research is in requiredElements
-□ Every ability from Scout research is in requiredElements  
-□ Every location from Scout research is in requiredElements
-□ Every NPC from Scout research is in requiredElements
 □ Every requiredElement appears in EXACTLY ONE section's mustCover
 □ No section has 0 mustCover items
 □ All controls use [X] bracket format with action verbs

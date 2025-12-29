@@ -6,6 +6,7 @@
  */
 
 import type { LanguageModel } from 'ai';
+import type { z } from 'zod';
 
 import { createPrefixedLogger, type Logger } from '../../../utils/logger';
 import {
@@ -142,20 +143,57 @@ export async function runEditor(
       : timeoutSignal;
   };
 
-  const { object: rawPlan, usage } = await withRetry(
-    () => {
-      const attemptSignal = createTimeoutSignal();
-      return deps.generateObject({
-        model: deps.model,
-        temperature,
-        schema: ArticlePlanSchema,
-        system: systemPrompt,
-        prompt: userPrompt,
-        abortSignal: attemptSignal,
-      });
-    },
-    { context: 'Editor article plan generation', signal: deps.signal }
-  );
+  let rawPlan: z.infer<typeof ArticlePlanSchema>;
+  let usage: { inputTokens?: number; outputTokens?: number } | undefined;
+
+  try {
+    const result = await withRetry(
+      () => {
+        const attemptSignal = createTimeoutSignal();
+        return deps.generateObject({
+          model: deps.model,
+          temperature,
+          schema: ArticlePlanSchema,
+          system: systemPrompt,
+          prompt: userPrompt,
+          abortSignal: attemptSignal,
+        });
+      },
+      { context: 'Editor article plan generation', signal: deps.signal }
+    );
+    rawPlan = result.object;
+    usage = result.usage;
+  } catch (error) {
+    // Log detailed error information for schema validation failures
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    log.error(`  generateObject failed: ${errorMessage}`);
+    
+    // Check if the error contains partial response data
+    if (error && typeof error === 'object') {
+      const errorObj = error as Record<string, unknown>;
+      
+      // AI SDK may include the text/response in the error
+      if ('text' in errorObj && errorObj.text) {
+        log.error(`  Raw LLM response (first 2000 chars):`);
+        log.error(`  ${String(errorObj.text).slice(0, 2000)}`);
+      }
+      
+      // Log any cause or additional details
+      if ('cause' in errorObj && errorObj.cause) {
+        log.error(`  Error cause: ${JSON.stringify(errorObj.cause, null, 2).slice(0, 1000)}`);
+      }
+      
+      // Log validation issues if available
+      if ('issues' in errorObj && Array.isArray(errorObj.issues)) {
+        log.error(`  Schema validation issues:`);
+        for (const issue of errorObj.issues.slice(0, 5)) {
+          log.error(`    - ${JSON.stringify(issue)}`);
+        }
+      }
+    }
+    
+    throw error;
+  }
 
   const elapsed = Date.now() - startTime;
   log.info(`  generateObject completed in ${elapsed}ms`);
