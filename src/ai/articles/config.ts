@@ -157,8 +157,21 @@ export const SCOUT_CONFIG = {
   MAX_SNIPPETS: 10,
   /** Number of results for overview search */
   OVERVIEW_SEARCH_RESULTS: 8,
-  /** Number of results for category-specific search */
+  /** Number of results for category-specific search (Tavily) */
   CATEGORY_SEARCH_RESULTS: 6,
+  /**
+   * Number of results for Exa semantic search.
+   * Exa pricing: 1-25 results cost the same ($5/1k searches)
+   * Always request 25 to maximize value.
+   */
+  EXA_SEARCH_RESULTS: 25,
+  /**
+   * Whether to request AI-generated summaries from Exa.
+   * Summaries are query-aware and created by Gemini Flash.
+   * Much more useful than truncating raw text to 600 chars.
+   * @see https://docs.exa.ai/reference/contents-retrieval#summary-summary-true
+   */
+  EXA_INCLUDE_SUMMARY: true,
   /** Number of results for recent news search */
   RECENT_SEARCH_RESULTS: 5,
   /** Maximum number of category-specific searches to run */
@@ -252,8 +265,21 @@ export const SPECIALIST_CONFIG = {
   MAX_OUTPUT_TOKENS_PER_SECTION: 1500,
   /** Search depth for section research */
   SEARCH_DEPTH: 'advanced' as const,
-  /** Maximum search results per query */
+  /** Maximum search results per query (Tavily) */
   MAX_SEARCH_RESULTS: 5,
+  /**
+   * Number of results for Exa semantic search.
+   * Exa pricing: 1-25 results cost the same ($5/1k searches)
+   * Always request 25 to maximize value.
+   */
+  EXA_SEARCH_RESULTS: 25,
+  /**
+   * Whether to request AI-generated summaries from Exa.
+   * Summaries are query-aware and created by Gemini Flash.
+   * Much more useful than truncating raw text to 600 chars.
+   * @see https://docs.exa.ai/reference/contents-retrieval#summary-summary-true
+   */
+  EXA_INCLUDE_SUMMARY: true,
   /** Maximum sources to include in article */
   MAX_SOURCES: 25,
   /**

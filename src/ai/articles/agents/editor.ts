@@ -27,7 +27,7 @@ import {
   getEditorUserPrompt,
   type EditorPromptContext,
 } from '../prompts';
-import { createEmptyTokenUsage, type GameArticleContext, type ScoutOutput, type TokenUsage } from '../types';
+import { createEmptyTokenUsage, createTokenUsageFromResult, type GameArticleContext, type ScoutOutput, type TokenUsage } from '../types';
 
 // Re-export config for backwards compatibility
 export { EDITOR_CONFIG } from '../config';
@@ -144,7 +144,10 @@ export async function runEditor(
   };
 
   let rawPlan: z.infer<typeof ArticlePlanSchema>;
-  let usage: { inputTokens?: number; outputTokens?: number } | undefined;
+  let generationResult: {
+    usage?: { inputTokens?: number; outputTokens?: number };
+    providerMetadata?: Record<string, unknown>;
+  } | undefined;
 
   try {
     const result = await withRetry(
@@ -162,7 +165,7 @@ export async function runEditor(
       { context: 'Editor article plan generation', signal: deps.signal }
     );
     rawPlan = result.object;
-    usage = result.usage;
+    generationResult = { usage: result.usage, providerMetadata: result.providerMetadata };
   } catch (error) {
     // Log detailed error information for schema validation failures
     const errorMessage = error instanceof Error ? error.message : String(error);
@@ -231,9 +234,9 @@ export async function runEditor(
     safety: rawPlan.safety ?? DEFAULT_ARTICLE_SAFETY,
   };
 
-  // Track token usage (AI SDK v4 uses inputTokens/outputTokens)
-  const tokenUsage: TokenUsage = usage
-    ? { input: usage.inputTokens ?? 0, output: usage.outputTokens ?? 0 }
+  // Track token usage and actual cost from OpenRouter
+  const tokenUsage: TokenUsage = generationResult
+    ? createTokenUsageFromResult(generationResult)
     : createEmptyTokenUsage();
 
   log.debug(

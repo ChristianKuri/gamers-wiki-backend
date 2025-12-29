@@ -25,6 +25,7 @@ import { withRetry } from './retry';
 import {
   addTokenUsage,
   createEmptyTokenUsage,
+  createTokenUsageFromResult,
   type FixApplied,
   type FixStrategy,
   type GameArticleContext,
@@ -311,7 +312,7 @@ export async function rewriteSectionWithFixes(
   log.info(`Rewriting "${sectionName}" to fix ${actionableIssues.length} issue(s)`);
 
   try {
-    const { object, usage } = await withRetry(
+    const result = await withRetry(
       () =>
         deps.generateObject({
           model: deps.model,
@@ -373,9 +374,10 @@ INSTRUCTIONS:
       { context: `Rewrite section: ${sectionName} (${actionableIssues.length} issues)`, signal: deps.signal }
     );
 
-    const tokenUsage: TokenUsage = usage
-      ? { input: usage.inputTokens ?? 0, output: usage.outputTokens ?? 0 }
-      : createEmptyTokenUsage();
+    const { object } = result;
+
+    // Use createTokenUsageFromResult to capture both tokens and actual cost from OpenRouter
+    const tokenUsage = createTokenUsageFromResult(result);
 
     // Log analysis
     log.debug(`Analysis: ${object.analysis.slice(0, 200)}...`);

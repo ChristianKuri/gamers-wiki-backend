@@ -45,12 +45,11 @@
  * });
  */
 
-import { createOpenAI } from '@ai-sdk/openai';
+import { createOpenRouter } from '@openrouter/ai-sdk-provider';
 import { generateObject, generateText } from 'ai';
 
 import { getModel } from '../config';
 import { tavilySearch } from '../tools/tavily';
-import { getModelPricing } from './config';
 import {
   createContextualLogger,
   createPrefixedLogger,
@@ -81,6 +80,7 @@ import {
   type GameArticleDraft,
   type RecoveryMetadata,
   type ScoutOutput,
+  type SearchApiCosts,
   type TokenUsage,
 } from './types';
 import { PhaseTimer } from './phase-timer';
@@ -95,7 +95,7 @@ import { validateArticleDraft, validateArticlePlan, validateGameArticleContext, 
  * Dependencies for article generation (enables testing with mocks).
  */
 export interface ArticleGeneratorDeps {
-  readonly openrouter: ReturnType<typeof createOpenAI>;
+  readonly openrouter: ReturnType<typeof createOpenRouter>;
   readonly search: typeof tavilySearch;
   readonly generateText: typeof generateText;
   readonly generateObject: typeof generateObject;
@@ -848,13 +848,13 @@ function createDefaultDeps(): ArticleGeneratorDeps {
     );
   }
 
-  // Support configurable base URL for proxies or alternative endpoints
-  const baseURL = process.env.OPENROUTER_BASE_URL ?? GENERATOR_CONFIG.DEFAULT_OPENROUTER_BASE_URL;
-
+  // Use dedicated OpenRouter provider for accurate cost tracking
+  // providerMetadata.openrouter.usage.cost gives actual cost per call
   return {
-    openrouter: createOpenAI({
-      baseURL,
+    openrouter: createOpenRouter({
       apiKey: process.env.OPENROUTER_API_KEY,
+      // Optional: custom base URL for proxies (uncomment if needed)
+      // baseUrl: process.env.OPENROUTER_BASE_URL,
     }),
     search: tavilySearch,
     generateText,
@@ -1318,31 +1318,14 @@ export async function generateGameArticleDraft(
   // Check if any tokens were reported (some APIs may not report usage)
   const hasTokenUsage = totalTokenUsage.input > 0 || totalTokenUsage.output > 0;
 
-  // Calculate estimated cost based on model pricing
-  let estimatedCostUsd: number | undefined;
-  if (hasTokenUsage) {
-    const scoutPricing = getModelPricing(scoutModel);
-    const editorPricing = getModelPricing(editorModel);
-    const specialistPricing = getModelPricing(specialistModel);
-    const reviewerPricing = getModelPricing(reviewerModel);
+  // Get actual LLM cost from OpenRouter (aggregated via addTokenUsage)
+  // This is the real cost from providerMetadata.openrouter.usage.cost
+  const actualCostUsd = totalTokenUsage.actualCostUsd;
 
-    estimatedCostUsd =
-      (scoutTokenUsage.input / 1000) * scoutPricing.inputPer1k +
-      (scoutTokenUsage.output / 1000) * scoutPricing.outputPer1k +
-      (editorTotalTokenUsage.input / 1000) * editorPricing.inputPer1k +
-      (editorTotalTokenUsage.output / 1000) * editorPricing.outputPer1k +
-      (specialistTokenUsage.input / 1000) * specialistPricing.inputPer1k +
-      (specialistTokenUsage.output / 1000) * specialistPricing.outputPer1k +
-      (reviewerTokenUsage.input / 1000) * reviewerPricing.inputPer1k +
-      (reviewerTokenUsage.output / 1000) * reviewerPricing.outputPer1k +
-      // Fixer uses reviewer model, so use same pricing
-      (fixerTokenUsage.input / 1000) * reviewerPricing.inputPer1k +
-      (fixerTokenUsage.output / 1000) * reviewerPricing.outputPer1k;
-
-    // Round to 6 decimal places for precision
-    estimatedCostUsd = Math.round(estimatedCostUsd * 1_000_000) / 1_000_000;
-
-    log.info(`Estimated generation cost: $${estimatedCostUsd.toFixed(4)} USD`);
+  if (actualCostUsd !== undefined) {
+    log.info(`Actual LLM generation cost: $${actualCostUsd.toFixed(4)} USD (from OpenRouter)`);
+  } else if (hasTokenUsage) {
+    log.warn('No actual cost data from OpenRouter - cost tracking may be incomplete');
   }
 
   const tokenUsage: AggregatedTokenUsage | undefined = hasTokenUsage
@@ -1352,7 +1335,9 @@ export async function generateGameArticleDraft(
         specialist: specialistTokenUsage,
         ...(shouldRunReviewer ? { reviewer: reviewerTokenUsage } : {}),
         total: totalTokenUsage,
-        estimatedCostUsd,
+        actualCostUsd,
+        // Keep estimatedCostUsd for backwards compatibility (deprecated)
+        estimatedCostUsd: actualCostUsd,
       }
     : undefined;
 
@@ -1412,6 +1397,26 @@ export async function generateGameArticleDraft(
       }
     : undefined;
 
+  // ===== AGGREGATE SEARCH API COSTS =====
+  const specialistSearchCosts = specialistResult.output.searchApiCosts;
+  const searchApiCosts: SearchApiCosts = {
+    totalUsd: scoutOutput.searchApiCosts.totalUsd + specialistSearchCosts.totalUsd,
+    exaSearchCount:
+      scoutOutput.searchApiCosts.exaSearchCount + specialistSearchCosts.exaSearchCount,
+    tavilySearchCount:
+      scoutOutput.searchApiCosts.tavilySearchCount + specialistSearchCosts.tavilySearchCount,
+    exaCostUsd: scoutOutput.searchApiCosts.exaCostUsd + specialistSearchCosts.exaCostUsd,
+    tavilyCostUsd:
+      scoutOutput.searchApiCosts.tavilyCostUsd + specialistSearchCosts.tavilyCostUsd,
+    tavilyCredits:
+      scoutOutput.searchApiCosts.tavilyCredits + specialistSearchCosts.tavilyCredits,
+  };
+
+  // Calculate total cost (LLM + Search APIs)
+  // Use actual cost from OpenRouter when available
+  const llmCostUsd = tokenUsage?.actualCostUsd ?? 0;
+  const totalEstimatedCostUsd = llmCostUsd + searchApiCosts.totalUsd;
+
   // Build immutable metadata for debugging and analytics
   const metadata: ArticleGenerationMetadata = {
     generatedAt: new Date().toISOString(),
@@ -1420,6 +1425,8 @@ export async function generateGameArticleDraft(
     queriesExecuted: finalResearchPool.queryCache.size,
     sourcesCollected: finalResearchPool.allUrls.size,
     tokenUsage,
+    searchApiCosts,
+    totalEstimatedCostUsd,
     correlationId,
     researchConfidence: scoutOutput.confidence,
     ...(recovery ? { recovery } : {}),

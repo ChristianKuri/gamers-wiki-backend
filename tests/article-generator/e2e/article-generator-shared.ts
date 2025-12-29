@@ -211,6 +211,7 @@ export function extractGameInfo(json: any): GameInfo {
 export function extractGenerationStats(json: any): GenerationStats {
   const metadata = json?.draft?.metadata ?? {};
   const tokenUsage = metadata.tokenUsage ?? {};
+  const searchApiCosts = metadata.searchApiCosts;
 
   return {
     success: json?.success ?? false,
@@ -227,13 +228,15 @@ export function extractGenerationStats(json: any): GenerationStats {
     },
     tokens: {
       byPhase: {
+        // Include actualCostUsd from each phase if available
         scout: tokenUsage.scout ?? { input: 0, output: 0 },
         editor: tokenUsage.editor ?? { input: 0, output: 0 },
         specialist: tokenUsage.specialist ?? { input: 0, output: 0 },
         ...(tokenUsage.reviewer ? { reviewer: tokenUsage.reviewer } : {}),
       },
       total: tokenUsage.total ?? { input: 0, output: 0 },
-      estimatedCostUsd: tokenUsage.estimatedCostUsd ?? 0,
+      // Use actualCostUsd if available, fall back to estimatedCostUsd for backwards compatibility
+      estimatedCostUsd: tokenUsage.actualCostUsd ?? tokenUsage.estimatedCostUsd ?? 0,
     },
     models: json?.models ?? {},
     research: {
@@ -241,6 +244,10 @@ export function extractGenerationStats(json: any): GenerationStats {
       sourcesCollected: metadata.sourcesCollected ?? 0,
       confidence: metadata.researchConfidence ?? 'medium',
     },
+    // Include search API costs if available
+    ...(searchApiCosts ? { searchCosts: searchApiCosts } : {}),
+    // Include total cost (LLM + Search APIs) if available
+    ...(metadata.totalEstimatedCostUsd !== undefined ? { totalCostUsd: metadata.totalEstimatedCostUsd } : {}),
   };
 }
 

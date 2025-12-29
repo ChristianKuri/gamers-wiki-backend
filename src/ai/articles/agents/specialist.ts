@@ -35,13 +35,18 @@ import {
   type SectionWriteState,
 } from '../section-context';
 import {
+  addExaSearchCost,
+  addTavilySearch,
   addTokenUsage,
+  createEmptySearchApiCosts,
   createEmptyTokenUsage,
+  createTokenUsageFromResult,
   type CategorizedSearchResult,
   type GameArticleContext,
   type ResearchPool,
   type ResearchProgressCallback,
   type ScoutOutput,
+  type SearchApiCosts,
   type SearchFunction,
   type SearchSource,
   type SectionProgressCallback,
@@ -88,6 +93,11 @@ export interface SpecialistOutput {
   readonly researchPool: ResearchPool;
   /** Token usage for Specialist phase LLM calls */
   readonly tokenUsage: TokenUsage;
+  /**
+   * Search API costs aggregated from all section research.
+   * Exa costs are actual (from API), Tavily costs are estimated.
+   */
+  readonly searchApiCosts: SearchApiCosts;
 }
 
 // ============================================================================
@@ -143,9 +153,10 @@ async function executeSingleSearch(
       { context: `Specialist search: "${query.slice(0, 50)}..."`, signal }
     );
 
+    // Pass through cost from Tavily response if available
     return {
       query,
-      result: processSearchResults(query, 'section-specific', result, 'tavily'),
+      result: processSearchResults(query, 'section-specific', result, 'tavily', result.costUsd),
       success: true,
     };
   } catch (error) {
@@ -170,7 +181,8 @@ async function executeSingleSearch(
 }
 
 /**
- * Executes a single Exa semantic search with retry logic.
+ * Executes a single Exa deep search with retry logic.
+ * Uses 'deep' search for comprehensive results with query expansion.
  * Best for "how to" and meaning-based queries in guide articles.
  *
  * @param query - Semantic query string (natural language works best)
@@ -187,15 +199,21 @@ async function executeSingleExaSearch(
 ): Promise<SearchOperationResult> {
   try {
     const exaOptions: ExaSearchOptions = {
-      numResults: SPECIALIST_CONFIG.MAX_SEARCH_RESULTS,
-      type: 'neural',
+      numResults: SPECIALIST_CONFIG.EXA_SEARCH_RESULTS,
+      // Use 'deep' for comprehensive results with query expansion
+      type: 'deep',
       useAutoprompt: true,
+      // Request AI-generated summaries (Gemini Flash) - query-aware and more useful than truncated text
+      includeSummary: true,
     };
 
     const result = await withRetry(
       () => exaSearch(query, exaOptions),
       { context: `Specialist Exa search: "${query.slice(0, 50)}..."`, signal }
     );
+
+    // Extract cost from Exa response (if available)
+    const costUsd = result.costDollars?.total;
 
     return {
       query,
@@ -207,11 +225,13 @@ async function executeSingleExaSearch(
           results: result.results.map((r) => ({
             title: r.title,
             url: r.url,
-            content: r.content,
+            // Prefer AI-generated summary over raw content if available
+            content: r.summary ?? r.content,
             score: r.score,
           })),
         },
-        'exa' as SearchSource
+        'exa' as SearchSource,
+        costUsd
       ),
       success: true,
     };
@@ -277,6 +297,8 @@ interface BatchResearchResult {
   readonly successCount: number;
   readonly failureCount: number;
   readonly failedQueries: readonly string[];
+  /** Aggregated search API costs from batch research */
+  readonly searchApiCosts: SearchApiCosts;
 }
 
 /**
@@ -326,6 +348,7 @@ async function batchResearchForSections(
       successCount: 0,
       failureCount: 0,
       failedQueries: [],
+      searchApiCosts: createEmptySearchApiCosts(),
     };
   }
 
@@ -379,6 +402,7 @@ async function batchResearchForSections(
   const failedQueries: string[] = [];
   let completedQueries = 0;
   const totalQueries = tavilyQueries.length + exaQueries.length;
+  let searchApiCosts = createEmptySearchApiCosts();
 
   // Report initial progress
   onProgress?.(0, totalQueries);
@@ -386,7 +410,8 @@ async function batchResearchForSections(
   // Helper to process a batch of queries
   const processBatch = async (
     batch: string[],
-    executeFunc: (query: string) => Promise<SearchOperationResult>
+    executeFunc: (query: string) => Promise<SearchOperationResult>,
+    isExa: boolean
   ): Promise<void> => {
     const batchResults = await Promise.all(batch.map(executeFunc));
 
@@ -394,8 +419,36 @@ async function batchResearchForSections(
       if (searchResult.success) {
         poolBuilder.add(searchResult.result);
         successCount++;
+
+        // Track search costs
+        if (isExa) {
+          const costUsd = searchResult.result.costUsd;
+          if (costUsd !== undefined) {
+            searchApiCosts = addExaSearchCost(searchApiCosts, { costUsd });
+          } else {
+            // Estimate deep search cost if not returned
+            searchApiCosts = addExaSearchCost(searchApiCosts, { costUsd: 0.015 });
+          }
+        } else {
+          // Tavily search - use actual cost from API if available
+          const costUsd = searchResult.result.costUsd;
+          if (costUsd !== undefined) {
+            searchApiCosts = addTavilySearch(searchApiCosts, {
+              credits: 1, // Basic search = 1 credit
+              costUsd,
+            });
+          } else {
+            searchApiCosts = addTavilySearch(searchApiCosts);
+          }
+        }
       } else {
         failedQueries.push(searchResult.query);
+        // Still count the search attempt for cost tracking (API was called even if failed)
+        if (isExa) {
+          searchApiCosts = addExaSearchCost(searchApiCosts, { costUsd: 0.015 });
+        } else {
+          searchApiCosts = addTavilySearch(searchApiCosts);
+        }
       }
     }
 
@@ -417,7 +470,7 @@ async function batchResearchForSections(
         `queries ${batchStart + 1}-${batchEnd} of ${tavilyQueries.length}`
     );
 
-    await processBatch(batch, (query) => executeSingleSearch(search, query, signal, log, true));
+    await processBatch(batch, (query) => executeSingleSearch(search, query, signal, log, true), false);
 
     if (batchDelay > 0 && batchEnd < tavilyQueries.length) {
       await sleep(batchDelay);
@@ -438,7 +491,7 @@ async function batchResearchForSections(
         `queries ${batchStart + 1}-${batchEnd} of ${exaQueries.length}`
     );
 
-    await processBatch(batch, (query) => executeSingleExaSearch(query, signal, log, true));
+    await processBatch(batch, (query) => executeSingleExaSearch(query, signal, log, true), true);
 
     if (batchDelay > 0 && batchEnd < exaQueries.length) {
       await sleep(batchDelay);
@@ -460,11 +513,21 @@ async function batchResearchForSections(
     );
   }
 
+  // Log cost summary
+  if (searchApiCosts.totalUsd > 0) {
+    log.debug(
+      `Search API costs: $${searchApiCosts.totalUsd.toFixed(4)} ` +
+        `(Tavily: ${searchApiCosts.tavilySearchCount} searches $${searchApiCosts.tavilyCostUsd.toFixed(4)}, ` +
+        `Exa: ${searchApiCosts.exaSearchCount} searches $${searchApiCosts.exaCostUsd.toFixed(4)})`
+    );
+  }
+
   return {
     pool: poolBuilder.build(),
     successCount,
     failureCount: failedQueries.length,
     failedQueries,
+    searchApiCosts,
   };
 }
 
@@ -627,7 +690,7 @@ async function writeSection(
 
   log.debug(`Writing section ${sectionIndex + 1}/${plan.sections.length}: ${section.headline}`);
 
-  const { text, usage } = await withRetry(
+  const result = await withRetry(
     () =>
       deps.generateText({
         model: deps.model,
@@ -646,12 +709,10 @@ async function writeSection(
     { context: `Specialist section "${section.headline}"`, signal: deps.signal }
   );
 
-  // AI SDK v4 uses inputTokens/outputTokens instead of promptTokens/completionTokens
-  const tokenUsage: TokenUsage = usage
-    ? { input: usage.inputTokens ?? 0, output: usage.outputTokens ?? 0 }
-    : createEmptyTokenUsage();
+  // Use createTokenUsageFromResult to capture both tokens and actual cost from OpenRouter
+  const tokenUsage = createTokenUsageFromResult(result);
 
-  return { text: text.trim(), tokenUsage };
+  return { text: result.text.trim(), tokenUsage };
 }
 
 // ============================================================================
@@ -688,7 +749,7 @@ export async function runSpecialist(
   // Use Exa for semantic queries in guide articles
   const useExaForSemanticQueries = plan.categorySlug === 'guides';
   log.info('Starting batch research for all sections...');
-  const { pool: enrichedPool, successCount, failureCount } = await batchResearchForSections(
+  const { pool: enrichedPool, successCount, failureCount, searchApiCosts } = await batchResearchForSections(
     plan,
     scoutOutput.researchPool,
     deps.search,
@@ -843,6 +904,7 @@ export async function runSpecialist(
     sources: finalUrls,
     researchPool: enrichedPool,
     tokenUsage: totalTokenUsage,
+    searchApiCosts,
   };
 }
 

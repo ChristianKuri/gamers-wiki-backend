@@ -23,6 +23,7 @@ import {
 } from '../prompts/reviewer-prompts';
 import {
   createEmptyTokenUsage,
+  createTokenUsageFromResult,
   type FixStrategy,
   type ScoutOutput,
   type TokenUsage,
@@ -347,7 +348,7 @@ export async function runReviewer(
 
   log.debug('Executing review with AI model...');
 
-  const { object, usage } = await withRetry(
+  const result = await withRetry(
     () =>
       deps.generateObject({
         model: deps.model,
@@ -360,10 +361,10 @@ export async function runReviewer(
     { context: 'Reviewer analysis', signal: deps.signal }
   );
 
-  // Build token usage (AI SDK v4 uses inputTokens/outputTokens)
-  const tokenUsage: TokenUsage = usage
-    ? { input: usage.inputTokens ?? 0, output: usage.outputTokens ?? 0 }
-    : createEmptyTokenUsage();
+  const { object } = result;
+
+  // Use createTokenUsageFromResult to capture both tokens and actual cost from OpenRouter
+  const tokenUsage = createTokenUsageFromResult(result);
 
   // Filter out invalid issues (missing fixInstruction, invalid locations)
   const validIssues = filterValidIssues(object.issues, log);

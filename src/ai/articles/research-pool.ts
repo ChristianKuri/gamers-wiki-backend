@@ -301,6 +301,7 @@ export function extractResearchForQueries(
  * @param category - The category for this search
  * @param rawResults - Raw results from search API
  * @param searchSource - The search API used ('tavily' or 'exa'), defaults to 'tavily'
+ * @param costUsd - Optional cost in USD for this search (from Exa API response)
  * @returns Processed categorized result
  */
 export function processSearchResults(
@@ -310,7 +311,8 @@ export function processSearchResults(
     answer?: string | null;
     results: readonly { title: string; url: string; content?: string; score?: number }[];
   },
-  searchSource: SearchSource = 'tavily'
+  searchSource: SearchSource = 'tavily',
+  costUsd?: number
 ): CategorizedSearchResult {
   const processedResults: SearchResultItem[] = rawResults.results
     .map((r) => {
@@ -332,6 +334,7 @@ export function processSearchResults(
     category,
     timestamp: Date.now(),
     searchSource,
+    ...(costUsd !== undefined ? { costUsd } : {}),
   };
 }
 

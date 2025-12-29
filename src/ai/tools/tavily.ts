@@ -1,3 +1,25 @@
+/**
+ * Tavily Web Search API wrapper.
+ *
+ * Pricing: $0.008 per credit (basic=1, advanced=2)
+ * Docs: https://docs.tavily.com/documentation/api-reference/endpoint/search
+ *
+ * Current features used:
+ * - search_depth: basic (1 credit)
+ * - include_answer: true (LLM summary)
+ * - include_usage: true (cost tracking)
+ *
+ * Future features available (not yet implemented):
+ * - include_images: true → images[]: { url, description? }
+ *   Use case: Article hero images, inline screenshots
+ * - include_image_descriptions: true → Alt text for images
+ * - topic: "news" → Real-time game updates, patch notes
+ * - time_range: "week" | "month" → Filter recent content
+ * - search_depth: "advanced" → Multiple semantic snippets per URL (2 credits)
+ *
+ * @see docs/ai-article-generation-technical-reference.md for full API reference
+ */
+
 export type TavilySearchDepth = 'basic' | 'advanced';
 
 export interface TavilySearchOptions {
@@ -16,10 +38,24 @@ export interface TavilySearchResult {
   readonly raw_content?: string;
 }
 
+/**
+ * Credit usage from Tavily API.
+ * Cost: $0.008 per credit
+ * - basic search: 1 credit
+ * - advanced search: 2 credits
+ */
+export interface TavilyUsage {
+  readonly credits: number;
+}
+
 export interface TavilySearchResponse {
   readonly query: string;
   readonly answer: string | null;
   readonly results: readonly TavilySearchResult[];
+  /** Credit usage from Tavily API (if include_usage was true) */
+  readonly usage?: TavilyUsage;
+  /** Calculated cost in USD based on credits ($0.008/credit) */
+  readonly costUsd?: number;
 }
 
 export function isTavilyConfigured(): boolean {
@@ -35,6 +71,9 @@ function safeString(value: unknown): string | undefined {
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : undefined;
 }
+
+/** Cost per Tavily credit in USD */
+const TAVILY_COST_PER_CREDIT = 0.008;
 
 function parseTavilyResponse(query: string, raw: unknown): TavilySearchResponse {
   if (!raw || typeof raw !== 'object') {
@@ -68,7 +107,26 @@ function parseTavilyResponse(query: string, raw: unknown): TavilySearchResponse 
     })
     .filter((r): r is TavilySearchResult => r !== null);
 
-  return { query, answer, results };
+  // Parse usage from response (if include_usage was true)
+  let usage: TavilyUsage | undefined;
+  let costUsd: number | undefined;
+  const usageObj = obj.usage;
+  if (usageObj && typeof usageObj === 'object') {
+    const usageRecord = usageObj as Record<string, unknown>;
+    if (typeof usageRecord.credits === 'number') {
+      const credits = usageRecord.credits;
+      usage = { credits };
+      costUsd = credits * TAVILY_COST_PER_CREDIT;
+    }
+  }
+
+  return {
+    query,
+    answer,
+    results,
+    ...(usage ? { usage } : {}),
+    ...(costUsd !== undefined ? { costUsd } : {}),
+  };
 }
 
 /**
@@ -100,14 +158,16 @@ export async function tavilySearch(
       method: 'POST',
       headers: {
         'content-type': 'application/json',
+        // Modern auth via header (api_key in body still works for backwards compat)
+        Authorization: `Bearer ${apiKey}`,
       },
       body: JSON.stringify({
-        api_key: apiKey,
         query: cleanedQuery,
         search_depth: options.searchDepth ?? 'basic',
-        max_results: clampInt(options.maxResults ?? 6, 1, 10),
+        max_results: clampInt(options.maxResults ?? 6, 1, 20), // Tavily allows up to 20
         include_answer: options.includeAnswer ?? true,
         include_raw_content: options.includeRawContent ?? false,
+        include_usage: true, // Track actual credit usage for cost calculation
       }),
       signal: controller.signal,
     });

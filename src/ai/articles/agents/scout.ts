@@ -33,14 +33,19 @@ import {
   ResearchPoolBuilder,
 } from '../research-pool';
 import {
+  addExaSearchCost,
+  addTavilySearch,
   addTokenUsage,
   ArticleGenerationError,
+  createEmptySearchApiCosts,
   createEmptyTokenUsage,
+  createTokenUsageFromResult,
   type CategorizedSearchResult,
   type GameArticleContext,
   type ResearchConfidence,
   type ResearchPool,
   type ScoutOutput,
+  type SearchApiCosts,
   type SearchFunction,
   type SearchSource,
   type TokenUsage,
@@ -97,7 +102,10 @@ export interface ExecuteSearchOptions {
  */
 export interface ExecuteExaSearchOptions {
   readonly numResults?: number;
-  readonly type?: 'keyword' | 'neural' | 'auto';
+  /** Search type: 'deep' (recommended), 'auto', 'neural', 'keyword', or 'fast' */
+  readonly type?: 'deep' | 'auto' | 'neural' | 'keyword' | 'fast';
+  /** Additional query variations for better coverage (deep search feature) */
+  readonly additionalQueries?: readonly string[];
   readonly includeDomains?: readonly string[];
   readonly signal?: AbortSignal;
 }
@@ -129,12 +137,13 @@ export async function executeSearch(
     { context: `Scout search (${category}): "${query.slice(0, 40)}..."`, signal: options.signal }
   );
 
-  return processSearchResults(query, category, result, 'tavily');
+  // Pass through cost from Tavily response if available
+  return processSearchResults(query, category, result, 'tavily', result.costUsd);
 }
 
 /**
- * Executes an Exa semantic search with retry logic.
- * Exa is best for meaning-based queries like "how does X work".
+ * Executes an Exa deep search with retry logic.
+ * Uses 'deep' search type for comprehensive results with query expansion.
  * Exported for unit testing.
  *
  * @param query - Semantic query string (natural language works best)
@@ -149,8 +158,15 @@ export async function executeExaSearch(
 ): Promise<CategorizedSearchResult> {
   const exaOptions: ExaSearchOptions = {
     numResults: options.numResults ?? SCOUT_CONFIG.CATEGORY_SEARCH_RESULTS,
-    type: options.type ?? 'neural',
+    // Use 'deep' for comprehensive results with query expansion
+    type: options.type ?? 'deep',
     useAutoprompt: true,
+    // Request AI-generated summaries (Gemini Flash) - query-aware and more useful than truncated text
+    includeSummary: true,
+    // Additional query variations for better coverage (deep search feature)
+    ...(options.additionalQueries && options.additionalQueries.length > 0
+      ? { additionalQueries: options.additionalQueries }
+      : {}),
     ...(options.includeDomains && options.includeDomains.length > 0
       ? { includeDomains: options.includeDomains }
       : {}),
@@ -161,29 +177,27 @@ export async function executeExaSearch(
     { context: `Scout Exa search (${category}): "${query.slice(0, 40)}..."`, signal: options.signal }
   );
 
-  // Log Exa search result
-  if (result.results.length > 0) {
-    // Logging happens at call site, but we could add more detail here if needed
-  } else {
-    // Empty results - could indicate API issue or no matches
-    // This is logged by withRetry on failure, so we don't need to log here
-  }
+  // Extract cost from Exa response (if available)
+  const costUsd = result.costDollars?.total;
 
   // Convert Exa response to CategorizedSearchResult format
+  // Now includes summary if available from Exa
   return processSearchResults(
     query,
     category,
     {
-      // Exa doesn't provide answer summaries like Tavily
+      // Use Exa's summary if available (from deep search)
       answer: null,
       results: result.results.map((r) => ({
         title: r.title,
         url: r.url,
-        content: r.content,
+        // Prefer summary over raw content if available
+        content: r.summary ?? r.content,
         score: r.score,
       })),
     },
-    'exa' as SearchSource
+    'exa' as SearchSource,
+    costUsd
   );
 }
 
@@ -407,6 +421,7 @@ export function calculateResearchConfidence(
  * @param researchPool - Built research pool
  * @param tokenUsage - Aggregated token usage from LLM calls
  * @param confidence - Research confidence level
+ * @param searchApiCosts - Aggregated search API costs
  * @returns Complete ScoutOutput
  */
 export function assembleScoutOutput(
@@ -416,7 +431,8 @@ export function assembleScoutOutput(
   fullContext: string,
   researchPool: ResearchPool,
   tokenUsage: TokenUsage,
-  confidence: ResearchConfidence
+  confidence: ResearchConfidence,
+  searchApiCosts: SearchApiCosts
 ): ScoutOutput {
   return {
     briefing: {
@@ -429,6 +445,7 @@ export function assembleScoutOutput(
     sourceUrls: Array.from(researchPool.allUrls),
     tokenUsage,
     confidence,
+    searchApiCosts,
   };
 }
 
@@ -544,9 +561,9 @@ export async function runScout(
     ? exaConfig.semantic.map((query) =>
         trackSearchProgress(
           executeExaSearch(query, 'category-specific', {
-            numResults: SCOUT_CONFIG.CATEGORY_SEARCH_RESULTS,
-            type: 'neural',
-            // Note: includeDomains is optional - Exa's neural search often finds good results without it
+            numResults: SCOUT_CONFIG.EXA_SEARCH_RESULTS,
+            type: 'deep',
+            // Note: includeDomains is optional - Exa's deep search finds comprehensive results without it
             signal,
           })
         )
@@ -575,15 +592,44 @@ export async function runScout(
 
   const researchPool = poolBuilder.build();
 
+  // ===== AGGREGATE SEARCH API COSTS =====
+  let searchApiCosts = createEmptySearchApiCosts();
+
+  // Track Tavily searches with actual costs from API response
+  for (const result of tavilyResults) {
+    if (result.costUsd !== undefined) {
+      // Use actual cost from API response
+      searchApiCosts = addTavilySearch(searchApiCosts, {
+        credits: 1, // Tavily basic search = 1 credit
+        costUsd: result.costUsd,
+      });
+    } else {
+      // Fallback to estimate if cost not available
+      searchApiCosts = addTavilySearch(searchApiCosts);
+    }
+  }
+
+  // Track Exa searches (actual cost from API)
+  for (const result of exaResults) {
+    if (result.costUsd !== undefined) {
+      searchApiCosts = addExaSearchCost(searchApiCosts, { costUsd: result.costUsd });
+    } else {
+      // Exa search without cost info - estimate based on search type
+      // Deep search: $0.015, Neural: $0.005
+      searchApiCosts = addExaSearchCost(searchApiCosts, { costUsd: 0.015 });
+    }
+  }
+
   // Log Exa usage metrics if enabled
   if (useExa) {
     if (exaResults.length > 0) {
       const exaUrlCount = exaResults.reduce((sum, r) => sum + r.results.length, 0);
       const successfulQueries = exaResults.filter((r) => r.results.length > 0).length;
       const successRate = ((successfulQueries / exaResults.length) * 100).toFixed(1);
+      const exaCost = searchApiCosts.exaCostUsd.toFixed(4);
       log.debug(
         `Exa API: ${exaUrlCount} sources from ${exaResults.length} queries ` +
-          `(${successfulQueries}/${exaResults.length} successful, ${successRate}% success rate)`
+          `(${successfulQueries}/${exaResults.length} successful, ${successRate}% success rate, $${exaCost} cost)`
       );
     } else {
       log.debug('Exa API: No results returned from semantic queries');
@@ -676,15 +722,10 @@ export async function runScout(
   const recentBriefing = recentResult.text.trim();
 
   // ===== AGGREGATE TOKEN USAGE =====
-  // AI SDK v4 uses inputTokens/outputTokens instead of promptTokens/completionTokens
+  // Use createTokenUsageFromResult to capture both tokens and actual cost from OpenRouter
   let tokenUsage = createEmptyTokenUsage();
   for (const result of [overviewResult, categoryResult, recentResult]) {
-    if (result.usage) {
-      tokenUsage = addTokenUsage(tokenUsage, {
-        input: result.usage.inputTokens ?? 0,
-        output: result.usage.outputTokens ?? 0,
-      });
-    }
+    tokenUsage = addTokenUsage(tokenUsage, createTokenUsageFromResult(result));
   }
 
   // ===== VALIDATION =====
@@ -706,6 +747,6 @@ export async function runScout(
 
   // ===== ASSEMBLE OUTPUT =====
   const fullContext = buildFullContext(context, overviewBriefing, categoryBriefing, recentBriefing);
-  return assembleScoutOutput(overviewBriefing, categoryBriefing, recentBriefing, fullContext, researchPool, tokenUsage, confidence);
+  return assembleScoutOutput(overviewBriefing, categoryBriefing, recentBriefing, fullContext, researchPool, tokenUsage, confidence, searchApiCosts);
 }
 
