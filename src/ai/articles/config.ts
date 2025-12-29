@@ -79,8 +79,10 @@ export const ARTICLE_PLAN_CONSTRAINTS = {
   TITLE_RECOMMENDED_MAX_LENGTH: 70,
 
   // Excerpt constraints (for SEO meta description)
+  // Google typically shows 150-160 chars, but can display up to 300
   EXCERPT_MIN_LENGTH: 120,
-  EXCERPT_MAX_LENGTH: 160,
+  EXCERPT_RECOMMENDED_MAX_LENGTH: 160, // Ideal for SEO - used in prompts
+  EXCERPT_MAX_LENGTH: 200, // Hard cap for schema - allows some flexibility
 
   // Section constraints
   MIN_SECTIONS: 4,

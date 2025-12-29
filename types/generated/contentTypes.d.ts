@@ -1950,7 +1950,7 @@ export interface ApiPostPost extends Struct.CollectionTypeSchema {
         };
       }> &
       Schema.Attribute.SetMinMaxLength<{
-        maxLength: 160;
+        maxLength: 200;
       }>;
     featuredImage: Schema.Attribute.Media<'images'> &
       Schema.Attribute.SetPluginOptions<{

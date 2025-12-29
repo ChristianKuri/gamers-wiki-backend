@@ -37,7 +37,7 @@
     },
     "excerpt": {
       "type": "string",
-      "maxLength": 160,
+      "maxLength": 200,
       "pluginOptions": {
         "i18n": {
           "localized": true

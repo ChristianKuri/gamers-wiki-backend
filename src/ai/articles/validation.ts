@@ -205,6 +205,7 @@ function validateStructureWithSchema(draft: {
  */
 function validateStructureWarnings(draft: {
   title: string;
+  excerpt: string;
   tags: readonly string[];
   markdown: string;
   sources: readonly string[];
@@ -215,6 +216,12 @@ function validateStructureWarnings(draft: {
   // Title length recommendation (warning, not error)
   if (draft.title.length > C.TITLE_RECOMMENDED_MAX_LENGTH) {
     issues.push(issue('warning', `Title is quite long: ${draft.title.length} characters (recommended: ≤${C.TITLE_RECOMMENDED_MAX_LENGTH})`));
+  }
+
+  // Excerpt length recommendation (warning, not error)
+  // SEO best practice is 150-160 chars, but we allow up to 200 in schema
+  if (draft.excerpt.length > C.EXCERPT_RECOMMENDED_MAX_LENGTH) {
+    issues.push(issue('warning', `Excerpt is quite long: ${draft.excerpt.length} characters (recommended: ≤${C.EXCERPT_RECOMMENDED_MAX_LENGTH} for optimal SEO)`));
   }
 
   // Section count check (warning)
