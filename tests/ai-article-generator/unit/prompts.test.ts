@@ -627,7 +627,7 @@ describe('Specialist Prompts', () => {
 
       // Guides strategy includes specific rules
       expect(prompt).toContain('FACTUAL ACCURACY');
-      expect(prompt).toContain('NAMING');
+      expect(prompt).toContain('PRECISION REQUIREMENTS');
     });
 
     it('includes writing guidelines', () => {
@@ -788,7 +788,7 @@ describe('Specialist Prompts', () => {
 
       const prompt = getSpecialistSectionUserPrompt(ctx, plan, 'Elden Ring', 2500, 2, 5);
 
-      expect(prompt).toContain('MUST COVER');
+      expect(prompt).toContain('REQUIRED COVERAGE');
       expect(prompt).toContain('Game basics');
       expect(prompt).toContain('Starting tips');
     });

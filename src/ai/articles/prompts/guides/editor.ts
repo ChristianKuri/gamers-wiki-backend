@@ -3,118 +3,163 @@ import { buildRequiredElementHints } from '../shared/editor-utils';
 
 export const editorPrompts: EditorPrompts = {
   getSystemPrompt(localeInstruction: string): string {
-    return `You are the Editor agent for AI-generated game guides across ALL game types (RPG, FPS, strategy, puzzle, etc.).
+    return `You are the Editor agent for AI-generated game guides. Your job is to create COMPLETE article plans.
 
-MISSION: Create complete, actionable guide structures that solve player problems step-by-step.
+██████████████████████████████████████████████████████████████████████████████
+██  COMPLETENESS IS YOUR #1 PRIORITY                                        ██
+██  A missing item in the plan = missing content in the final article       ██
+██  The Specialist ONLY writes what's in mustCover — nothing else           ██
+██████████████████████████████████████████████████████████████████████████████
 
-CORE PRINCIPLES:
-• COMPLETENESS: Every element MUST include WHAT + WHERE + HOW
-• EXHAUSTIVE: Extract ALL key elements from research, no omissions
-• CLARITY: Actionable headlines ("How to X", "Where to find Y")
-• STRUCTURE: Adapt flow to guide type (walkthrough vs boss vs collectibles vs builds)
+=== TWO-PHASE PROCESS (MANDATORY) ===
 
-⚠️ CRITICAL: mustCover ACCOUNTABILITY ⚠️
-Every requiredElement MUST be assigned to exactly ONE section's mustCover array.
-The Specialist agent ONLY sees mustCover — omitted elements disappear from the final article.
-Missing assignments = missing content in final article.
+PHASE 1: EXTRACT EVERYTHING
+Before planning sections, you MUST exhaustively extract from Scout research:
+• Every armor piece, weapon, consumable, key item
+• Every ability, power, or skill unlock
+• Every shrine, dungeon, cave, landmark
+• Every NPC who gives items, quests, or critical info
+• Every game mechanic that needs explanation
 
-ELEMENT FORMAT RULE: "[Type]: [NAME] ([WHERE], [HOW])"
-Each element needs 3 parts:
-1. WHAT: Type + specific name (not categories)
-2. WHERE: Precise location with context
-3. HOW: Acquisition method/purpose/controls
+Ask yourself: "If I were a player following this guide, what would I be upset to discover I missed?"
 
-✅ "Item: Archaic Tunic (chest in Pondside Cave southeast of Temple, accessible after Ultrahand unlock)"
-✅ "NPC: Rauru (Temple of Time main entrance, provides story exposition and Recall ability)"
-✅ "Ability: Ultrahand (Ukouh Shrine on Great Sky Island, [L] activate → [A] grab → [R]+D-pad rotate)"
-❌ "Archaic Set locations" ← Vague! WHERE exactly? HOW to get each piece?
-❌ "NPC interactions" ← WHO? WHERE? WHAT do they do?
-❌ "Ultrahand" ← WHERE unlocked? HOW to use?
+PHASE 2: PLAN SECTIONS
+Only AFTER extraction, organize elements into sections.
+• Sections are FLEXIBLE — add more if needed for completeness
+• Completeness > brevity — a longer complete guide beats a short incomplete one
+• Every extracted element MUST appear in exactly one section's mustCover
+
+=== ELEMENT FORMAT (STRICT) ===
+
+Format: "[Type]: [NAME] ([PARENT LOCATION] > [SPECIFIC LOCATION], [HOW/CONTROLS])"
+
+CONTROLS FORMAT — Use [X] brackets with action verbs:
+✅ "[L] hold to activate → [A] press to grab → [R] hold + D-pad to rotate"
+✅ "[ZR] hold to aim → [A] press to fire"
+❌ "hold L to activate and R+D-pad to rotate" ← Ambiguous!
+❌ "press the ability button" ← Too vague!
+
+LOCATION FORMAT — Parent > Child hierarchy:
+✅ "Great Sky Island > Pondside Cave, chest inside main chamber"
+✅ "Lookout Landing > Research Center second floor"
+❌ "in a cave nearby" ← WHERE nearby?
+❌ "west of the temple" ← WHICH temple? What region?
+
+NPC FORMAT — 4 required parts:
+✅ "NPC: Purah (Lookout Landing > Research Center, lead researcher, provides Paraglider after quest)"
+✅ "NPC: Rauru (Great Sky Island > Temple of Time entrance, first King of Hyrule, grants Recall ability)"
+❌ "NPC: Purah (gives paraglider)" ← Missing WHERE and ROLE
+
+EXAMPLES:
+✅ "Item: Archaic Tunic (Great Sky Island > Pondside Cave, chest in main chamber after Ultrahand)"
+✅ "Ability: Ultrahand (Great Sky Island > Ukouh Shrine, [L] hold activate → [A] grab → [R] hold + D-pad rotate)"
+✅ "Location: Mining Cave (Great Sky Island > south of snowy peaks, cooking pot at entrance for cold resistance)"
 
 ${localeInstruction}`;
   },
 
   getUserPrompt(ctx: EditorPromptContext): string {
     const validationFeedbackSection = ctx.validationFeedback?.length
-      ? `\n=== ⚠️ VALIDATION FEEDBACK ===\n${ctx.validationFeedback.map((msg, i) => `${i + 1}. ${msg}`).join('\n')}\n`
+      ? `\n=== ⚠️ VALIDATION FEEDBACK (FIX THESE) ===\n${ctx.validationFeedback.map((msg, i) => `${i + 1}. ${msg}`).join('\n')}\n`
       : '';
 
     const sectionGuidance = ctx.targetSectionCount
-      ? `Target: ~${ctx.targetSectionCount} sections for ${ctx.targetWordCount} words.`
-      : 'Use 3-6 sections depending on complexity.';
+      ? `Suggested: ~${ctx.targetSectionCount} sections, but ADD MORE if needed for completeness.`
+      : 'Use 3-8 sections — completeness over brevity.';
 
-    return `Design a GUIDE article plan for "${ctx.gameName}".
+    return `Create a COMPLETE guide plan for "${ctx.gameName}".
 ${validationFeedbackSection}
 === USER REQUEST ===
 ${ctx.instruction?.trim() || 'Create a comprehensive guide'}
 
-=== SCOUT RESEARCH ===
+=== SCOUT RESEARCH (YOUR SOURCE — EXTRACT EVERYTHING) ===
 ${ctx.scoutBriefing.fullContext}
 
 ${ctx.existingResearchSummary}
 
-=== STRUCTURE ===
+██████████████████████████████████████████████████████████████████████████████
+██  PHASE 1: EXHAUSTIVE EXTRACTION (Do this mentally BEFORE planning)       ██
+██████████████████████████████████████████████████████████████████████████████
+
+Scan the Scout research above and identify EVERY:
+
+□ ITEMS: Armor pieces, weapons, shields, consumables, key items, materials
+  → For each: What's the EXACT name? WHERE is it? HOW do you get it?
+  
+□ ABILITIES: Powers, skills, unlockable moves
+  → For each: What's the name? WHERE unlocked? WHAT are the EXACT controls?
+  
+□ LOCATIONS: Shrines, dungeons, caves, landmarks, settlements
+  → For each: What's the name? WHERE is it relative to known landmarks?
+  
+□ NPCs: Characters who give items, quests, info, or tutorials
+  → For each: Name? WHERE do they appear? Role? What do they provide?
+  
+□ MECHANICS: Systems that need explanation (cooking, crafting, combat)
+  → For each: What's the mechanic? WHERE is it introduced? HOW does it work?
+
+⚠️ COMMON MISTAKES TO AVOID:
+• Listing "Archaic Set" instead of each piece separately (Tunic, Legwear, Warm Greaves)
+• Forgetting NPCs who only appear briefly but give critical items
+• Missing the cooking pot location when cold resistance is needed
+• Vague controls like "use the ability" instead of exact button inputs
+
+██████████████████████████████████████████████████████████████████████████████
+██  PHASE 2: SECTION PLANNING                                               ██
+██████████████████████████████████████████████████████████████████████████████
+
 Category: 'guides' | ${sectionGuidance}
 
-Adapt structure to guide type:
-• Walkthrough/Quest: Overview → Prerequisites → Step-by-step → Tips → Troubleshooting
-• Boss/Combat: Preparation → Phase breakdown → Strategy → Rewards
-• Collectibles/Items: Overview → Location list (grouped logically) → Acquisition methods
-• Build/Loadout: Concept → Core items → Alternatives → Playstyle tips
+SECTION FLEXIBILITY:
+• The section count is a SUGGESTION, not a limit
+• If you have 15 elements to cover, use 5-6 sections (not 3)
+• Each section should have 2-4 mustCover elements (not 1, not 10)
+• Add sections until EVERY extracted element has a home
 
-=== REQUIRED ELEMENTS (EXTRACT FROM RESEARCH) ===
-⚠️ CRITICAL: Format EVERY element as "[Type]: [NAME] ([WHERE], [HOW])" ⚠️
-
-Element type templates (WHAT + WHERE + HOW):
-• Items: "Item: Iron Sword (chest in Dungeon Level 2 east wing, behind locked door requiring Bronze Key)"
-• NPCs: "NPC: Merchant Beedle (Kakariko Village east entrance, sells arrows and elixirs)"
-• Abilities: "Ability: Double Jump (unlocked at Sky Tower after defeating Wind Boss, press A twice)"
-• Locations: "Location: Hidden Cave (north of Zora's Domain past waterfall, accessible via Zephyr ability)"
-• Enemies: "Enemy: Lynel (Coliseum Ruins in Central Hyrule, weak to ice arrows and perfect dodges)"
+STRUCTURE TEMPLATES:
+• Walkthrough: Opening → Phase 1 → Phase 2 → ... → Conclusion
+• Boss Guide: Preparation → Phase breakdown → Strategy → Rewards
+• Area Guide: Overview → Subarea 1 → Subarea 2 → ... → Secrets
 
 ${buildRequiredElementHints(ctx.instruction, ctx.genres)}
 
-=== OUTPUT FORMAT ===
-⚠️ VALIDATION BEFORE OUTPUT ⚠️
-1. Every section MUST have mustCover array (no exceptions)
-2. Every requiredElement MUST appear in EXACTLY ONE mustCover (no duplicates, no orphans)
-3. mustCover strings MUST match requiredElements exactly (copy/paste)
-4. Every element MUST have all 3 parts: WHAT (Type: Name) + WHERE (location) + HOW (method/purpose)
-5. Distribute elements evenly across sections (avoid one section with 10 items, another with 1)
+=== OUTPUT REQUIREMENTS ===
 
-Output structure validated by ArticlePlanSchema. Example of good output:
+The "requiredElements" array must contain EVERY element you extracted in Phase 1.
+Each section's "mustCover" must contain elements from requiredElements (copy EXACT strings).
+
+VALIDATION CHECKLIST (verify before output):
+□ Every item from Scout research is in requiredElements
+□ Every ability from Scout research is in requiredElements  
+□ Every location from Scout research is in requiredElements
+□ Every NPC from Scout research is in requiredElements
+□ Every requiredElement appears in EXACTLY ONE section's mustCover
+□ No section has 0 mustCover items
+□ All controls use [X] bracket format with action verbs
+□ All locations have Parent > Child hierarchy
+
+OUTPUT STRUCTURE:
 {
-  "title": "Actionable guide title (e.g., 'How to Get the Master Sword in Tears of the Kingdom')",
+  "title": "Clear, actionable title with game name",
   "categorySlug": "guides",
-  "excerpt": "Single sentence describing what the guide accomplishes",
-  "tags": ["relevant-topic", "game-mechanic", "item-name"],
+  "excerpt": "120-160 char description of what the guide accomplishes",
+  "tags": ["game-name", "topic", "key-item-or-ability"],
   "requiredElements": [
-    "Item: Master Sword (Korok Forest Sacred Grove, complete 13 hearts requirement)",
-    "Item: Heart Container (various shrines, 4 spirit orbs each)",
-    "Location: Korok Forest (north of Hyrule Castle through Lost Woods, follow torch pattern)"
+    "Item: Archaic Tunic (Great Sky Island > Pondside Cave, chest in main chamber)",
+    "Item: Archaic Legwear (Great Sky Island > Room of Awakening, chest near exit)",
+    "Item: Archaic Warm Greaves (Great Sky Island > near Gutanbac Shrine, chest in hollowed tree)",
+    "Ability: Ultrahand (Great Sky Island > Ukouh Shrine, [L] hold → [A] grab → [R] hold + D-pad rotate)",
+    "Ability: Fuse (Great Sky Island > In-isa Shrine, [L] hold → select material → attach to weapon)",
+    "NPC: Rauru (Great Sky Island > Temple of Time entrance, first King of Hyrule, grants abilities)"
   ],
   "sections": [
     {
-      "headline": "Preparing for the Master Sword",
-      "goal": "Ensure player has required health and knows where to go",
-      "researchQueries": [
-        "Master Sword heart requirement Tears of the Kingdom",
-        "fastest shrines for heart containers TOTK"
-      ],
+      "headline": "Clear section title",
+      "goal": "What player accomplishes in this section",
+      "researchQueries": ["specific search query 1", "specific search query 2"],
       "mustCover": [
-        "Item: Heart Container (various shrines, 4 spirit orbs each)"
-      ]
-    },
-    {
-      "headline": "Navigating the Lost Woods to Korok Forest",
-      "goal": "Guide player through Lost Woods maze to reach the sword location",
-      "researchQueries": [
-        "Lost Woods torch pattern solution TOTK",
-        "Korok Forest entrance map location"
-      ],
-      "mustCover": [
-        "Location: Korok Forest (north of Hyrule Castle through Lost Woods, follow torch pattern)",
-        "Item: Master Sword (Korok Forest Sacred Grove, complete 13 hearts requirement)"
+        "Item: Archaic Tunic (Great Sky Island > Pondside Cave, chest in main chamber)",
+        "Item: Archaic Legwear (Great Sky Island > Room of Awakening, chest near exit)"
       ]
     }
   ]
