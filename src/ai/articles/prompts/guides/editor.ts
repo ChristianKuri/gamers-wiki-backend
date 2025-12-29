@@ -63,7 +63,6 @@ ${localeInstruction}`;
       ? `\n=== ⚠️ VALIDATION FEEDBACK (FIX THESE) ===\n${ctx.validationFeedback.map((msg, i) => `${i + 1}. ${msg}`).join('\n')}\n`
       : '';
 
-    const sectionGuidance = 'Use as many sections as needed — completeness over brevity.';
 
     return `Create a COMPLETE guide plan for "${ctx.gameName}".
 ${validationFeedbackSection}
@@ -106,13 +105,12 @@ Scan the Scout research above and identify EVERY:
 ██  PHASE 2: SECTION PLANNING                                               ██
 ██████████████████████████████████████████████████████████████████████████████
 
-Category: 'guides' | ${sectionGuidance}
+Category: 'guides'
 
-SECTION FLEXIBILITY:
-• The section count is a SUGGESTION, not a limit
-• If you have 15 elements to cover, use 5-6 sections (not 3)
-• Each section should have 2-4 mustCover elements (not 1, not 10)
-• Add sections until EVERY extracted element has a home
+SECTION PLANNING:
+• Create as many sections as the content requires
+• Each section should have 2-4 mustCover elements
+• Every extracted element must have a home in exactly one section
 
 STRUCTURE TEMPLATES:
 • Walkthrough: Opening → Phase 1 → Phase 2 → ... → Conclusion

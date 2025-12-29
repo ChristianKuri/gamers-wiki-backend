@@ -82,7 +82,7 @@ const VALID_CATEGORY_SLUGS = ['news', 'reviews', 'guides', 'lists'] as const;
 const VALID_CONFIDENCE_LEVELS = ['high', 'medium', 'low'] as const;
 
 const TEST_IGDB_ID = 119388; // The Legend of Zelda: Tears of the Kingdom
-const TEST_INSTRUCTION = 'Write a beginner guide for the first hour. Use 3-4 sections.';
+const TEST_INSTRUCTION = 'Write a beginner guide for the first hour.';
 
 // ============================================================================
 // Test Infrastructure

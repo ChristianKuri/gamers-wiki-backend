@@ -45,7 +45,6 @@ export interface EditorDeps {
   readonly temperature?: number;
   /**
    * Target word count for the article.
-   * Used to calculate recommended section count.
    * If not provided, category defaults will be applied later.
    */
   readonly targetWordCount?: number;
