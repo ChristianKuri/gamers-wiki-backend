@@ -50,7 +50,7 @@ ${ctx.categoryHintsSection}
 - title: Compelling headline
 - excerpt: Meta description (120-160 chars)
 - tags: 3-8 topic tags
-- sections: ${ctx.targetSectionCount ? `Target ${ctx.targetSectionCount} sections` : '4-8 sections'}
+- sections: Use as many sections as needed for completeness
 
 === REQUIRED ELEMENTS ===
 ${buildRequiredElementHints(ctx.instruction, ctx.genres)}

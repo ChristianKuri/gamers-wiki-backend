@@ -15,7 +15,7 @@ import {
   type ArticlePlan,
   type ArticleCategorySlugInput,
 } from '../article-plan';
-import { EDITOR_CONFIG, WORD_COUNT_CONSTRAINTS } from '../config';
+import { EDITOR_CONFIG } from '../config';
 import { findCorruptedPlanField } from '../validation';
 import { withRetry } from '../retry';
 import {
@@ -78,20 +78,6 @@ export interface EditorOutput {
  * @param deps - Dependencies (generateObject, model)
  * @returns Editor output with article plan and token usage
  */
-/**
- * Calculates the recommended number of sections based on target word count.
- * Uses WORD_COUNT_CONSTRAINTS.WORDS_PER_SECTION as the baseline.
- *
- * @param targetWordCount - Target word count for the article
- * @returns Recommended number of sections (minimum 4)
- */
-function calculateTargetSectionCount(targetWordCount: number | undefined): number | undefined {
-  if (!targetWordCount) return undefined;
-
-  const sectionCount = Math.round(targetWordCount / WORD_COUNT_CONSTRAINTS.WORDS_PER_SECTION);
-  // Enforce minimum of 4 sections, maximum of 10 for readability
-  return Math.max(4, Math.min(10, sectionCount));
-}
 
 export async function runEditor(
   context: GameArticleContext,
@@ -117,13 +103,7 @@ export async function runEditor(
     EDITOR_CONFIG.OVERVIEW_LINES_IN_PROMPT
   );
 
-  // Calculate target section count from word count
   const targetWordCount = deps.targetWordCount ?? context.targetWordCount;
-  const targetSectionCount = calculateTargetSectionCount(targetWordCount);
-
-  if (targetWordCount) {
-    log.debug(`Target word count: ${targetWordCount}, recommended sections: ${targetSectionCount}`);
-  }
 
   const promptContext: EditorPromptContext = {
     gameName: context.gameName,
@@ -138,7 +118,6 @@ export async function runEditor(
     existingResearchSummary,
     categoryHintsSection,
     targetWordCount,
-    targetSectionCount,
     validationFeedback: deps.validationFeedback,
     categorySlug: effectiveCategorySlug,
   };

@@ -63,9 +63,7 @@ ${localeInstruction}`;
       ? `\n=== ⚠️ VALIDATION FEEDBACK (FIX THESE) ===\n${ctx.validationFeedback.map((msg, i) => `${i + 1}. ${msg}`).join('\n')}\n`
       : '';
 
-    const sectionGuidance = ctx.targetSectionCount
-      ? `Suggested: ~${ctx.targetSectionCount} sections, but ADD MORE if needed for completeness.`
-      : 'Use 3-8 sections — completeness over brevity.';
+    const sectionGuidance = 'Use as many sections as needed — completeness over brevity.';
 
     return `Create a COMPLETE guide plan for "${ctx.gameName}".
 ${validationFeedbackSection}

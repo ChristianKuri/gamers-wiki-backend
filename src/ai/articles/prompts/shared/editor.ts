@@ -14,7 +14,6 @@ export interface EditorPromptContext {
   readonly existingResearchSummary: string;
   readonly categoryHintsSection: string;
   readonly targetWordCount?: number;
-  readonly targetSectionCount?: number;
   readonly validationFeedback?: readonly string[];
   readonly categorySlug?: ArticleCategorySlug;
 }
