@@ -71,6 +71,7 @@ There are many weapon types in Elden Ring:
 - Magic catalysts`,
   summary: 'A combat guide for Elden Ring covering basic mechanics and weapon types.',
   qualityScore: 75,
+  relevanceScore: 90,
   qualityNotes: 'Good guide content with clear structure. Relevant gaming information.',
   contentType: 'strategy guide',
   ...overrides,
@@ -258,7 +259,7 @@ describe('cleanSingleSource', () => {
     expect(result.source?.junkRatio).toBeCloseTo(0.4, 2);
   });
 
-  it('handles generateObject errors gracefully', async () => {
+  it('handles generateObject errors gracefully with fallback content', async () => {
     const rawSource = createMockRawSource();
     const deps = {
       ...createMockCleanerDeps(),
@@ -267,7 +268,11 @@ describe('cleanSingleSource', () => {
 
     const result = await cleanSingleSource(rawSource, deps);
 
-    expect(result.source).toBeNull();
+    // Now returns fallback raw content instead of null to preserve potentially valuable content
+    expect(result.source).not.toBeNull();
+    expect(result.source?.qualityScore).toBe(25); // Low score since uncleaned
+    expect(result.source?.contentType).toBe('raw fallback');
+    expect(result.source?.qualityNotes).toContain('Cleaning failed');
     expect(result.tokenUsage.input).toBe(0);
     expect(deps.logger.warn).toHaveBeenCalled();
   });
@@ -412,8 +417,10 @@ describe('CLEANER_CONFIG', () => {
   });
 
   it('has valid quality thresholds', () => {
-    expect(CLEANER_CONFIG.MIN_QUALITY_FOR_CACHE).toBeGreaterThanOrEqual(0);
-    expect(CLEANER_CONFIG.MIN_QUALITY_FOR_CACHE).toBeLessThanOrEqual(100);
+    expect(CLEANER_CONFIG.MIN_QUALITY_FOR_STORAGE).toBeGreaterThanOrEqual(0);
+    expect(CLEANER_CONFIG.MIN_QUALITY_FOR_STORAGE).toBeLessThanOrEqual(100);
+    expect(CLEANER_CONFIG.MIN_QUALITY_FOR_RESULTS).toBeGreaterThanOrEqual(0);
+    expect(CLEANER_CONFIG.MIN_QUALITY_FOR_RESULTS).toBeLessThanOrEqual(100);
     expect(CLEANER_CONFIG.AUTO_EXCLUDE_THRESHOLD).toBeGreaterThanOrEqual(0);
     expect(CLEANER_CONFIG.AUTO_EXCLUDE_THRESHOLD).toBeLessThanOrEqual(100);
   });
