@@ -1,0 +1,83 @@
+{
+  "kind": "collectionType",
+  "collectionName": "source_contents",
+  "info": {
+    "singularName": "source-content",
+    "pluralName": "source-contents",
+    "displayName": "Source Content",
+    "description": "Cached cleaned web content from search results with quality metadata"
+  },
+  "options": {
+    "draftAndPublish": false
+  },
+  "pluginOptions": {},
+  "attributes": {
+    "url": {
+      "type": "string",
+      "required": true,
+      "unique": true,
+      "maxLength": 2048
+    },
+    "domain": {
+      "type": "string",
+      "required": true,
+      "maxLength": 255
+    },
+    "title": {
+      "type": "string",
+      "required": true,
+      "maxLength": 500
+    },
+    "summary": {
+      "type": "text"
+    },
+    "cleanedContent": {
+      "type": "richtext",
+      "required": true
+    },
+    "originalContentLength": {
+      "type": "integer",
+      "required": true,
+      "min": 0
+    },
+    "qualityScore": {
+      "type": "integer",
+      "required": true,
+      "min": 0,
+      "max": 100
+    },
+    "qualityNotes": {
+      "type": "text"
+    },
+    "contentType": {
+      "type": "string",
+      "required": true,
+      "maxLength": 100
+    },
+    "junkRatio": {
+      "type": "decimal",
+      "required": true,
+      "min": 0,
+      "max": 1
+    },
+    "accessCount": {
+      "type": "integer",
+      "required": true,
+      "default": 0,
+      "min": 0
+    },
+    "lastAccessedAt": {
+      "type": "datetime"
+    },
+    "searchSource": {
+      "type": "enumeration",
+      "enum": ["tavily", "exa"],
+      "required": true
+    },
+    "games": {
+      "type": "relation",
+      "relation": "manyToMany",
+      "target": "api::game.game"
+    }
+  }
+}

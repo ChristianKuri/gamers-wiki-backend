@@ -4,10 +4,19 @@
  * Manages the collection of research results from Scout and Specialist agents.
  * Uses a builder pattern internally for efficient mutation, returning immutable
  * snapshots at boundaries.
+ *
+ * Optionally integrates with the Cleaner agent to clean raw content and cache
+ * results in Strapi for future reuse.
  */
 
+import type { Core } from '@strapi/strapi';
+import type { LanguageModel } from 'ai';
+
+import type { Logger } from '../../utils/logger';
 import type {
   CategorizedSearchResult,
+  CleanedSource,
+  RawSourceInput,
   ResearchPool,
   SearchCategory,
   SearchResultItem,
@@ -357,6 +366,217 @@ export function processSearchResults(
     timestamp: Date.now(),
     searchSource,
     ...(costUsd !== undefined ? { costUsd } : {}),
+  };
+}
+
+// ============================================================================
+// Content Cleaning Integration
+// ============================================================================
+
+/**
+ * Dependencies for content cleaning during research processing.
+ * When provided, enables cleaning of raw content and caching in Strapi.
+ */
+export interface CleaningDeps {
+  /** Strapi instance for cache operations */
+  readonly strapi: Core.Strapi;
+  /** AI SDK generateObject function */
+  readonly generateObject: typeof import('ai').generateObject;
+  /** Language model for cleaning */
+  readonly model: LanguageModel;
+  /** Logger instance */
+  readonly logger?: Logger;
+  /** AbortSignal for cancellation */
+  readonly signal?: AbortSignal;
+  /** Game name for relevance scoring */
+  readonly gameName?: string;
+  /** Game document ID for linking sources */
+  readonly gameDocumentId?: string | null;
+}
+
+/**
+ * Result of processing search results with cleaning.
+ */
+export interface CleanedSearchProcessingResult {
+  /** The categorized search result with potentially cleaned content */
+  readonly result: CategorizedSearchResult;
+  /** Number of cache hits */
+  readonly cacheHits: number;
+  /** Number of cache misses (newly cleaned) */
+  readonly cacheMisses: number;
+  /** Number of cleaning failures */
+  readonly cleaningFailures: number;
+}
+
+/**
+ * Processes search results with optional content cleaning.
+ *
+ * When cleaningDeps is provided:
+ * 1. Checks cache for all URLs
+ * 2. Cleans uncached URLs in parallel
+ * 3. Stores cleaned results in Strapi
+ * 4. Returns CategorizedSearchResult with cleaned content
+ *
+ * When cleaningDeps is not provided, behaves like processSearchResults.
+ *
+ * @param query - The search query
+ * @param category - The category for this search
+ * @param rawResults - Raw results from search API
+ * @param searchSource - The search API used
+ * @param costUsd - Optional cost in USD
+ * @param cleaningDeps - Optional cleaning dependencies (enables cleaning when provided)
+ * @returns Processed result with cleaning stats
+ */
+export async function processSearchResultsWithCleaning(
+  query: string,
+  category: SearchCategory,
+  rawResults: {
+    answer?: string | null;
+    results: readonly {
+      title: string;
+      url: string;
+      content?: string;
+      raw_content?: string;
+      summary?: string;
+      score?: number;
+    }[];
+  },
+  searchSource: SearchSource = 'tavily',
+  costUsd?: number,
+  cleaningDeps?: CleaningDeps
+): Promise<CleanedSearchProcessingResult> {
+  // If no cleaning deps, just process normally
+  if (!cleaningDeps) {
+    return {
+      result: processSearchResults(query, category, rawResults, searchSource, costUsd),
+      cacheHits: 0,
+      cacheMisses: 0,
+      cleaningFailures: 0,
+    };
+  }
+
+  // Lazy import to avoid circular dependencies
+  const { cleanSourcesBatch } = await import('./agents/cleaner');
+  const { checkSourceCache, storeCleanedSources } = await import('./source-cache');
+
+  const { strapi, generateObject, model, logger, signal, gameName, gameDocumentId } = cleaningDeps;
+
+  // Build raw source inputs
+  const rawSources: RawSourceInput[] = rawResults.results
+    .map((r) => {
+      const normalized = normalizeUrl(r.url);
+      if (!normalized) return null;
+      return {
+        url: normalized,
+        title: r.title,
+        content: r.raw_content ?? r.content ?? '',
+        searchSource,
+      };
+    })
+    .filter((r): r is RawSourceInput => r !== null);
+
+  if (rawSources.length === 0) {
+    return {
+      result: processSearchResults(query, category, rawResults, searchSource, costUsd),
+      cacheHits: 0,
+      cacheMisses: 0,
+      cleaningFailures: 0,
+    };
+  }
+
+  // Check cache for all URLs
+  const cacheResults = await checkSourceCache(strapi, rawSources);
+
+  // Separate cache hits and misses
+  const hits = cacheResults.filter((r) => r.hit);
+  const misses = cacheResults.filter((r) => !r.hit && r.raw);
+
+  // Clean uncached sources
+  let cleanedSources: CleanedSource[] = [];
+  let cleaningFailures = 0;
+
+  if (misses.length > 0) {
+    const sourcesToClean = misses.map((m) => m.raw!);
+    const cleanResult = await cleanSourcesBatch(sourcesToClean, {
+      generateObject,
+      model,
+      logger,
+      signal,
+      gameName,
+    });
+    cleanedSources = cleanResult.sources;
+    // Note: cleanResult.tokenUsage could be aggregated if needed for cost tracking
+
+    cleaningFailures = misses.length - cleanedSources.length;
+
+    // Store cleaned sources in DB (fire-and-forget is OK here)
+    if (cleanedSources.length > 0) {
+      storeCleanedSources(strapi, cleanedSources, gameDocumentId).catch((err) => {
+        const message = err instanceof Error ? err.message : String(err);
+        logger?.warn?.(`Failed to store cleaned sources: ${message}`);
+      });
+    }
+  }
+
+  // Build lookup maps for merging
+  const cachedByUrl = new Map<string, CleanedSource>();
+  for (const hit of hits) {
+    if (hit.cached) {
+      cachedByUrl.set(hit.url, hit.cached);
+    }
+  }
+
+  const cleanedByUrl = new Map<string, CleanedSource>();
+  for (const cleaned of cleanedSources) {
+    cleanedByUrl.set(cleaned.url, cleaned);
+  }
+
+  // Build final result items, using cleaned content when available
+  const processedResults: SearchResultItem[] = rawResults.results
+    .map((r) => {
+      const normalized = normalizeUrl(r.url);
+      if (!normalized) return null;
+
+      // Check if we have cleaned content for this URL
+      const cached = cachedByUrl.get(normalized);
+      const cleaned = cleanedByUrl.get(normalized);
+      const cleanedSource = cached || cleaned;
+
+      if (cleanedSource) {
+        // Use cleaned content
+        return {
+          title: r.title,
+          url: normalized,
+          content: cleanedSource.cleanedContent,
+          ...(r.summary ? { summary: r.summary } : {}),
+          ...(typeof r.score === 'number' ? { score: r.score } : {}),
+        };
+      }
+
+      // Fallback to raw content
+      return {
+        title: r.title,
+        url: normalized,
+        content: r.raw_content ?? r.content ?? '',
+        ...(r.summary ? { summary: r.summary } : {}),
+        ...(typeof r.score === 'number' ? { score: r.score } : {}),
+      };
+    })
+    .filter((r): r is SearchResultItem => r !== null);
+
+  return {
+    result: {
+      query,
+      answer: rawResults.answer ?? null,
+      results: processedResults,
+      category,
+      timestamp: Date.now(),
+      searchSource,
+      ...(costUsd !== undefined ? { costUsd } : {}),
+    },
+    cacheHits: hits.length,
+    cacheMisses: misses.length,
+    cleaningFailures,
   };
 }
 

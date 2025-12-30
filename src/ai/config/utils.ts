@@ -24,6 +24,7 @@ export const AI_ENV_KEYS = {
   ARTICLE_EDITOR: 'AI_MODEL_ARTICLE_EDITOR',
   ARTICLE_SPECIALIST: 'AI_MODEL_ARTICLE_SPECIALIST',
   ARTICLE_REVIEWER: 'AI_MODEL_ARTICLE_REVIEWER',
+  ARTICLE_CLEANER: 'AI_MODEL_ARTICLE_CLEANER',
   GAME_MATCHER: 'AI_MODEL_GAME_MATCHER',
   POST_TRANSLATION: 'AI_MODEL_POST_TRANSLATION',
   TAG_GENERATION: 'AI_MODEL_TAG_GENERATION',
@@ -39,7 +40,7 @@ export const AI_ENV_KEYS = {
  * 
  * Available models (OpenRouter):
  * - google/gemini-3-pro-preview ($4.50/1M tokens)
- * - google/gemini-3-flash-preview ($1.13/1M tokens)
+ * - google/gemini-3-flash-preview ($0.50/1M input, $3/1M output)
  * - moonshotai/kimi-k2-thinking ($1.07/1M tokens)
  * - deepseek/deepseek-v3.2 ($0.32/1M tokens)
  * - openai/gpt-5-mini ($0.69/1M tokens)
@@ -60,6 +61,7 @@ export const AI_DEFAULT_MODELS = {
   ARTICLE_EDITOR: 'google/gemini-3-flash-preview',
   ARTICLE_SPECIALIST: 'google/gemini-3-flash-preview',
   ARTICLE_REVIEWER: 'google/gemini-3-flash-preview',
+  ARTICLE_CLEANER: 'google/gemini-3-flash-preview',
   GAME_MATCHER: 'google/gemini-3-flash-preview',
   POST_TRANSLATION: 'google/gemini-3-flash-preview',
   TAG_GENERATION: 'deepseek/deepseek-v3.2',

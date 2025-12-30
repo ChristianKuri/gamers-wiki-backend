@@ -926,3 +926,152 @@ export function createMockClock(initialTime: number, autoAdvance?: number): Cloc
   };
 }
 
+// ============================================================================
+// Cleaner Agent Types
+// ============================================================================
+
+/**
+ * Quality tier for domains based on average score.
+ * This is an enum because it maps to specific score thresholds.
+ */
+export type DomainTier = 'excellent' | 'good' | 'average' | 'poor' | 'excluded';
+
+/**
+ * Raw source input before cleaning.
+ */
+export interface RawSourceInput {
+  readonly url: string;
+  readonly title: string;
+  readonly content: string;
+  readonly searchSource: SearchSource;
+}
+
+/**
+ * Cleaned source output from the Cleaner agent.
+ */
+export interface CleanedSource {
+  readonly url: string;
+  readonly domain: string;
+  readonly title: string;
+  /** Short summary for quick reference (future: use for cache-only article generation) */
+  readonly summary: string | null;
+  readonly cleanedContent: string;
+  readonly originalContentLength: number;
+  readonly qualityScore: number;
+  readonly qualityNotes: string;
+  /** AI-determined content type (e.g., "wiki", "guide", "forum", "news article", etc.) */
+  readonly contentType: string;
+  readonly junkRatio: number;
+  readonly searchSource: SearchSource;
+}
+
+/**
+ * Cache check result for a single URL.
+ */
+export interface CacheCheckResult {
+  readonly url: string;
+  readonly hit: boolean;
+  readonly cached?: CleanedSource;
+  readonly raw?: RawSourceInput;
+}
+
+/**
+ * Stored source content from database.
+ */
+export interface StoredSourceContent {
+  readonly id: number;
+  readonly documentId: string;
+  readonly url: string;
+  readonly domain: string;
+  readonly title: string;
+  /** Short summary for quick reference */
+  readonly summary: string | null;
+  readonly cleanedContent: string;
+  readonly originalContentLength: number;
+  readonly qualityScore: number;
+  readonly qualityNotes: string | null;
+  /** AI-determined content type */
+  readonly contentType: string;
+  readonly junkRatio: number;
+  readonly accessCount: number;
+  readonly lastAccessedAt: string | null;
+  readonly searchSource: SearchSource;
+}
+
+/**
+ * Stored domain quality from database.
+ */
+export interface StoredDomainQuality {
+  readonly id: number;
+  readonly documentId: string;
+  readonly domain: string;
+  readonly avgQualityScore: number;
+  readonly totalSources: number;
+  readonly tier: DomainTier;
+  readonly isExcluded: boolean;
+  readonly excludeReason: string | null;
+  /** AI-inferred domain type */
+  readonly domainType: string;
+}
+
+/**
+ * Dependencies for the Cleaner agent.
+ */
+export interface CleanerDeps {
+  readonly generateObject: typeof import('ai').generateObject;
+  readonly model: import('ai').LanguageModel;
+  readonly logger?: import('../../utils/logger').Logger;
+  readonly signal?: AbortSignal;
+  /** Game name for relevance scoring context */
+  readonly gameName?: string;
+}
+
+/**
+ * Options for cleaning sources.
+ */
+export interface CleanSourcesOptions {
+  /** Game name for relevance scoring context */
+  readonly gameName?: string;
+  /** Game document ID for linking cleaned sources */
+  readonly gameDocumentId?: string | null;
+}
+
+/**
+ * Result of cleaning a single source.
+ */
+export interface CleanSingleSourceResult {
+  /** Cleaned source or null if cleaning failed */
+  readonly source: CleanedSource | null;
+  /** Token usage for this cleaning operation */
+  readonly tokenUsage: TokenUsage;
+}
+
+/**
+ * Result of cleaning multiple sources.
+ */
+export interface CleanSourcesResult {
+  /** All sources (cached + newly cleaned) */
+  readonly sources: readonly CleanedSource[];
+  /** Number of cache hits */
+  readonly cacheHits: number;
+  /** Number of cache misses (newly cleaned) */
+  readonly cacheMisses: number;
+  /** Total time for cleaning in ms */
+  readonly durationMs: number;
+  /** Aggregated token usage from all cleaning LLM calls */
+  readonly tokenUsage: TokenUsage;
+}
+
+/**
+ * Cleaner agent output schema for LLM.
+ */
+export interface CleanerLLMOutput {
+  readonly cleanedContent: string;
+  /** Short 1-2 sentence summary for quick reference */
+  readonly summary: string;
+  readonly qualityScore: number;
+  readonly qualityNotes: string;
+  /** AI-determined content type (free-form, e.g., "wiki article", "strategy guide", "forum discussion") */
+  readonly contentType: string;
+}
+

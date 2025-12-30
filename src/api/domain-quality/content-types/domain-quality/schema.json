@@ -1,0 +1,54 @@
+{
+  "kind": "collectionType",
+  "collectionName": "domain_qualities",
+  "info": {
+    "singularName": "domain-quality",
+    "pluralName": "domain-qualities",
+    "displayName": "Domain Quality",
+    "description": "Aggregated quality scores per domain for search filtering"
+  },
+  "options": {
+    "draftAndPublish": false
+  },
+  "pluginOptions": {},
+  "attributes": {
+    "domain": {
+      "type": "string",
+      "required": true,
+      "unique": true,
+      "maxLength": 255
+    },
+    "avgQualityScore": {
+      "type": "decimal",
+      "required": true,
+      "min": 0,
+      "max": 100,
+      "default": 0
+    },
+    "totalSources": {
+      "type": "integer",
+      "required": true,
+      "min": 0,
+      "default": 0
+    },
+    "tier": {
+      "type": "enumeration",
+      "enum": ["excellent", "good", "average", "poor", "excluded"],
+      "required": true,
+      "default": "average"
+    },
+    "isExcluded": {
+      "type": "boolean",
+      "required": true,
+      "default": false
+    },
+    "excludeReason": {
+      "type": "text"
+    },
+    "domainType": {
+      "type": "string",
+      "required": true,
+      "maxLength": 100
+    }
+  }
+}

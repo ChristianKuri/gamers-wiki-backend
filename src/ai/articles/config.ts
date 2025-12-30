@@ -545,6 +545,74 @@ export const FIXER_CONFIG = {
 } as const;
 
 // ============================================================================
+// Cleaner Agent Configuration
+// ============================================================================
+
+export const CLEANER_CONFIG = {
+  /**
+   * Temperature for Cleaner LLM calls.
+   * Very low (0.1) for consistent, deterministic cleaning.
+   * We want the same input to produce the same cleaned output.
+   */
+  TEMPERATURE: 0.1,
+  /**
+   * Maximum output tokens for cleaning.
+   * Content can be long after cleaning, allow generous output.
+   */
+  MAX_OUTPUT_TOKENS: 16000,
+  /**
+   * Number of URLs to clean in parallel.
+   * Balance between speed and API rate limits.
+   */
+  BATCH_SIZE: 5,
+  /**
+   * Timeout for cleaning a single URL (ms).
+   * 30 seconds should be plenty for content extraction.
+   */
+  TIMEOUT_MS: 30000,
+  /**
+   * Minimum quality score to cache content.
+   * Don't waste storage on garbage content.
+   */
+  MIN_QUALITY_FOR_CACHE: 20,
+  /**
+   * Domain average score below this triggers auto-exclusion.
+   * Requires AUTO_EXCLUDE_MIN_SAMPLES to prevent premature exclusion.
+   */
+  AUTO_EXCLUDE_THRESHOLD: 25,
+  /**
+   * Minimum samples before auto-excluding a domain.
+   * Prevents exclusion based on one bad page.
+   */
+  AUTO_EXCLUDE_MIN_SAMPLES: 5,
+  /**
+   * Maximum input characters to process.
+   * Skip processing huge pages to save costs.
+   */
+  MAX_INPUT_CHARS: 50000,
+  /**
+   * Minimum cleaned content length to consider valid.
+   * If cleaning results in less than this, content is likely garbage.
+   */
+  MIN_CLEANED_CHARS: 100,
+  /**
+   * Whether the cleaner is enabled.
+   * Set to false to bypass cleaning entirely (use raw content).
+   */
+  ENABLED: true,
+  /**
+   * Quality score thresholds for domain tiers.
+   */
+  TIER_THRESHOLDS: {
+    excellent: 80,
+    good: 60,
+    average: 40,
+    poor: 25,
+    // Below poor is excluded
+  } as const,
+} as const;
+
+// ============================================================================
 // Retry Configuration
 // ============================================================================
 
@@ -617,6 +685,9 @@ export const MODEL_PRICING: Record<string, ModelPricing> = {
   // Google models
   'google/gemini-pro': { inputPer1k: 0.00025, outputPer1k: 0.0005 },
   'google/gemini-pro-1.5': { inputPer1k: 0.00125, outputPer1k: 0.005 },
+  'google/gemini-flash-2.0': { inputPer1k: 0.0001, outputPer1k: 0.0004 },
+  // Gemini 3 Flash: $0.50/1M input, $3/1M output (per OpenRouter Dec 2025)
+  'google/gemini-3-flash-preview': { inputPer1k: 0.0005, outputPer1k: 0.003 },
 } as const;
 
 /**
@@ -668,6 +739,7 @@ export const CONFIG = {
   specialist: SPECIALIST_CONFIG,
   reviewer: REVIEWER_CONFIG,
   fixer: FIXER_CONFIG,
+  cleaner: CLEANER_CONFIG,
   retry: RETRY_CONFIG,
   generator: GENERATOR_CONFIG,
   seo: SEO_CONSTRAINTS,
@@ -753,6 +825,17 @@ function validateConfiguration(): void {
   validateTemperature(FIXER_CONFIG.TEMPERATURE, 'FIXER_CONFIG.TEMPERATURE');
   validatePositive(FIXER_CONFIG.MAX_FIXES_PER_ITERATION, 'FIXER_CONFIG.MAX_FIXES_PER_ITERATION');
   validatePositive(FIXER_CONFIG.MAX_OUTPUT_TOKENS_SMART_FIX, 'FIXER_CONFIG.MAX_OUTPUT_TOKENS_SMART_FIX');
+
+  // Cleaner Config
+  validateTemperature(CLEANER_CONFIG.TEMPERATURE, 'CLEANER_CONFIG.TEMPERATURE');
+  validatePositive(CLEANER_CONFIG.MAX_OUTPUT_TOKENS, 'CLEANER_CONFIG.MAX_OUTPUT_TOKENS');
+  validatePositive(CLEANER_CONFIG.BATCH_SIZE, 'CLEANER_CONFIG.BATCH_SIZE');
+  validatePositive(CLEANER_CONFIG.TIMEOUT_MS, 'CLEANER_CONFIG.TIMEOUT_MS');
+  validateNonNegative(CLEANER_CONFIG.MIN_QUALITY_FOR_CACHE, 'CLEANER_CONFIG.MIN_QUALITY_FOR_CACHE');
+  validateNonNegative(CLEANER_CONFIG.AUTO_EXCLUDE_THRESHOLD, 'CLEANER_CONFIG.AUTO_EXCLUDE_THRESHOLD');
+  validatePositive(CLEANER_CONFIG.AUTO_EXCLUDE_MIN_SAMPLES, 'CLEANER_CONFIG.AUTO_EXCLUDE_MIN_SAMPLES');
+  validatePositive(CLEANER_CONFIG.MAX_INPUT_CHARS, 'CLEANER_CONFIG.MAX_INPUT_CHARS');
+  validatePositive(CLEANER_CONFIG.MIN_CLEANED_CHARS, 'CLEANER_CONFIG.MIN_CLEANED_CHARS');
 
   // Retry Config
   validatePositive(RETRY_CONFIG.MAX_RETRIES, 'RETRY_CONFIG.MAX_RETRIES');
