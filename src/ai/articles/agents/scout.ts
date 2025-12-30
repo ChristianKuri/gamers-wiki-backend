@@ -7,6 +7,9 @@
  * Uses two search strategies:
  * - Tavily: Keyword-based web search for factual queries (overview, recent news)
  * - Exa: Neural/semantic search for "how does X work" queries (guides only)
+ *
+ * Optionally integrates with the Cleaner agent to clean raw content before
+ * passing to downstream agents (Editor, Specialist).
  */
 
 import type { LanguageModel } from 'ai';
@@ -30,7 +33,9 @@ import {
 import {
   deduplicateQueries,
   processSearchResults,
+  processSearchResultsWithCleaning,
   ResearchPoolBuilder,
+  type CleaningDeps,
 } from '../research-pool';
 import {
   addExaSearchCost,
@@ -59,6 +64,17 @@ export { SCOUT_CONFIG } from '../config';
 // ============================================================================
 
 /**
+ * Extended search result that includes cleaning token usage.
+ * Used to track LLM costs from content cleaning operations.
+ */
+export interface ScoutSearchResult {
+  /** The categorized search result */
+  readonly result: CategorizedSearchResult;
+  /** Token usage from cleaning operations (if any) */
+  readonly cleaningTokenUsage: TokenUsage;
+}
+
+/**
  * Callback for monitoring Scout agent progress.
  *
  * @param step - Current step type ('search' or 'briefing')
@@ -82,6 +98,12 @@ export interface ScoutDeps {
   readonly onProgress?: ScoutProgressCallback;
   /** Optional temperature override (default: SCOUT_CONFIG.TEMPERATURE) */
   readonly temperature?: number;
+  /**
+   * Optional cleaning dependencies.
+   * When provided, search results are cleaned by the Cleaner agent
+   * and cached in the database for future reuse.
+   */
+  readonly cleaningDeps?: CleaningDeps;
 }
 
 // ============================================================================
@@ -95,6 +117,8 @@ export interface ExecuteSearchOptions {
   readonly searchDepth: 'basic' | 'advanced';
   readonly maxResults: number;
   readonly signal?: AbortSignal;
+  /** Optional cleaning dependencies for content cleaning and caching */
+  readonly cleaningDeps?: CleaningDeps;
 }
 
 /**
@@ -108,56 +132,80 @@ export interface ExecuteExaSearchOptions {
   readonly additionalQueries?: readonly string[];
   readonly includeDomains?: readonly string[];
   readonly signal?: AbortSignal;
+  /** Optional cleaning dependencies for content cleaning and caching */
+  readonly cleaningDeps?: CleaningDeps;
 }
 
 /**
  * Executes a Tavily search with retry logic and processes results into a CategorizedSearchResult.
+ * Optionally cleans content using the Cleaner agent when cleaningDeps is provided.
  * Exported for unit testing.
  *
  * @param search - Search function to use
  * @param query - Query string
  * @param category - Category to assign to results
- * @param options - Search options (depth, max results, signal)
- * @returns Processed search results
+ * @param options - Search options (depth, max results, signal, cleaningDeps)
+ * @returns Processed search results with cleaning token usage
  */
 export async function executeSearch(
   search: SearchFunction,
   query: string,
   category: CategorizedSearchResult['category'],
   options: ExecuteSearchOptions
-): Promise<CategorizedSearchResult> {
+): Promise<ScoutSearchResult> {
   const result = await withRetry(
     () =>
       search(query, {
         searchDepth: options.searchDepth,
         maxResults: options.maxResults,
         includeAnswer: true,
-        includeRawContent: false,
+        // Request raw content for cleaning (full page text)
+        includeRawContent: Boolean(options.cleaningDeps),
         // Exclude YouTube - video pages have no useful text content
         excludeDomains: [...SCOUT_CONFIG.EXA_EXCLUDE_DOMAINS],
       }),
     { context: `Scout search (${category}): "${query.slice(0, 40)}..."`, signal: options.signal }
   );
 
+  // If cleaning deps provided, clean and cache the content
+  if (options.cleaningDeps) {
+    const cleaningResult = await processSearchResultsWithCleaning(
+      query,
+      category,
+      result,
+      'tavily',
+      result.costUsd,
+      options.cleaningDeps
+    );
+    return {
+      result: cleaningResult.result,
+      cleaningTokenUsage: cleaningResult.cleaningTokenUsage,
+    };
+  }
+
   // Pass through cost from Tavily response if available
-  return processSearchResults(query, category, result, 'tavily', result.costUsd);
+  return {
+    result: processSearchResults(query, category, result, 'tavily', result.costUsd),
+    cleaningTokenUsage: createEmptyTokenUsage(),
+  };
 }
 
 /**
  * Executes an Exa deep search with retry logic.
  * Uses 'deep' search type for comprehensive results with query expansion.
+ * Optionally cleans content using the Cleaner agent when cleaningDeps is provided.
  * Exported for unit testing.
  *
  * @param query - Semantic query string (natural language works best)
  * @param category - Category to assign to results
- * @param options - Exa search options
- * @returns Processed search results with searchSource='exa'
+ * @param options - Exa search options (including optional cleaningDeps)
+ * @returns Processed search results with cleaning token usage
  */
 export async function executeExaSearch(
   query: string,
   category: CategorizedSearchResult['category'],
   options: ExecuteExaSearchOptions = {}
-): Promise<CategorizedSearchResult> {
+): Promise<ScoutSearchResult> {
   const exaOptions: ExaSearchOptions = {
     numResults: options.numResults ?? SCOUT_CONFIG.CATEGORY_SEARCH_RESULTS,
     // Use default from exa.ts (neural) - 4x faster, same cost
@@ -185,26 +233,42 @@ export async function executeExaSearch(
   // Extract cost from Exa response (if available)
   const costUsd = result.costDollars?.total;
 
+  // Build raw results for processing
+  const rawResults = {
+    answer: null,
+    results: result.results.map((r) => ({
+      title: r.title,
+      url: r.url,
+      // Keep full content for top results
+      content: r.content ?? '',
+      // Keep summary for efficient context (query-aware)
+      summary: r.summary,
+      score: r.score,
+    })),
+  };
+
+  // If cleaning deps provided, clean and cache the content
+  if (options.cleaningDeps) {
+    const cleaningResult = await processSearchResultsWithCleaning(
+      query,
+      category,
+      rawResults,
+      'exa',
+      costUsd,
+      options.cleaningDeps
+    );
+    return {
+      result: cleaningResult.result,
+      cleaningTokenUsage: cleaningResult.cleaningTokenUsage,
+    };
+  }
+
   // Convert Exa response to CategorizedSearchResult format
   // Preserve both content AND summary for hybrid approach
-  return processSearchResults(
-    query,
-    category,
-    {
-      answer: null,
-      results: result.results.map((r) => ({
-        title: r.title,
-        url: r.url,
-        // Keep full content for top results
-        content: r.content ?? '',
-        // Keep summary for efficient context (query-aware)
-        summary: r.summary,
-        score: r.score,
-      })),
-    },
-    'exa' as SearchSource,
-    costUsd
-  );
+  return {
+    result: processSearchResults(query, category, rawResults, 'exa' as SearchSource, costUsd),
+    cleaningTokenUsage: createEmptyTokenUsage(),
+  };
 }
 
 /**
@@ -463,6 +527,7 @@ export function calculateResearchConfidence(
  * @param tokenUsage - Aggregated token usage from LLM calls
  * @param confidence - Research confidence level
  * @param searchApiCosts - Aggregated search API costs
+ * @param cleaningTokenUsage - Optional cleaning token usage (tracked separately)
  * @returns Complete ScoutOutput
  */
 export function assembleScoutOutput(
@@ -473,9 +538,10 @@ export function assembleScoutOutput(
   researchPool: ResearchPool,
   tokenUsage: TokenUsage,
   confidence: ResearchConfidence,
-  searchApiCosts: SearchApiCosts
+  searchApiCosts: SearchApiCosts,
+  cleaningTokenUsage?: TokenUsage
 ): ScoutOutput {
-  return {
+  const output: ScoutOutput = {
     briefing: {
       overview: overviewBriefing,
       categoryInsights: categoryBriefing,
@@ -488,6 +554,13 @@ export function assembleScoutOutput(
     confidence,
     searchApiCosts,
   };
+
+  // Only include cleaningTokenUsage if there was actual cleaning
+  if (cleaningTokenUsage && (cleaningTokenUsage.input > 0 || cleaningTokenUsage.output > 0)) {
+    return { ...output, cleaningTokenUsage };
+  }
+
+  return output;
 }
 
 // ============================================================================
@@ -569,14 +642,21 @@ export async function runScout(
   // Report initial progress
   deps.onProgress?.('search', 0, totalSearches);
 
+  // Log cleaning status
+  const { cleaningDeps } = deps;
+  if (cleaningDeps) {
+    log.debug('Content cleaning enabled - search results will be cleaned and cached');
+  }
+
   // ===== PARALLEL SEARCH PHASE =====
   // Tavily searches (keyword-based)
-  const tavilyPromises: Promise<CategorizedSearchResult>[] = [
+  const tavilyPromises: Promise<ScoutSearchResult>[] = [
     trackSearchProgress(
       executeSearch(deps.search, queries.overview, 'overview', {
         searchDepth: SCOUT_CONFIG.OVERVIEW_SEARCH_DEPTH,
         maxResults: SCOUT_CONFIG.OVERVIEW_SEARCH_RESULTS,
         signal,
+        cleaningDeps,
       })
     ),
     ...categoryQueriesToExecute.map((query) =>
@@ -585,6 +665,7 @@ export async function runScout(
           searchDepth: SCOUT_CONFIG.CATEGORY_SEARCH_DEPTH,
           maxResults: SCOUT_CONFIG.CATEGORY_SEARCH_RESULTS,
           signal,
+          cleaningDeps,
         })
       )
     ),
@@ -593,18 +674,20 @@ export async function runScout(
         searchDepth: SCOUT_CONFIG.RECENT_SEARCH_DEPTH,
         maxResults: SCOUT_CONFIG.RECENT_SEARCH_RESULTS,
         signal,
+        cleaningDeps,
       })
     ),
   ];
 
   // Exa searches (semantic/neural) - only for guides
-  const exaPromises: Promise<CategorizedSearchResult>[] = useExa
+  const exaPromises: Promise<ScoutSearchResult>[] = useExa
     ? exaConfig.semantic.map((query) =>
         trackSearchProgress(
           executeExaSearch(query, 'category-specific', {
             numResults: SCOUT_CONFIG.EXA_SEARCH_RESULTS,
             // Uses default from exa.ts (neural) - 4x faster, same cost
             signal,
+            cleaningDeps,
           })
         )
       )
@@ -617,12 +700,12 @@ export async function runScout(
   ]);
 
   // Process Tavily results: first is overview, last is recent, middle are category
-  const overviewSearch = tavilyResults[0];
-  const recentSearch = tavilyResults[tavilyResults.length - 1];
-  const tavilyCategorySearches = tavilyResults.slice(1, -1);
+  const overviewSearch = tavilyResults[0].result;
+  const recentSearch = tavilyResults[tavilyResults.length - 1].result;
+  const tavilyCategorySearches = tavilyResults.slice(1, -1).map((r) => r.result);
 
   // Combine category searches from both sources
-  const allCategorySearches = [...tavilyCategorySearches, ...exaResults];
+  const allCategorySearches = [...tavilyCategorySearches, ...exaResults.map((r) => r.result)];
 
   // Build research pool
   const poolBuilder = new ResearchPoolBuilder()
@@ -632,16 +715,31 @@ export async function runScout(
 
   const researchPool = poolBuilder.build();
 
+  // ===== AGGREGATE CLEANING TOKEN USAGE =====
+  // Cleaning token usage includes actual LLM costs from OpenRouter
+  let cleaningTokenUsage = createEmptyTokenUsage();
+  for (const searchResult of [...tavilyResults, ...exaResults]) {
+    cleaningTokenUsage = addTokenUsage(cleaningTokenUsage, searchResult.cleaningTokenUsage);
+  }
+
+  if (cleaningTokenUsage.input > 0 || cleaningTokenUsage.output > 0) {
+    const cleaningCost = cleaningTokenUsage.actualCostUsd?.toFixed(4) ?? 'N/A';
+    log.debug(
+      `Content cleaning: ${cleaningTokenUsage.input} input / ${cleaningTokenUsage.output} output tokens, $${cleaningCost} cost`
+    );
+  }
+
   // ===== AGGREGATE SEARCH API COSTS =====
   let searchApiCosts = createEmptySearchApiCosts();
 
   // Track Tavily searches with actual costs from API response
-  for (const result of tavilyResults) {
-    if (result.costUsd !== undefined) {
+  for (const searchResult of tavilyResults) {
+    const costUsd = searchResult.result.costUsd;
+    if (costUsd !== undefined) {
       // Use actual cost from API response
       searchApiCosts = addTavilySearch(searchApiCosts, {
         credits: 1, // Tavily basic search = 1 credit
-        costUsd: result.costUsd,
+        costUsd,
       });
     } else {
       // Fallback to estimate if cost not available
@@ -650,9 +748,10 @@ export async function runScout(
   }
 
   // Track Exa searches (actual cost from API)
-  for (const result of exaResults) {
-    if (result.costUsd !== undefined) {
-      searchApiCosts = addExaSearchCost(searchApiCosts, { costUsd: result.costUsd });
+  for (const searchResult of exaResults) {
+    const costUsd = searchResult.result.costUsd;
+    if (costUsd !== undefined) {
+      searchApiCosts = addExaSearchCost(searchApiCosts, { costUsd });
     } else {
       // Exa search without cost info - estimate based on search type
       // Deep search: $0.015, Neural: $0.005
@@ -663,8 +762,8 @@ export async function runScout(
   // Log Exa usage metrics if enabled
   if (useExa) {
     if (exaResults.length > 0) {
-      const exaUrlCount = exaResults.reduce((sum, r) => sum + r.results.length, 0);
-      const successfulQueries = exaResults.filter((r) => r.results.length > 0).length;
+      const exaUrlCount = exaResults.reduce((sum, r) => sum + r.result.results.length, 0);
+      const successfulQueries = exaResults.filter((r) => r.result.results.length > 0).length;
       const successRate = ((successfulQueries / exaResults.length) * 100).toFixed(1);
       const exaCost = searchApiCosts.exaCostUsd.toFixed(4);
       log.debug(
@@ -763,6 +862,7 @@ export async function runScout(
 
   // ===== AGGREGATE TOKEN USAGE =====
   // Use createTokenUsageFromResult to capture both tokens and actual cost from OpenRouter
+  // Note: cleaningTokenUsage is tracked separately for cost visibility
   let tokenUsage = createEmptyTokenUsage();
   for (const result of [overviewResult, categoryResult, recentResult]) {
     tokenUsage = addTokenUsage(tokenUsage, createTokenUsageFromResult(result));
@@ -787,6 +887,16 @@ export async function runScout(
 
   // ===== ASSEMBLE OUTPUT =====
   const fullContext = buildFullContext(context, overviewBriefing, categoryBriefing, recentBriefing);
-  return assembleScoutOutput(overviewBriefing, categoryBriefing, recentBriefing, fullContext, researchPool, tokenUsage, confidence, searchApiCosts);
+  return assembleScoutOutput(
+    overviewBriefing,
+    categoryBriefing,
+    recentBriefing,
+    fullContext,
+    researchPool,
+    tokenUsage,
+    confidence,
+    searchApiCosts,
+    cleaningTokenUsage
+  );
 }
 

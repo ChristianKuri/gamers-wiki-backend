@@ -234,6 +234,8 @@ export function extractGenerationStats(json: any): GenerationStats {
         editor: tokenUsage.editor ?? { input: 0, output: 0 },
         specialist: tokenUsage.specialist ?? { input: 0, output: 0 },
         ...(tokenUsage.reviewer ? { reviewer: tokenUsage.reviewer } : {}),
+        // Cleaner is tracked separately for cost visibility
+        ...(tokenUsage.cleaner ? { cleaner: tokenUsage.cleaner } : {}),
       },
       total: tokenUsage.total ?? { input: 0, output: 0 },
       // Use actualCostUsd if available, fall back to estimatedCostUsd for backwards compatibility

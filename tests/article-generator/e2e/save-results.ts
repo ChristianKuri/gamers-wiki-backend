@@ -71,6 +71,8 @@ export interface TokenUsageByPhase {
   readonly editor: PhaseTokenUsage;
   readonly specialist: PhaseTokenUsage;
   readonly reviewer?: PhaseTokenUsage;
+  /** Cleaner agent token usage (separate for cost visibility) */
+  readonly cleaner?: PhaseTokenUsage;
 }
 
 /**

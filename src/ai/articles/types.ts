@@ -176,8 +176,13 @@ export interface ScoutOutput {
   };
   readonly researchPool: ResearchPool;
   readonly sourceUrls: readonly string[];
-  /** Token usage for Scout phase LLM calls */
+  /** Token usage for Scout phase LLM calls (excludes cleaning) */
   readonly tokenUsage: TokenUsage;
+  /**
+   * Token usage for content cleaning (separate from Scout LLM calls).
+   * Only present when cleaning is enabled and content was cleaned.
+   */
+  readonly cleaningTokenUsage?: TokenUsage;
   /**
    * Confidence level based on research quality.
    * - 'high': Good source count and briefing quality
@@ -214,6 +219,11 @@ export interface ScoutOutput {
 export interface GameArticleContext {
   readonly gameName: string;
   readonly gameSlug?: string | null;
+  /**
+   * Strapi document ID of the game entity.
+   * Used for linking cleaned sources to the game in the database.
+   */
+  readonly gameDocumentId?: string | null;
   readonly releaseDate?: string | null;
   readonly genres?: readonly string[];
   readonly platforms?: readonly string[];
@@ -272,6 +282,11 @@ export interface AggregatedTokenUsage {
   readonly specialist: TokenUsage;
   /** Reviewer token usage (may be empty if reviewer was disabled) */
   readonly reviewer?: TokenUsage;
+  /**
+   * Cleaner token usage (may be empty if cleaning was disabled or no content was cleaned).
+   * Tracked separately from other phases for cost visibility.
+   */
+  readonly cleaner?: TokenUsage;
   readonly total: TokenUsage;
   /**
    * Actual total LLM cost in USD from OpenRouter.

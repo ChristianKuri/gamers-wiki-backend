@@ -6,6 +6,9 @@
  *
  * For guide articles, uses both Tavily (keyword search) and Exa (semantic search)
  * to get comprehensive section-specific research.
+ *
+ * Optionally integrates with the Cleaner agent to clean raw content before
+ * using it in article generation.
  */
 
 import type { LanguageModel } from 'ai';
@@ -26,7 +29,9 @@ import {
   deduplicateQueries,
   extractResearchForQueries,
   processSearchResults,
+  processSearchResultsWithCleaning,
   ResearchPoolBuilder,
+  type CleaningDeps,
 } from '../research-pool';
 import {
   buildCrossReferenceContext,
@@ -86,6 +91,12 @@ export interface SpecialistDeps {
    * Used to dynamically adjust paragraph counts per section.
    */
   readonly targetWordCount?: number;
+  /**
+   * Optional cleaning dependencies.
+   * When provided, search results are cleaned by the Cleaner agent
+   * and cached in the database for future reuse.
+   */
+  readonly cleaningDeps?: CleaningDeps;
 }
 
 export interface SpecialistOutput {
@@ -133,12 +144,14 @@ type SearchOperationResult = SingleSearchResult | FailedSearchResult;
 /**
  * Executes a single Tavily search with retry logic.
  * Separated for use in parallel execution.
+ * Optionally cleans content using the Cleaner agent when cleaningDeps is provided.
  *
  * @param search - Search function to use
  * @param query - Query string
  * @param signal - Optional abort signal
  * @param log - Logger for warnings
  * @param gracefulDegradation - If true, returns null on failure instead of throwing
+ * @param cleaningDeps - Optional cleaning dependencies for content cleaning
  * @returns Search result or null if graceful degradation is enabled and search fails
  */
 async function executeSingleSearch(
@@ -146,7 +159,8 @@ async function executeSingleSearch(
   query: string,
   signal?: AbortSignal,
   log?: Logger,
-  gracefulDegradation = false
+  gracefulDegradation = false,
+  cleaningDeps?: CleaningDeps
 ): Promise<SearchOperationResult> {
   try {
     const result = await withRetry(
@@ -155,11 +169,30 @@ async function executeSingleSearch(
           searchDepth: SPECIALIST_CONFIG.SEARCH_DEPTH,
           maxResults: SPECIALIST_CONFIG.MAX_SEARCH_RESULTS,
           includeAnswer: true,
+          // Request raw content for cleaning (full page text)
+          includeRawContent: Boolean(cleaningDeps),
           // Exclude YouTube - video pages have no useful text content
           excludeDomains: [...SPECIALIST_CONFIG.EXA_EXCLUDE_DOMAINS],
         }),
       { context: `Specialist search: "${query.slice(0, 50)}..."`, signal }
     );
+
+    // If cleaning deps provided, clean and cache the content
+    if (cleaningDeps) {
+      const cleaningResult = await processSearchResultsWithCleaning(
+        query,
+        'section-specific',
+        result,
+        'tavily',
+        result.costUsd,
+        cleaningDeps
+      );
+      return {
+        query,
+        result: cleaningResult.result,
+        success: true,
+      };
+    }
 
     // Pass through cost from Tavily response if available
     return {
@@ -192,18 +225,21 @@ async function executeSingleSearch(
  * Executes a single Exa deep search with retry logic.
  * Uses 'deep' search for comprehensive results with query expansion.
  * Best for "how to" and meaning-based queries in guide articles.
+ * Optionally cleans content using the Cleaner agent when cleaningDeps is provided.
  *
  * @param query - Semantic query string (natural language works best)
  * @param signal - Optional abort signal
  * @param log - Logger for warnings
  * @param gracefulDegradation - If true, returns failure info instead of throwing
+ * @param cleaningDeps - Optional cleaning dependencies for content cleaning
  * @returns Search result
  */
 async function executeSingleExaSearch(
   query: string,
   signal?: AbortSignal,
   log?: Logger,
-  gracefulDegradation = false
+  gracefulDegradation = false,
+  cleaningDeps?: CleaningDeps
 ): Promise<SearchOperationResult> {
   try {
     const exaOptions: ExaSearchOptions = {
@@ -224,25 +260,39 @@ async function executeSingleExaSearch(
     // Extract cost from Exa response (if available)
     const costUsd = result.costDollars?.total;
 
-    return {
-      query,
-      result: processSearchResults(
+    // Build raw results for processing
+    const rawResults = {
+      answer: null,
+      results: result.results.map((r) => ({
+        title: r.title,
+        url: r.url,
+        // Preserve both content AND summary for hybrid approach
+        content: r.content ?? '',
+        summary: r.summary,
+        score: r.score,
+      })),
+    };
+
+    // If cleaning deps provided, clean and cache the content
+    if (cleaningDeps) {
+      const cleaningResult = await processSearchResultsWithCleaning(
         query,
         'section-specific',
-        {
-          answer: null,
-          results: result.results.map((r) => ({
-            title: r.title,
-            url: r.url,
-            // Preserve both content AND summary for hybrid approach
-            content: r.content ?? '',
-            summary: r.summary,
-            score: r.score,
-          })),
-        },
-        'exa' as SearchSource,
-        costUsd
-      ),
+        rawResults,
+        'exa',
+        costUsd,
+        cleaningDeps
+      );
+      return {
+        query,
+        result: cleaningResult.result,
+        success: true,
+      };
+    }
+
+    return {
+      query,
+      result: processSearchResults(query, 'section-specific', rawResults, 'exa' as SearchSource, costUsd),
       success: true,
     };
   } catch (error) {
@@ -319,6 +369,8 @@ interface BatchResearchOptions {
   readonly onProgress?: ResearchProgressCallback;
   /** If true, use Exa for semantic queries (guide articles) */
   readonly useExaForSemanticQueries?: boolean;
+  /** Optional cleaning dependencies for content cleaning and caching */
+  readonly cleaningDeps?: CleaningDeps;
 }
 
 /**
@@ -340,7 +392,7 @@ async function batchResearchForSections(
   log: Logger,
   options?: BatchResearchOptions
 ): Promise<BatchResearchResult> {
-  const { signal, onProgress, useExaForSemanticQueries } = options ?? {};
+  const { signal, onProgress, useExaForSemanticQueries, cleaningDeps } = options ?? {};
   // Collect ALL research queries from all sections
   const allQueries = plan.sections.flatMap((section) => section.researchQueries);
 
@@ -480,7 +532,7 @@ async function batchResearchForSections(
         `queries ${batchStart + 1}-${batchEnd} of ${tavilyQueries.length}`
     );
 
-    await processBatch(batch, (query) => executeSingleSearch(search, query, signal, log, true), false);
+    await processBatch(batch, (query) => executeSingleSearch(search, query, signal, log, true, cleaningDeps), false);
 
     if (batchDelay > 0 && batchEnd < tavilyQueries.length) {
       await sleep(batchDelay);
@@ -501,7 +553,7 @@ async function batchResearchForSections(
         `queries ${batchStart + 1}-${batchEnd} of ${exaQueries.length}`
     );
 
-    await processBatch(batch, (query) => executeSingleExaSearch(query, signal, log, true), true);
+    await processBatch(batch, (query) => executeSingleExaSearch(query, signal, log, true, cleaningDeps), true);
 
     if (batchDelay > 0 && batchEnd < exaQueries.length) {
       await sleep(batchDelay);
@@ -763,13 +815,19 @@ export async function runSpecialist(
   // ===== BATCH RESEARCH PHASE =====
   // Use Exa for semantic queries in guide articles
   const useExaForSemanticQueries = plan.categorySlug === 'guides';
+  const { cleaningDeps } = deps;
+
+  if (cleaningDeps) {
+    log.debug('Content cleaning enabled - search results will be cleaned and cached');
+  }
+
   log.info('Starting batch research for all sections...');
   const { pool: enrichedPool, successCount, failureCount, searchApiCosts } = await batchResearchForSections(
     plan,
     scoutOutput.researchPool,
     deps.search,
     log,
-    { signal, onProgress: deps.onResearchProgress, useExaForSemanticQueries }
+    { signal, onProgress: deps.onResearchProgress, useExaForSemanticQueries, cleaningDeps }
   );
 
   if (successCount > 0 || failureCount > 0) {

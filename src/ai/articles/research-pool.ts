@@ -13,14 +13,16 @@ import type { Core } from '@strapi/strapi';
 import type { LanguageModel } from 'ai';
 
 import type { Logger } from '../../utils/logger';
-import type {
-  CategorizedSearchResult,
-  CleanedSource,
-  RawSourceInput,
-  ResearchPool,
-  SearchCategory,
-  SearchResultItem,
-  SearchSource,
+import {
+  createEmptyTokenUsage,
+  type CategorizedSearchResult,
+  type CleanedSource,
+  type RawSourceInput,
+  type ResearchPool,
+  type SearchCategory,
+  type SearchResultItem,
+  type SearchSource,
+  type TokenUsage,
 } from './types';
 
 // ============================================================================
@@ -406,6 +408,8 @@ export interface CleanedSearchProcessingResult {
   readonly cacheMisses: number;
   /** Number of cleaning failures */
   readonly cleaningFailures: number;
+  /** Token usage from cleaning operations (LLM calls) */
+  readonly cleaningTokenUsage: TokenUsage;
 }
 
 /**
@@ -452,6 +456,7 @@ export async function processSearchResultsWithCleaning(
       cacheHits: 0,
       cacheMisses: 0,
       cleaningFailures: 0,
+      cleaningTokenUsage: createEmptyTokenUsage(),
     };
   }
 
@@ -481,6 +486,7 @@ export async function processSearchResultsWithCleaning(
       cacheHits: 0,
       cacheMisses: 0,
       cleaningFailures: 0,
+      cleaningTokenUsage: createEmptyTokenUsage(),
     };
   }
 
@@ -491,9 +497,18 @@ export async function processSearchResultsWithCleaning(
   const hits = cacheResults.filter((r) => r.hit);
   const misses = cacheResults.filter((r) => !r.hit && r.raw);
 
+  // Log cache status
+  const { logger } = cleaningDeps;
+  if (hits.length > 0 || misses.length > 0) {
+    logger?.debug?.(
+      `Source cache: ${hits.length} hits, ${misses.length} misses for "${query.slice(0, 40)}..."`
+    );
+  }
+
   // Clean uncached sources
   let cleanedSources: CleanedSource[] = [];
   let cleaningFailures = 0;
+  let cleaningTokenUsage: TokenUsage = createEmptyTokenUsage();
 
   if (misses.length > 0) {
     const sourcesToClean = misses.map((m) => m.raw!);
@@ -505,7 +520,7 @@ export async function processSearchResultsWithCleaning(
       gameName,
     });
     cleanedSources = cleanResult.sources;
-    // Note: cleanResult.tokenUsage could be aggregated if needed for cost tracking
+    cleaningTokenUsage = cleanResult.tokenUsage;
 
     cleaningFailures = misses.length - cleanedSources.length;
 
@@ -577,6 +592,7 @@ export async function processSearchResultsWithCleaning(
     cacheHits: hits.length,
     cacheMisses: misses.length,
     cleaningFailures,
+    cleaningTokenUsage,
   };
 }
 
