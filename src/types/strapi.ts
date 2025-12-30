@@ -200,6 +200,42 @@ export interface GameEngineDocument extends StrapiDocument {
 }
 
 /**
+ * Source content document (cached cleaned web content)
+ */
+export interface SourceContentDocument extends StrapiDocument {
+  url: string;
+  domain: string;
+  title: string;
+  summary: string | null;
+  cleanedContent: string;
+  originalContentLength: number;
+  qualityScore: number;
+  /** Relevance to gaming score (0-100) */
+  relevanceScore: number;
+  qualityNotes: string | null;
+  contentType: string;
+  junkRatio: number;
+  accessCount: number;
+  lastAccessedAt: string | null;
+  searchSource: 'tavily' | 'exa';
+}
+
+/**
+ * Domain quality document (aggregate domain scores)
+ */
+export interface DomainQualityDocument extends StrapiDocument {
+  domain: string;
+  avgQualityScore: number;
+  /** Average relevance to gaming score (0-100) */
+  avgRelevanceScore: number;
+  totalSources: number;
+  tier: 'excellent' | 'good' | 'average' | 'poor' | 'excluded';
+  isExcluded: boolean;
+  excludeReason: string | null;
+  domainType: string;
+}
+
+/**
  * Document service query options
  */
 export interface DocumentQueryOptions {

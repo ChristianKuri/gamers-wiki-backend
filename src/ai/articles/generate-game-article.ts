@@ -45,6 +45,7 @@
  * });
  */
 
+import type { Core } from '@strapi/strapi';
 import { createOpenRouter } from '@openrouter/ai-sdk-provider';
 import { generateObject, generateText } from 'ai';
 
@@ -58,6 +59,8 @@ import {
   type Logger,
 } from '../../utils/logger';
 import { runScout, runEditor, runSpecialist, runReviewer, type EditorOutput, type ReviewerOutput } from './agents';
+import type { CleaningDeps } from './research-pool';
+import { getAllExcludedDomains } from './source-cache';
 import type { SpecialistOutput } from './agents/specialist';
 import type { ArticlePlan, ArticleCategorySlug } from './article-plan';
 import { GENERATOR_CONFIG, WORD_COUNT_DEFAULTS, WORD_COUNT_CONSTRAINTS, REVIEWER_CONFIG, FIXER_CONFIG } from './config';
@@ -96,12 +99,20 @@ import { validateArticleDraft, validateArticlePlan, validateGameArticleContext, 
 
 /**
  * Dependencies for article generation (enables testing with mocks).
+ * All properties are optional - defaults are used when not provided.
+ * Commonly, only `strapi` is passed to enable content cleaning.
  */
 export interface ArticleGeneratorDeps {
-  readonly openrouter: ReturnType<typeof createOpenRouter>;
-  readonly search: typeof tavilySearch;
-  readonly generateText: typeof generateText;
-  readonly generateObject: typeof generateObject;
+  readonly openrouter?: ReturnType<typeof createOpenRouter>;
+  readonly search?: typeof tavilySearch;
+  readonly generateText?: typeof generateText;
+  readonly generateObject?: typeof generateObject;
+  /**
+   * Optional Strapi instance for content cleaning and caching.
+   * When provided, search results are cleaned by the Cleaner agent
+   * and cached in the database for future reuse.
+   */
+  readonly strapi?: Core.Strapi;
 }
 
 /**
@@ -506,6 +517,11 @@ interface PhaseContext {
    * If provided by context, used directly; otherwise category defaults apply after Editor phase.
    */
   readonly targetWordCount?: number;
+  /**
+   * Optional cleaning dependencies for content cleaning and caching.
+   * When provided, search results are cleaned and cached in the database.
+   */
+  readonly cleaningDeps?: CleaningDeps;
 }
 
 /**
@@ -515,7 +531,7 @@ async function executeScoutPhase(
   phaseContext: PhaseContext,
   scoutModel: string
 ): Promise<PhaseResult<ScoutOutput>> {
-  const { context, deps, basePhaseOptions, log, progressTracker, phaseTimer, temperatureOverrides } = phaseContext;
+  const { context, deps, basePhaseOptions, log, progressTracker, phaseTimer, temperatureOverrides, cleaningDeps } = phaseContext;
 
   log.info(`Phase 1: Scout - Deep multi-query research (model: ${scoutModel})...`);
   progressTracker.startPhase('scout');
@@ -532,6 +548,7 @@ async function executeScoutPhase(
         logger: createPrefixedLogger('[Scout]'),
         signal: basePhaseOptions.signal,
         temperature: temperatureOverrides?.scout,
+        cleaningDeps,
       }),
     { ...basePhaseOptions, modelName: scoutModel }
   );
@@ -796,7 +813,7 @@ async function executeSpecialistPhase(
   parallelSections: boolean,
   effectiveWordCount: number
 ): Promise<PhaseResult<SpecialistOutput>> {
-  const { context, deps, basePhaseOptions, log, progressTracker, phaseTimer, temperatureOverrides } = phaseContext;
+  const { context, deps, basePhaseOptions, log, progressTracker, phaseTimer, temperatureOverrides, cleaningDeps } = phaseContext;
 
   const modeLabel = parallelSections ? 'parallel' : 'sequential';
   log.info(
@@ -821,6 +838,7 @@ async function executeSpecialistPhase(
         signal: basePhaseOptions.signal,
         temperature: temperatureOverrides?.specialist,
         targetWordCount: effectiveWordCount,
+        cleaningDeps,
         onSectionProgress: (current, total, headline) => {
           // Delegate to ProgressTracker for consistent progress calculation
           progressTracker.reportSectionProgress(current, total, headline);
@@ -934,13 +952,15 @@ export async function generateGameArticleDraft(
   // Validate temperature overrides early (before expensive operations)
   validateTemperatureOverrides(options?.temperatureOverrides);
 
-  // Use provided deps or create default production deps
-  const { openrouter, search, generateText: genText, generateObject: genObject } =
-    deps ?? createDefaultDeps();
+  // Use provided deps merged with defaults
+  // This allows passing just { strapi } without replacing all deps
+  const mergedDeps = { ...createDefaultDeps(), ...deps };
+  const { openrouter, search, generateText: genText, generateObject: genObject, strapi } = mergedDeps;
 
   const scoutModel = getModel('ARTICLE_SCOUT');
   const editorModel = getModel('ARTICLE_EDITOR');
   const specialistModel = getModel('ARTICLE_SPECIALIST');
+  const cleanerModel = getModel('ARTICLE_CLEANER');
 
   // Create contextual logger with correlation ID for tracing
   const correlationId = options?.correlationId ?? generateCorrelationId();
@@ -980,7 +1000,28 @@ export async function generateGameArticleDraft(
     search,
     generateText: genText,
     generateObject: genObject,
+    strapi,
   };
+
+  // Build cleaning deps only when Strapi is available
+  // This enables content cleaning and caching for search results
+  // Also fetch excluded domains from DB to combine with static list
+  let cleaningDeps: CleaningDeps | undefined;
+  if (strapi) {
+    const excludedDomains = await getAllExcludedDomains(strapi);
+    cleaningDeps = {
+      strapi,
+      generateObject: genObject,
+      model: openrouter(cleanerModel),
+      logger: createPrefixedLogger('[Cleaner]'),
+      signal,
+      gameName: context.gameName,
+      gameDocumentId: context.gameDocumentId,
+      excludedDomains,
+    };
+    log.info(`Content cleaning enabled (model: ${cleanerModel})`);
+    log.debug(`Excluded domains: ${excludedDomains.length} total (static + DB)`);
+  }
 
   const phaseContext: PhaseContext = {
     context,
@@ -991,6 +1032,7 @@ export async function generateGameArticleDraft(
     phaseTimer,
     temperatureOverrides,
     targetWordCount: context.targetWordCount,
+    cleaningDeps,
   };
 
   // ===== PHASE 1: SCOUT =====
@@ -1303,6 +1345,7 @@ export async function generateGameArticleDraft(
 
   // Aggregate token usage from all phases (use total editor usage for retries)
   const scoutTokenUsage = scoutOutput.tokenUsage;
+  const cleanerTokenUsage = scoutOutput.cleaningTokenUsage;
   let totalTokenUsage = addTokenUsage(
     addTokenUsage(scoutTokenUsage, editorTotalTokenUsage),
     specialistTokenUsage
@@ -1318,6 +1361,11 @@ export async function generateGameArticleDraft(
     totalTokenUsage = addTokenUsage(totalTokenUsage, fixerTokenUsage);
   }
 
+  // Add cleaner token usage if content was cleaned
+  if (cleanerTokenUsage && (cleanerTokenUsage.input > 0 || cleanerTokenUsage.output > 0)) {
+    totalTokenUsage = addTokenUsage(totalTokenUsage, cleanerTokenUsage);
+  }
+
   // Check if any tokens were reported (some APIs may not report usage)
   const hasTokenUsage = totalTokenUsage.input > 0 || totalTokenUsage.output > 0;
 
@@ -1331,12 +1379,20 @@ export async function generateGameArticleDraft(
     log.warn('No actual cost data from OpenRouter - cost tracking may be incomplete');
   }
 
+  // Log cleaning costs separately for visibility
+  if (cleanerTokenUsage && cleanerTokenUsage.actualCostUsd !== undefined) {
+    log.info(`Content cleaning cost: $${cleanerTokenUsage.actualCostUsd.toFixed(4)} USD`);
+  }
+
   const tokenUsage: AggregatedTokenUsage | undefined = hasTokenUsage
     ? {
         scout: scoutTokenUsage,
         editor: editorTotalTokenUsage,
         specialist: specialistTokenUsage,
         ...(shouldRunReviewer ? { reviewer: reviewerTokenUsage } : {}),
+        ...(cleanerTokenUsage && (cleanerTokenUsage.input > 0 || cleanerTokenUsage.output > 0)
+          ? { cleaner: cleanerTokenUsage }
+          : {}),
         total: totalTokenUsage,
         actualCostUsd,
         // Keep estimatedCostUsd for backwards compatibility (deprecated)
@@ -1441,6 +1497,10 @@ export async function generateGameArticleDraft(
     correlationId,
     researchConfidence: scoutOutput.confidence,
     ...(recovery ? { recovery } : {}),
+    // Include filtered sources if any were filtered out
+    ...(scoutOutput.filteredSources.length > 0
+      ? { filteredSources: scoutOutput.filteredSources }
+      : {}),
   };
 
   return {

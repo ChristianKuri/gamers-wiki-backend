@@ -4,14 +4,27 @@
  * Manages the collection of research results from Scout and Specialist agents.
  * Uses a builder pattern internally for efficient mutation, returning immutable
  * snapshots at boundaries.
+ *
+ * Optionally integrates with the Cleaner agent to clean raw content and cache
+ * results in Strapi for future reuse.
  */
 
-import type {
-  CategorizedSearchResult,
-  ResearchPool,
-  SearchCategory,
-  SearchResultItem,
-  SearchSource,
+import type { Core } from '@strapi/strapi';
+import type { LanguageModel } from 'ai';
+
+import { CLEANER_CONFIG } from './config';
+import type { Logger } from '../../utils/logger';
+import {
+  addTokenUsage,
+  createEmptyTokenUsage,
+  type CategorizedSearchResult,
+  type CleanedSource,
+  type RawSourceInput,
+  type ResearchPool,
+  type SearchCategory,
+  type SearchResultItem,
+  type SearchSource,
+  type TokenUsage,
 } from './types';
 
 // ============================================================================
@@ -42,6 +55,168 @@ export function normalizeUrl(url: string): string | null {
   } catch {
     return null;
   }
+}
+
+/**
+ * Extract domain from URL.
+ */
+export function extractDomainFromUrl(url: string): string {
+  try {
+    return new URL(url).hostname.replace(/^www\./, '');
+  } catch {
+    return '';
+  }
+}
+
+// ============================================================================
+// Pre-Filter: Quick Relevance Check (before LLM cleaning)
+// ============================================================================
+
+/**
+ * Patterns that indicate obviously non-gaming content.
+ * These are checked against URL and title to skip LLM cleaning.
+ */
+const OBVIOUSLY_IRRELEVANT_PATTERNS = [
+  // Adult content
+  /\bporn\b/i,
+  /\bxxx\b/i,
+  /\badult\b/i,
+  /\bnsfw\b/i,
+  /xhamster/i,
+  /pornhub/i,
+  /xvideos/i,
+  // Shopping/commerce (non-gaming)
+  /\bamazon\.com\/(?!.*game)/i,
+  /\bebay\.com/i,
+  /\baliexpress/i,
+  // Social media / forums (low-quality user content)
+  /\breddit\.com/i,
+  /twitter\.com\/\w+$/i,
+  /facebook\.com\/\w+$/i,
+  /instagram\.com\/\w+$/i,
+  /fextralife\.com\/forums/i, // Fextralife forums (wiki subdomains are fine)
+  // Programming/tech docs (unless it's game dev)
+  /docs\.python\.org/i,
+  /docs\.oracle\.com/i,
+  /flask\.palletsprojects/i,
+  /django\.readthedocs/i,
+  /\bstackoverflow\.com/i,
+  // Interior design, real estate, etc
+  /\bhouzz\.com/i,
+  /\bzillow\.com/i,
+  /\brealtor\.com/i,
+  /\bcoohom\.com/i,
+];
+
+/**
+ * Check if a source is obviously irrelevant based on URL and title.
+ * This is a cheap pre-filter to avoid wasting LLM tokens.
+ * 
+ * @param url - Source URL
+ * @param title - Source title
+ * @returns Object with isIrrelevant flag and reason if true
+ */
+export function quickRelevanceCheck(
+  url: string,
+  title: string
+): { isIrrelevant: boolean; reason?: string } {
+  const combined = `${url} ${title}`.toLowerCase();
+
+  for (const pattern of OBVIOUSLY_IRRELEVANT_PATTERNS) {
+    if (pattern.test(combined)) {
+      return {
+        isIrrelevant: true,
+        reason: `Matched pattern: ${pattern.source}`,
+      };
+    }
+  }
+
+  return { isIrrelevant: false };
+}
+
+/**
+ * Pre-filter result for a source.
+ */
+export interface PreFilterResult {
+  readonly source: RawSourceInput;
+  readonly shouldClean: boolean;
+  readonly skipReason?: string;
+}
+
+/**
+ * Pre-filter sources before sending to LLM cleaner.
+ * Checks:
+ * 1. Quick pattern-based relevance (no LLM needed)
+ * 2. Domain reputation from database (if available)
+ * 
+ * @param sources - Raw sources to check
+ * @param strapi - Strapi instance for DB lookups
+ * @param logger - Optional logger
+ * @returns Filtered sources with reasons
+ */
+export async function preFilterSources(
+  sources: readonly RawSourceInput[],
+  strapi: Core.Strapi,
+  logger?: Logger
+): Promise<{
+  toClean: RawSourceInput[];
+  skipped: Array<{ source: RawSourceInput; reason: string }>;
+}> {
+  const toClean: RawSourceInput[] = [];
+  const skipped: Array<{ source: RawSourceInput; reason: string }> = [];
+
+  // Get known bad domains from DB
+  const knex = strapi.db.connection;
+  const badDomains = new Set<string>();
+
+  try {
+    const results = await knex('domain_qualities')
+      .where('is_excluded', true)
+      .orWhere('avg_quality_score', '<', CLEANER_CONFIG.MIN_QUALITY_FOR_RESULTS)
+      .orWhere('avg_relevance_score', '<', CLEANER_CONFIG.AUTO_EXCLUDE_RELEVANCE_THRESHOLD)
+      .select('domain');
+
+    for (const row of results) {
+      badDomains.add((row as { domain: string }).domain);
+    }
+  } catch (err) {
+    // If DB query fails, continue without domain filtering
+    logger?.debug?.(`Pre-filter: Could not load domain quality data: ${err}`);
+  }
+
+  for (const source of sources) {
+    const domain = extractDomainFromUrl(source.url);
+
+    // Check 1: Quick pattern-based relevance
+    const relevanceCheck = quickRelevanceCheck(source.url, source.title);
+    if (relevanceCheck.isIrrelevant) {
+      skipped.push({
+        source,
+        reason: `Quick filter: ${relevanceCheck.reason}`,
+      });
+      continue;
+    }
+
+    // Check 2: Known bad domain
+    if (badDomains.has(domain)) {
+      skipped.push({
+        source,
+        reason: `Known bad domain: ${domain}`,
+      });
+      continue;
+    }
+
+    toClean.push(source);
+  }
+
+  if (skipped.length > 0) {
+    logger?.info?.(
+      `Pre-filtered ${skipped.length} source(s) before cleaning: ` +
+        skipped.map((s) => `${extractDomainFromUrl(s.source.url)} (${s.reason.slice(0, 30)})`).join(', ')
+    );
+  }
+
+  return { toClean, skipped };
 }
 
 // ============================================================================
@@ -357,6 +532,507 @@ export function processSearchResults(
     timestamp: Date.now(),
     searchSource,
     ...(costUsd !== undefined ? { costUsd } : {}),
+  };
+}
+
+// ============================================================================
+// Content Cleaning Integration
+// ============================================================================
+
+/**
+ * Dependencies for content cleaning during research processing.
+ * When provided, enables cleaning of raw content and caching in Strapi.
+ */
+export interface CleaningDeps {
+  /** Strapi instance for cache operations */
+  readonly strapi: Core.Strapi;
+  /** AI SDK generateObject function */
+  readonly generateObject: typeof import('ai').generateObject;
+  /** Language model for cleaning */
+  readonly model: LanguageModel;
+  /** Logger instance */
+  readonly logger?: Logger;
+  /** AbortSignal for cancellation */
+  readonly signal?: AbortSignal;
+  /**
+   * Pre-fetched excluded domains (static + database).
+   * If not provided, only static exclusions are used at search time.
+   * Call getAllExcludedDomains(strapi) to populate this.
+   */
+  readonly excludedDomains?: readonly string[];
+  /**
+   * Override minimum relevance score for filtering.
+   * Default: CLEANER_CONFIG.MIN_RELEVANCE_FOR_RESULTS (70)
+   * Use lower values (e.g., 50) for searches that include tangential content
+   * like gaming gear, hardware reviews, esports, etc.
+   */
+  readonly minRelevanceOverride?: number;
+  /**
+   * Override minimum quality score for filtering.
+   * Default: CLEANER_CONFIG.MIN_QUALITY_FOR_RESULTS (35)
+   */
+  readonly minQualityOverride?: number;
+  /** Game name for relevance scoring */
+  readonly gameName?: string;
+  /** Game document ID for linking sources */
+  readonly gameDocumentId?: string | null;
+  /** Article topic/title for pre-filter relevance scoring */
+  readonly articleTopic?: string;
+}
+
+/**
+ * A source that was filtered out due to low quality or relevance.
+ */
+export interface FilteredSource {
+  readonly url: string;
+  readonly domain: string;
+  readonly title: string;
+  readonly qualityScore: number;
+  readonly relevanceScore: number;
+  /** Reason for filtering */
+  readonly reason: 'low_relevance' | 'low_quality' | 'excluded_domain' | 'pre_filtered' | 'scrape_failure';
+  /** Human-readable details */
+  readonly details: string;
+  /** Search query that returned this source */
+  readonly query?: string;
+  /** Search provider that returned this source */
+  readonly searchSource?: 'tavily' | 'exa';
+  /** Stage where filtering happened */
+  readonly filterStage?: 'programmatic' | 'pre_filter' | 'full_clean' | 'post_clean';
+}
+
+/**
+ * Result of processing search results with cleaning.
+ */
+export interface CleanedSearchProcessingResult {
+  /** The categorized search result with potentially cleaned content */
+  readonly result: CategorizedSearchResult;
+  /** Number of cache hits */
+  readonly cacheHits: number;
+  /** Number of cache misses (newly cleaned) */
+  readonly cacheMisses: number;
+  /** Number of cleaning failures */
+  readonly cleaningFailures: number;
+  /** Token usage from cleaning operations (LLM calls) */
+  readonly cleaningTokenUsage: TokenUsage;
+  /** Sources filtered out due to low quality or relevance */
+  readonly filteredSources: readonly FilteredSource[];
+}
+
+/**
+ * Processes search results with optional content cleaning.
+ *
+ * When cleaningDeps is provided:
+ * 1. Checks cache for all URLs
+ * 2. Cleans uncached URLs in parallel
+ * 3. Stores cleaned results in Strapi
+ * 4. Returns CategorizedSearchResult with cleaned content
+ *
+ * When cleaningDeps is not provided, behaves like processSearchResults.
+ *
+ * @param query - The search query
+ * @param category - The category for this search
+ * @param rawResults - Raw results from search API
+ * @param searchSource - The search API used
+ * @param costUsd - Optional cost in USD
+ * @param cleaningDeps - Optional cleaning dependencies (enables cleaning when provided)
+ * @returns Processed result with cleaning stats
+ */
+export async function processSearchResultsWithCleaning(
+  query: string,
+  category: SearchCategory,
+  rawResults: {
+    answer?: string | null;
+    results: readonly {
+      title: string;
+      url: string;
+      content?: string;
+      raw_content?: string;
+      summary?: string;
+      score?: number;
+    }[];
+  },
+  searchSource: SearchSource = 'tavily',
+  costUsd?: number,
+  cleaningDeps?: CleaningDeps
+): Promise<CleanedSearchProcessingResult> {
+  // If no cleaning deps, just process normally
+  if (!cleaningDeps) {
+    return {
+      result: processSearchResults(query, category, rawResults, searchSource, costUsd),
+      cacheHits: 0,
+      cacheMisses: 0,
+      cleaningFailures: 0,
+      cleaningTokenUsage: createEmptyTokenUsage(),
+      filteredSources: [],
+    };
+  }
+
+  // Lazy import to avoid circular dependencies
+  const { cleanSourcesBatch } = await import('./agents/cleaner');
+  const { checkSourceCache, storeCleanedSources } = await import('./source-cache');
+
+  const { strapi, generateObject, model, logger, signal, gameName, gameDocumentId, minRelevanceOverride, minQualityOverride, articleTopic } = cleaningDeps;
+
+  // Use overrides if provided, otherwise fall back to config defaults
+  const minRelevance = minRelevanceOverride ?? CLEANER_CONFIG.MIN_RELEVANCE_FOR_RESULTS;
+  const minQuality = minQualityOverride ?? CLEANER_CONFIG.MIN_QUALITY_FOR_RESULTS;
+
+  // Build raw source inputs
+  const rawSources: RawSourceInput[] = rawResults.results
+    .map((r) => {
+      const normalized = normalizeUrl(r.url);
+      if (!normalized) return null;
+      return {
+        url: normalized,
+        title: r.title,
+        content: r.raw_content ?? r.content ?? '',
+        searchSource,
+      };
+    })
+    .filter((r): r is RawSourceInput => r !== null);
+
+  if (rawSources.length === 0) {
+    return {
+      result: processSearchResults(query, category, rawResults, searchSource, costUsd),
+      cacheHits: 0,
+      cacheMisses: 0,
+      cleaningFailures: 0,
+      cleaningTokenUsage: createEmptyTokenUsage(),
+      filteredSources: [],
+    };
+  }
+
+  // Check cache for all URLs
+  const cacheResults = await checkSourceCache(strapi, rawSources);
+
+  // Get excluded domains from cleaningDeps (includes both static and DB exclusions)
+  const excludedDomainsSet = new Set(cleaningDeps.excludedDomains ?? []);
+
+  // Track filtered sources for logging and result tracking (declare early for exclusion filter)
+  const filteredSources: FilteredSource[] = [];
+
+  // Filter out cache hits from now-excluded domains (domains may have been added to exclusion list after caching)
+  const validHits = cacheResults.filter((r) => {
+    if (!r.hit) return false;
+    const domain = extractDomainFromUrl(r.url);
+    if (excludedDomainsSet.has(domain)) {
+      // Log and track excluded cached sources
+      filteredSources.push({
+        url: r.url,
+        domain,
+        title: r.cached?.title ?? 'Unknown',
+        qualityScore: r.cached?.qualityScore ?? 0,
+        relevanceScore: r.cached?.relevanceScore ?? 0,
+        reason: 'excluded_domain',
+        details: `Cached source from now-excluded domain: ${domain}`,
+        query,
+        searchSource,
+        filterStage: 'programmatic',
+      });
+      return false;
+    }
+    return true;
+  });
+
+  // Separate valid cache hits and misses
+  const hits = validHits;
+  const misses = cacheResults.filter((r) => !r.hit && r.raw);
+
+  // Log cache status (include excluded count if any)
+  const cleanerEnabled = CLEANER_CONFIG.ENABLED;
+  const excludedCacheCount = cacheResults.filter((r) => r.hit).length - hits.length;
+  
+  if (hits.length > 0 || misses.length > 0 || excludedCacheCount > 0) {
+    let logMsg = `Source cache: ${hits.length} hits, ${misses.length} misses for "${query.slice(0, 40)}..."`;
+    if (excludedCacheCount > 0) {
+      logMsg += ` (${excludedCacheCount} cached sources from excluded domains skipped)`;
+    }
+    if (!cleanerEnabled) {
+      logMsg += ' (cleaner disabled, using raw content for misses)';
+    }
+    logger?.info?.(logMsg);
+  }
+
+  // Clean uncached sources (only if cleaner is enabled)
+  let cleanedSources: CleanedSource[] = [];
+  let cleaningFailures = 0;
+  let cleaningTokenUsage: TokenUsage = createEmptyTokenUsage();
+
+  if (misses.length > 0 && cleanerEnabled) {
+    const allMissedSources = misses.map((m) => m.raw!);
+
+    // Step 1: Filter out scrape failures (content too short)
+    const validContentSources = allMissedSources.filter(
+      (s) => s.content.length > CLEANER_CONFIG.MIN_CONTENT_LENGTH
+    );
+    const scrapeFailures = allMissedSources.filter(
+      (s) => s.content.length <= CLEANER_CONFIG.MIN_CONTENT_LENGTH
+    );
+
+    if (scrapeFailures.length > 0) {
+      logger?.info?.(
+        `Skipping ${scrapeFailures.length} source(s) with content ≤ ${CLEANER_CONFIG.MIN_CONTENT_LENGTH} chars (scrape failures)`
+      );
+
+      // Add scrape failures to filtered sources for tracking
+      for (const s of scrapeFailures) {
+        filteredSources.push({
+          url: s.url,
+          domain: extractDomainFromUrl(s.url),
+          title: s.title,
+          qualityScore: 0,
+          relevanceScore: 0,
+          reason: 'scrape_failure',
+          details: `Content too short: ${s.content.length} chars (min: ${CLEANER_CONFIG.MIN_CONTENT_LENGTH})`,
+          query,
+          searchSource: s.searchSource,
+          filterStage: 'programmatic',
+        });
+      }
+
+      // Store scrape failures to track domains and prevent re-processing
+      const { storeScrapeFailures } = await import('./source-cache');
+      storeScrapeFailures(
+        strapi,
+        scrapeFailures.map((s) => ({
+          url: s.url,
+          title: s.title,
+          originalContentLength: s.content.length,
+          searchSource: s.searchSource,
+        }))
+      ).catch((err) => {
+        const message = err instanceof Error ? err.message : String(err);
+        logger?.warn?.(`Failed to store scrape failures: ${message}`);
+      });
+    }
+
+    // Step 2: Pre-filter by domain reputation and quick pattern matching (FREE)
+    // This skips obviously irrelevant content without any LLM call
+    const programmaticPreFilter = await preFilterSources(validContentSources, strapi, logger);
+
+    // Log programmatic pre-filtered sources
+    if (programmaticPreFilter.skipped.length > 0) {
+      for (const { source, reason } of programmaticPreFilter.skipped) {
+        filteredSources.push({
+          url: source.url,
+          domain: extractDomainFromUrl(source.url),
+          title: source.title,
+          qualityScore: 0,
+          relevanceScore: 0,
+          reason: 'pre_filtered',
+          details: `Programmatic: ${reason}`,
+          query,
+          searchSource,
+          filterStage: 'programmatic',
+        });
+      }
+    }
+
+    // Step 3: LLM pre-filter using title + 500 char snippet (CHEAP)
+    // Checks if content is relevant to video games AND the specific article
+    let sourcesAfterPreFilter = programmaticPreFilter.toClean;
+
+    if (CLEANER_CONFIG.PREFILTER_ENABLED && programmaticPreFilter.toClean.length > 0) {
+      const { preFilterSourcesBatch } = await import('./agents/cleaner');
+      const llmPreFilterResult = await preFilterSourcesBatch(programmaticPreFilter.toClean, {
+        generateObject,
+        model,
+        logger,
+        signal,
+        gameName,
+        articleTopic,
+      });
+
+      // Track pre-filter token usage
+      cleaningTokenUsage = addTokenUsage(cleaningTokenUsage, llmPreFilterResult.tokenUsage);
+
+      // Store pre-filter results for irrelevant sources (for domain quality tracking)
+      if (llmPreFilterResult.irrelevant.length > 0) {
+        const { storePreFilterResults } = await import('./source-cache');
+        storePreFilterResults(
+          strapi,
+          llmPreFilterResult.irrelevant.map(({ source, relevanceToGaming, relevanceToArticle, reason }) => ({
+            url: source.url,
+            domain: extractDomainFromUrl(source.url),
+            title: source.title,
+            relevanceToGaming,
+            relevanceToArticle,
+            reason,
+            contentType: llmPreFilterResult.results.find((r) => r.url === source.url)?.contentType ?? 'unknown',
+            searchSource: source.searchSource,
+            originalContentLength: source.content.length,
+          }))
+        ).catch((err) => {
+          const message = err instanceof Error ? err.message : String(err);
+          logger?.warn?.(`Failed to store pre-filter results: ${message}`);
+        });
+
+        // Add to filtered sources list for metadata
+        for (const { source, relevanceToGaming, relevanceToArticle, reason } of llmPreFilterResult.irrelevant) {
+          filteredSources.push({
+            url: source.url,
+            domain: extractDomainFromUrl(source.url),
+            title: source.title,
+            qualityScore: 0, // Unknown - not cleaned
+            relevanceScore: relevanceToGaming,
+            reason: 'pre_filtered',
+            details: `Gaming: ${relevanceToGaming}/100, Article: ${relevanceToArticle}/100 - ${reason}`,
+            query,
+            searchSource: source.searchSource,
+            filterStage: 'pre_filter',
+          });
+        }
+      }
+
+      sourcesAfterPreFilter = llmPreFilterResult.relevant;
+    } else if (!CLEANER_CONFIG.PREFILTER_ENABLED) {
+      logger?.debug?.('LLM pre-filter disabled, skipping to full cleaning');
+    }
+
+    // Step 4: Full cleaning of remaining sources
+    const cleanResult = await cleanSourcesBatch(sourcesAfterPreFilter, {
+      generateObject,
+      model,
+      logger,
+      signal,
+      gameName,
+    });
+    cleanedSources = cleanResult.sources;
+    cleaningTokenUsage = addTokenUsage(cleaningTokenUsage, cleanResult.tokenUsage);
+
+    // Cleaning failures = sources that went through full cleaning but failed
+    cleaningFailures = sourcesAfterPreFilter.length - cleanedSources.length;
+
+    // Store cleaned sources in DB (fire-and-forget is OK here)
+    if (cleanedSources.length > 0) {
+      storeCleanedSources(strapi, cleanedSources, gameDocumentId).catch((err) => {
+        const message = err instanceof Error ? err.message : String(err);
+        logger?.warn?.(`Failed to store cleaned sources: ${message}`);
+      });
+    }
+  } else if (misses.length > 0 && !cleanerEnabled) {
+    // Log that we're skipping cleaning
+    logger?.debug?.(`Skipping cleaning for ${misses.length} sources (cleaner disabled)`);
+  }
+
+  // Build lookup maps for merging
+  const cachedByUrl = new Map<string, CleanedSource>();
+  for (const hit of hits) {
+    if (hit.cached) {
+      cachedByUrl.set(hit.url, hit.cached);
+    }
+  }
+
+  const cleanedByUrl = new Map<string, CleanedSource>();
+  for (const cleaned of cleanedSources) {
+    cleanedByUrl.set(cleaned.url, cleaned);
+  }
+
+  // Build final result items, using cleaned content when available
+  // Filter out sources with low relevance OR low quality
+  const processedResults: SearchResultItem[] = rawResults.results
+    .map((r) => {
+      const normalized = normalizeUrl(r.url);
+      if (!normalized) return null;
+
+      // Check if we have cleaned content for this URL
+      const cached = cachedByUrl.get(normalized);
+      const cleaned = cleanedByUrl.get(normalized);
+      const cleanedSource = cached || cleaned;
+
+      if (cleanedSource) {
+        // Check relevance score - filter out irrelevant content
+        if (cleanedSource.relevanceScore < minRelevance) {
+          filteredSources.push({
+            url: normalized,
+            domain: cleanedSource.domain,
+            title: r.title,
+            qualityScore: cleanedSource.qualityScore,
+            relevanceScore: cleanedSource.relevanceScore,
+            reason: 'low_relevance',
+            details: `Relevance ${cleanedSource.relevanceScore}/100 < min ${minRelevance}`,
+            query,
+            searchSource: cleanedSource.searchSource,
+            filterStage: 'post_clean',
+          });
+          return null;
+        }
+
+        // Check quality score - filter out low-quality content
+        if (cleanedSource.qualityScore < minQuality) {
+          filteredSources.push({
+            url: normalized,
+            domain: cleanedSource.domain,
+            title: r.title,
+            qualityScore: cleanedSource.qualityScore,
+            relevanceScore: cleanedSource.relevanceScore,
+            reason: 'low_quality',
+            details: `Quality ${cleanedSource.qualityScore}/100 < min ${minQuality}`,
+            query,
+            searchSource: cleanedSource.searchSource,
+            filterStage: 'post_clean',
+          });
+          return null;
+        }
+
+        // Use cleaned content
+        return {
+          title: r.title,
+          url: normalized,
+          content: cleanedSource.cleanedContent,
+          ...(r.summary ? { summary: r.summary } : {}),
+          ...(typeof r.score === 'number' ? { score: r.score } : {}),
+        };
+      }
+
+      // Fallback to raw content (no relevance/quality check - haven't cleaned it)
+      return {
+        title: r.title,
+        url: normalized,
+        content: r.raw_content ?? r.content ?? '',
+        ...(r.summary ? { summary: r.summary } : {}),
+        ...(typeof r.score === 'number' ? { score: r.score } : {}),
+      };
+    })
+    .filter((r): r is SearchResultItem => r !== null);
+
+  // Log filtered sources if any
+  if (filteredSources.length > 0) {
+    const byReason = {
+      low_relevance: filteredSources.filter((s) => s.reason === 'low_relevance'),
+      low_quality: filteredSources.filter((s) => s.reason === 'low_quality'),
+    };
+    
+    const parts: string[] = [];
+    if (byReason.low_relevance.length > 0) {
+      parts.push(`${byReason.low_relevance.length} low-relevance`);
+    }
+    if (byReason.low_quality.length > 0) {
+      parts.push(`${byReason.low_quality.length} low-quality`);
+    }
+    
+    logger?.info?.(
+      `Filtered ${filteredSources.length} source(s) for "${query.slice(0, 40)}..." (${parts.join(', ')}): ` +
+      filteredSources.map((s) => `${s.domain} [Q:${s.qualityScore}/R:${s.relevanceScore}]`).join(', ')
+    );
+  }
+
+  return {
+    result: {
+      query,
+      answer: rawResults.answer ?? null,
+      results: processedResults,
+      category,
+      timestamp: Date.now(),
+      searchSource,
+      ...(costUsd !== undefined ? { costUsd } : {}),
+    },
+    cacheHits: hits.length,
+    cacheMisses: misses.length,
+    cleaningFailures,
+    cleaningTokenUsage,
+    filteredSources,
   };
 }
 

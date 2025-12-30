@@ -6,6 +6,106 @@
  */
 
 // ============================================================================
+// UNIFIED EXCLUDED DOMAINS LIST
+// ============================================================================
+
+/**
+ * SINGLE SOURCE OF TRUTH for domain exclusions.
+ * Used by both search APIs (Tavily/Exa) and the cleaner/cache system.
+ *
+ * Domains are excluded for one of these reasons:
+ * 1. NO_CONTENT: No useful text content (video platforms, audio)
+ * 2. LOW_AUTHORITY: User-generated content with low editorial standards
+ * 3. NOT_VIDEO_GAMES: Content not about video games
+ * 4. SPAM: Commercial or spam sites
+ * 5. OFF_TOPIC: Technical/programming content unrelated to gaming
+ */
+export const UNIFIED_EXCLUDED_DOMAINS = new Set([
+  // === ADULT: Adult content sites (never relevant) ===
+  'xhamster.com',
+  'pornhub.com',
+  'xvideos.com',
+  'xnxx.com',
+  'redtube.com',
+
+  // === NO_CONTENT: Video/audio platforms (no extractable text) ===
+  'youtube.com',
+  'youtu.be',
+  'tiktok.com',
+  'twitch.tv',
+
+  // === LOW_AUTHORITY: Social media ===
+  'facebook.com',
+  'twitter.com',
+  'x.com',
+  'instagram.com',
+
+  // === SPAM: Game marketplaces / key resellers ===
+  'g2a.com',
+  'cdkeys.com',
+  'eneba.com',
+  'kinguin.net',
+  'voidu.com',
+  'fanatical.com',
+
+  // === SPAM: Gold selling / RMT sites ===
+  'mtmmo.com',
+  'u4gm.com',
+
+  // === LOW_AUTHORITY: Q&A / forums / social ===
+  'quora.com',
+  'reddit.com', // User-generated, inconsistent quality
+  'www.reddit.com',
+  'old.reddit.com',
+  'gamefaqs.gamespot.com', // Use official GameSpot guides instead
+  'steamcommunity.com', // Low-quality discussions
+  'fextralife.com', // Forums at fextralife.com/forums (wikis like eldenring.wiki.fextralife.com are fine)
+
+  // === OFF_TOPIC: Generic tech (not gaming-focused) ===
+  'techradar.com',
+  'radiotimes.com',
+  'beebom.com',
+  'exitlag.com', // VPN SEO content
+
+  // === OFF_TOPIC: News aggregators ===
+  'news.google.com',
+
+  // === NOT_VIDEO_GAMES: Mod sites (mods ≠ game guides) ===
+  'nexusmods.com',
+  'www.nexusmods.com',
+  'moddb.com',
+  'www.moddb.com',
+  'ersc-docs.github.io', // Mod documentation
+  'err.fandom.com', // Elden Ring Reforged mod wiki (not vanilla game)
+
+  // === NOT_VIDEO_GAMES: Speedrunning (too niche for general guides) ===
+  'soulsspeedruns.com',
+  'speedrun.com',
+
+  // === NOT_VIDEO_GAMES: Board games / tabletop ===
+  'boardgamegeek.com',
+
+  // === OFF_TOPIC: Programming / development ===
+  'flask.palletsprojects.com',
+  'docs.python.org',
+  'stackoverflow.com',
+  'github.com',
+  'gitlab.com',
+  'bitbucket.org',
+  'openprocessing.org', // Art/coding platform
+  'lunanotes.io', // AI note-taking app
+  'coohom.com', // Interior design platform
+
+  // === OFF_TOPIC: Document sharing ===
+  'scribd.com',
+
+  // === LOW_QUALITY: News/content farms ===
+  'timesofindia.indiatimes.com',
+  'oreateai.com', // AI-generated spam
+  'mandatory.gg',
+]);
+
+// ============================================================================
 // Configuration Validation
 // ============================================================================
 
@@ -202,44 +302,13 @@ export const SCOUT_CONFIG = {
    *
    * @see A/B test results Dec 2024 - basic-20 included mtmmo.com and u4gm.com gold sellers
    */
-  EXA_EXCLUDE_DOMAINS: [
-    // Video platforms (no text content)
-    'youtube.com',
-    'youtu.be',
-    'tiktok.com',
-    'twitch.tv',
-    // Social media (low authority)
-    'facebook.com',
-    'twitter.com',
-    'x.com',
-    'instagram.com',
-    // Game marketplaces (not content)
-    'g2a.com',
-    'cdkeys.com',
-    'eneba.com',
-    'kinguin.net',
-    'voidu.com',
-    // Gold selling / RMT sites (spam)
-    'mtmmo.com',
-    'u4gm.com',
-    // Q&A sites (low authority)
-    'quora.com',
-    // Generic tech (not gaming-focused)
-    'techradar.com',
-    'radiotimes.com',
-    'beebom.com',
-    // VPN/tool sites writing SEO content
-    'exitlag.com',
-    // News aggregators
-    'news.google.com',
-  ] as readonly string[],
   /**
-   * Number of top results to provide with FULL TEXT content.
-   * These results get both summary AND full content for maximum detail.
-   * Remaining results get summary only (more efficient).
-   * Set to 0 to use summaries for all results.
+   * Domains to exclude from Exa searches.
+   * Uses UNIFIED_EXCLUDED_DOMAINS - single source of truth.
    */
-  FULL_TEXT_RESULTS_COUNT: 2,
+  get EXA_EXCLUDE_DOMAINS(): readonly string[] {
+    return [...UNIFIED_EXCLUDED_DOMAINS];
+  },
   /** Number of results for recent news search */
   RECENT_SEARCH_RESULTS: 5,
   /** Maximum number of category-specific searches to run */
@@ -378,49 +447,11 @@ export const SPECIALIST_CONFIG = {
   EXA_INCLUDE_SUMMARY: false,
   /**
    * Domains to exclude from ALL search results (Exa AND Tavily).
-   * Saves money and improves quality by filtering out low-value sources.
-   * Same list as SCOUT_CONFIG - keep in sync.
-   *
-   * @see SCOUT_CONFIG.EXA_EXCLUDE_DOMAINS for detailed categorization
+   * Uses UNIFIED_EXCLUDED_DOMAINS - single source of truth.
    */
-  EXA_EXCLUDE_DOMAINS: [
-    // Video platforms (no text content)
-    'youtube.com',
-    'youtu.be',
-    'tiktok.com',
-    'twitch.tv',
-    // Social media (low authority)
-    'facebook.com',
-    'twitter.com',
-    'x.com',
-    'instagram.com',
-    // Game marketplaces (not content)
-    'g2a.com',
-    'cdkeys.com',
-    'eneba.com',
-    'kinguin.net',
-    'voidu.com',
-    // Gold selling / RMT sites (spam)
-    'mtmmo.com',
-    'u4gm.com',
-    // Q&A sites (low authority)
-    'quora.com',
-    // Generic tech (not gaming-focused)
-    'techradar.com',
-    'radiotimes.com',
-    'beebom.com',
-    // VPN/tool sites writing SEO content
-    'exitlag.com',
-    // News aggregators
-    'news.google.com',
-  ] as readonly string[],
-  /**
-   * Number of top results to provide with FULL TEXT content per section query.
-   * The first N results get both summary AND full content for maximum detail.
-   * Remaining results get summary only (more efficient).
-   * Set to 0 to use summaries for all results.
-   */
-  FULL_TEXT_RESULTS_COUNT: 1,
+  get EXA_EXCLUDE_DOMAINS(): readonly string[] {
+    return [...UNIFIED_EXCLUDED_DOMAINS];
+  },
   /** Maximum sources to include in article */
   MAX_SOURCES: 25,
   /**
@@ -545,6 +576,171 @@ export const FIXER_CONFIG = {
 } as const;
 
 // ============================================================================
+// Cleaner Agent Configuration
+// ============================================================================
+
+/**
+ * Check if cleaner is enabled via env variable or config.
+ * Env variable ARTICLE_CLEANER_ENABLED overrides config.
+ * Set to 'false' to disable cleaning (use raw content + cache only).
+ */
+function isCleanerEnabled(): boolean {
+  const envValue = process.env.ARTICLE_CLEANER_ENABLED;
+  if (envValue !== undefined) {
+    return envValue.toLowerCase() !== 'false' && envValue !== '0';
+  }
+  return true; // Default enabled
+}
+
+export const CLEANER_CONFIG = {
+  /**
+   * Temperature for Cleaner LLM calls.
+   * Very low (0.1) for consistent, deterministic cleaning.
+   * We want the same input to produce the same cleaned output.
+   */
+  TEMPERATURE: 0.1,
+  /**
+   * Maximum output tokens for cleaning.
+   * Content can be long after cleaning, allow generous output.
+   */
+  MAX_OUTPUT_TOKENS: 16000,
+  /**
+   * Number of URLs to clean in parallel.
+   * High value = faster but more concurrent API calls.
+   * Set to 100 to essentially run all cleaning in parallel.
+   */
+  BATCH_SIZE: 100,
+  /**
+   * Timeout for cleaning a single URL (ms).
+   * 30 seconds should be plenty for content extraction.
+   */
+  TIMEOUT_MS: 30000,
+  /**
+   * Minimum content length (chars) to attempt cleaning.
+   * Content below this is likely a scrape failure (JS-heavy site, paywall, etc.)
+   * and not worth spending LLM tokens on.
+   * 
+   * Analysis shows all scrape failures are < 200 chars, real content starts at 800+.
+   * 500 is a safe threshold that catches failures with margin for edge cases.
+   */
+  MIN_CONTENT_LENGTH: 500,
+  /**
+   * Minimum relevance score for BOTH caching AND filtering.
+   * Sources below this are considered off-topic for video games.
+   * 70 = strict, ensures content is directly about video games.
+   * 
+   * Content below this threshold:
+   * - NOT stored in cache (wastes storage)
+   * - NOT passed to AI agents
+   * 
+   * Use lower values (e.g., 50) via minRelevanceOverride for searches
+   * that include tangential content like gaming gear, hardware, etc.
+   */
+  MIN_RELEVANCE_FOR_RESULTS: 70,
+  /**
+   * Minimum quality score for STORAGE in database.
+   * Sources below this are not stored (except scrape failures with Q:0).
+   * Set to 20 to still track "bad but not terrible" content for domain stats.
+   * 
+   * Lower than MIN_QUALITY_FOR_RESULTS so we can:
+   * 1. Track domain quality even for poor articles
+   * 2. Avoid re-cleaning same bad URLs
+   */
+  MIN_QUALITY_FOR_STORAGE: 20,
+  /**
+   * Minimum quality score for FILTERING results to LLM.
+   * Sources below this are filtered out and not sent to AI agents.
+   * 
+   * Set to 35 to include truncated fragments from good sources (score ~45)
+   * while filtering truly low-quality content (score 15-25).
+   * 
+   * Use minQualityOverride in CleaningDeps to adjust per-request.
+   */
+  MIN_QUALITY_FOR_RESULTS: 35,
+  /**
+   * Domains with average relevance below this get auto-excluded.
+   * Stricter than individual filtering since consistently off-topic
+   * domains waste API calls on every search.
+   */
+  AUTO_EXCLUDE_RELEVANCE_THRESHOLD: 30,
+  /**
+   * Domain average score below this triggers auto-exclusion.
+   * Same as MIN_QUALITY_FOR_RESULTS for consistency.
+   * Requires AUTO_EXCLUDE_MIN_SAMPLES to prevent premature exclusion.
+   */
+  AUTO_EXCLUDE_THRESHOLD: 35,
+  /**
+   * Minimum samples before auto-excluding a domain.
+   * Prevents exclusion based on one bad page.
+   */
+  AUTO_EXCLUDE_MIN_SAMPLES: 5,
+  /**
+   * Maximum input characters to process.
+   * Skip processing huge pages to save costs.
+   */
+  MAX_INPUT_CHARS: 50000,
+  /**
+   * Minimum cleaned content length to consider valid.
+   * If cleaning results in less than this, content is likely garbage.
+   */
+  MIN_CLEANED_CHARS: 100,
+  /**
+   * Whether the cleaner LLM is enabled.
+   * When false, only checks DB cache - doesn't run LLM on misses.
+   * Override with env var ARTICLE_CLEANER_ENABLED=false
+   */
+  get ENABLED(): boolean {
+    return isCleanerEnabled();
+  },
+  /**
+   * Whether to use LLM pre-filter before full cleaning.
+   * Pre-filter uses title + 500 char snippet to check relevance.
+   * Costs ~$0.0001-0.0005 per source, can save full cleaning cost on irrelevant content.
+   * Override with env var ARTICLE_PREFILTER_ENABLED=false
+   */
+  get PREFILTER_ENABLED(): boolean {
+    const envValue = process.env.ARTICLE_PREFILTER_ENABLED;
+    if (envValue !== undefined) {
+      return envValue.toLowerCase() !== 'false';
+    }
+    return true; // Enabled by default
+  },
+  /**
+   * Timeout for pre-filter LLM call (ms).
+   * Short timeout since it's a simple relevance check.
+   */
+  PREFILTER_TIMEOUT_MS: 10000,
+  /**
+   * Minimum relevanceToGaming score (0-100) to pass pre-filter.
+   * Content below this is definitely not about video games.
+   * 50 = moderate threshold, allows gaming-adjacent content.
+   */
+  PREFILTER_MIN_GAMING_RELEVANCE: 50,
+  /**
+   * Minimum relevanceToArticle score (0-100) to pass pre-filter.
+   * Content below this is not useful for the specific article.
+   * 30 = lenient, allows tangentially related content through to full cleaning.
+   */
+  PREFILTER_MIN_ARTICLE_RELEVANCE: 30,
+  /**
+   * Hardcoded list of domains to always exclude.
+   * Uses UNIFIED_EXCLUDED_DOMAINS - single source of truth.
+   * DB exclusions are checked separately and combined with this list.
+   */
+  EXCLUDED_DOMAINS: UNIFIED_EXCLUDED_DOMAINS,
+  /**
+   * Quality score thresholds for domain tiers.
+   */
+  TIER_THRESHOLDS: {
+    excellent: 80,
+    good: 60,
+    average: 40,
+    poor: 25,
+    // Below poor is excluded
+  } as const,
+} as const;
+
+// ============================================================================
 // Retry Configuration
 // ============================================================================
 
@@ -617,6 +813,9 @@ export const MODEL_PRICING: Record<string, ModelPricing> = {
   // Google models
   'google/gemini-pro': { inputPer1k: 0.00025, outputPer1k: 0.0005 },
   'google/gemini-pro-1.5': { inputPer1k: 0.00125, outputPer1k: 0.005 },
+  'google/gemini-flash-2.0': { inputPer1k: 0.0001, outputPer1k: 0.0004 },
+  // Gemini 3 Flash: $0.50/1M input, $3/1M output (per OpenRouter Dec 2025)
+  'google/gemini-3-flash-preview': { inputPer1k: 0.0005, outputPer1k: 0.003 },
 } as const;
 
 /**
@@ -668,6 +867,7 @@ export const CONFIG = {
   specialist: SPECIALIST_CONFIG,
   reviewer: REVIEWER_CONFIG,
   fixer: FIXER_CONFIG,
+  cleaner: CLEANER_CONFIG,
   retry: RETRY_CONFIG,
   generator: GENERATOR_CONFIG,
   seo: SEO_CONSTRAINTS,
@@ -753,6 +953,26 @@ function validateConfiguration(): void {
   validateTemperature(FIXER_CONFIG.TEMPERATURE, 'FIXER_CONFIG.TEMPERATURE');
   validatePositive(FIXER_CONFIG.MAX_FIXES_PER_ITERATION, 'FIXER_CONFIG.MAX_FIXES_PER_ITERATION');
   validatePositive(FIXER_CONFIG.MAX_OUTPUT_TOKENS_SMART_FIX, 'FIXER_CONFIG.MAX_OUTPUT_TOKENS_SMART_FIX');
+
+  // Cleaner Config
+  validateTemperature(CLEANER_CONFIG.TEMPERATURE, 'CLEANER_CONFIG.TEMPERATURE');
+  validatePositive(CLEANER_CONFIG.MAX_OUTPUT_TOKENS, 'CLEANER_CONFIG.MAX_OUTPUT_TOKENS');
+  validatePositive(CLEANER_CONFIG.BATCH_SIZE, 'CLEANER_CONFIG.BATCH_SIZE');
+  validatePositive(CLEANER_CONFIG.TIMEOUT_MS, 'CLEANER_CONFIG.TIMEOUT_MS');
+  validateNonNegative(CLEANER_CONFIG.MIN_QUALITY_FOR_STORAGE, 'CLEANER_CONFIG.MIN_QUALITY_FOR_STORAGE');
+  validateNonNegative(CLEANER_CONFIG.MIN_QUALITY_FOR_RESULTS, 'CLEANER_CONFIG.MIN_QUALITY_FOR_RESULTS');
+  validateNonNegative(CLEANER_CONFIG.MIN_RELEVANCE_FOR_RESULTS, 'CLEANER_CONFIG.MIN_RELEVANCE_FOR_RESULTS');
+
+  // Ensure storage threshold <= filtering threshold (makes sense: store more than we show)
+  if (CLEANER_CONFIG.MIN_QUALITY_FOR_STORAGE > CLEANER_CONFIG.MIN_QUALITY_FOR_RESULTS) {
+    throw new Error(
+      `MIN_QUALITY_FOR_STORAGE (${CLEANER_CONFIG.MIN_QUALITY_FOR_STORAGE}) cannot be higher than MIN_QUALITY_FOR_RESULTS (${CLEANER_CONFIG.MIN_QUALITY_FOR_RESULTS})`
+    );
+  }
+  validateNonNegative(CLEANER_CONFIG.AUTO_EXCLUDE_THRESHOLD, 'CLEANER_CONFIG.AUTO_EXCLUDE_THRESHOLD');
+  validatePositive(CLEANER_CONFIG.AUTO_EXCLUDE_MIN_SAMPLES, 'CLEANER_CONFIG.AUTO_EXCLUDE_MIN_SAMPLES');
+  validatePositive(CLEANER_CONFIG.MAX_INPUT_CHARS, 'CLEANER_CONFIG.MAX_INPUT_CHARS');
+  validatePositive(CLEANER_CONFIG.MIN_CLEANED_CHARS, 'CLEANER_CONFIG.MIN_CLEANED_CHARS');
 
   // Retry Config
   validatePositive(RETRY_CONFIG.MAX_RETRIES, 'RETRY_CONFIG.MAX_RETRIES');

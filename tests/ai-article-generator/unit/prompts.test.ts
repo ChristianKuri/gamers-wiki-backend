@@ -536,33 +536,34 @@ describe('Specialist Prompts', () => {
   });
 
   describe('buildResearchContext', () => {
-    it('returns empty string for empty research', () => {
-      const context = buildResearchContext([], 5, 600);
+    it('returns empty context for empty research', () => {
+      const result = buildResearchContext([], 5, 600);
 
-      expect(context).toBe('');
+      expect(result.context).toBe('');
+      expect(result.sourceUsage).toEqual([]);
     });
 
     it('formats research results with query and category', () => {
       const research = [createMockSearchResult('test query')];
-      const context = buildResearchContext(research, 5, 600);
+      const result = buildResearchContext(research, 5, 600);
 
-      expect(context).toContain('test query');
-      expect(context).toContain('section-specific');
+      expect(result.context).toContain('test query');
+      expect(result.context).toContain('section-specific');
     });
 
     it('includes AI summary', () => {
       const research = [createMockSearchResult('query')];
-      const context = buildResearchContext(research, 5, 600);
+      const result = buildResearchContext(research, 5, 600);
 
-      expect(context).toContain('AI Summary:');
-      expect(context).toContain('Answer for query');
+      expect(result.context).toContain('AI Summary:');
+      expect(result.context).toContain('Answer for query');
     });
 
     it('limits results per research item', () => {
-      const result = createMockSearchResult('query');
+      const searchResult = createMockSearchResult('query');
       // Add more results
       const extendedResult = {
-        ...result,
+        ...searchResult,
         results: [
           { title: 'R1', url: 'https://1.com', content: 'C1', score: 1 },
           { title: 'R2', url: 'https://2.com', content: 'C2', score: 0.9 },
@@ -571,16 +572,16 @@ describe('Specialist Prompts', () => {
         ],
       };
 
-      const context = buildResearchContext([extendedResult], 2, 600);
+      const result = buildResearchContext([extendedResult], 2, 600);
 
-      expect(context).toContain('R1');
-      expect(context).toContain('R2');
-      expect(context).not.toContain('R3');
-      expect(context).not.toContain('R4');
+      expect(result.context).toContain('R1');
+      expect(result.context).toContain('R2');
+      expect(result.context).not.toContain('R3');
+      expect(result.context).not.toContain('R4');
     });
 
     it('truncates content based on contentPerResult', () => {
-      const result: CategorizedSearchResult = {
+      const searchResult: CategorizedSearchResult = {
         query: 'query',
         answer: 'answer',
         results: [{ title: 'Title', url: 'https://example.com', content: 'A'.repeat(1000), score: 1 }],
@@ -588,9 +589,9 @@ describe('Specialist Prompts', () => {
         timestamp: Date.now(),
       };
 
-      const context = buildResearchContext([result], 5, 50);
+      const result = buildResearchContext([searchResult], 5, 50);
 
-      expect(context).not.toContain('A'.repeat(100));
+      expect(result.context).not.toContain('A'.repeat(100));
     });
 
     it('separates multiple research items', () => {
@@ -599,11 +600,20 @@ describe('Specialist Prompts', () => {
         createMockSearchResult('query2'),
       ];
 
-      const context = buildResearchContext(research, 5, 600);
+      const result = buildResearchContext(research, 5, 600);
 
-      expect(context).toContain('query1');
-      expect(context).toContain('query2');
-      expect(context).toContain('---');
+      expect(result.context).toContain('query1');
+      expect(result.context).toContain('query2');
+      expect(result.context).toContain('---');
+    });
+
+    it('tracks source usage', () => {
+      const research = [createMockSearchResult('test query')];
+      const result = buildResearchContext(research, 5, 600, 'Test Section');
+
+      expect(result.sourceUsage.length).toBeGreaterThan(0);
+      expect(result.sourceUsage[0].section).toBe('Test Section');
+      expect(result.sourceUsage[0].query).toBe('test query');
     });
   });
 

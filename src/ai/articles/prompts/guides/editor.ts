@@ -166,7 +166,10 @@ OUTPUT STRUCTURE:
     {
       "headline": "Clear section title",
       "goal": "What player accomplishes in this section",
-      "researchQueries": ["specific search query 1", "specific search query 2"],
+      "researchQueries": [
+        "\"Game Name\" specific topic guide",
+        "Game Name how to do specific thing"
+      ],
       "mustCover": [
         "Item: Archaic Tunic (Great Sky Island > Pondside Cave, chest in main chamber)",
         "Item: Archaic Legwear (Great Sky Island > Room of Awakening, chest near exit)"
@@ -174,6 +177,13 @@ OUTPUT STRUCTURE:
     }
   ]
 }
+
+RESEARCH QUERY FORMAT (CRITICAL):
+• ALWAYS include the game name at the START of every query
+• Use quotes around game name for exact match: "Elden Ring" how to get Torrent
+• Be specific: "Elden Ring" Torrent mount unlock location (NOT just "how to get Torrent")
+• Bad: "How to get Torrent" → returns mod sites, unrelated results
+• Good: "Elden Ring" Torrent spectral steed how to unlock location
 `;
   }
 };

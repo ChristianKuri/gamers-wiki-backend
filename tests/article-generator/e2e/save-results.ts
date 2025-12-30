@@ -71,6 +71,8 @@ export interface TokenUsageByPhase {
   readonly editor: PhaseTokenUsage;
   readonly specialist: PhaseTokenUsage;
   readonly reviewer?: PhaseTokenUsage;
+  /** Cleaner agent token usage (separate for cost visibility) */
+  readonly cleaner?: PhaseTokenUsage;
 }
 
 /**
@@ -132,10 +134,59 @@ export interface GenerationStats {
    * Shows which sources used full text vs summary.
    */
   readonly sourceContentUsage?: SourceContentUsageStats;
+  /**
+   * Filtered sources tracking.
+   * Shows sources that were filtered out due to low quality or relevance.
+   */
+  readonly filteredSources?: FilteredSourcesStats;
 }
 
-/** Content type used for a source */
-export type ContentType = 'full' | 'summary' | 'content';
+/** A source that was filtered out */
+export interface FilteredSourceItem {
+  readonly url: string;
+  readonly domain: string;
+  readonly title: string;
+  readonly qualityScore: number;
+  readonly relevanceScore: number;
+  readonly reason: 'low_relevance' | 'low_quality' | 'excluded_domain' | 'pre_filtered' | 'scrape_failure';
+  readonly details: string;
+  /** Search query that returned this source */
+  readonly query?: string;
+  /** Search provider (tavily/exa) */
+  readonly searchSource?: 'tavily' | 'exa';
+  /** Stage where filtering happened */
+  readonly filterStage?: 'programmatic' | 'pre_filter' | 'full_clean' | 'post_clean';
+}
+
+/** Filtered sources statistics */
+export interface FilteredSourcesStats {
+  /** Individual filtered sources */
+  readonly sources: readonly FilteredSourceItem[];
+  /** Summary counts */
+  readonly counts: {
+    readonly total: number;
+    readonly lowRelevance: number;
+    readonly lowQuality: number;
+    readonly excludedDomain: number;
+    readonly preFiltered: number;
+    readonly scrapeFailure: number;
+  };
+  /** Breakdown by search provider */
+  readonly byProvider?: {
+    readonly tavily: number;
+    readonly exa: number;
+  };
+  /** Breakdown by filter stage */
+  readonly byStage?: {
+    readonly programmatic: number;
+    readonly preFilter: number;
+    readonly fullClean: number;
+    readonly postClean: number;
+  };
+}
+
+/** Content type used for a source (always 'full') */
+export type ContentType = 'full';
 
 /** Individual source usage tracking */
 export interface SourceUsageItem {
@@ -145,7 +196,6 @@ export interface SourceUsageItem {
   readonly phase: 'scout' | 'specialist';
   readonly section?: string;
   readonly query: string;
-  readonly hasSummary: boolean;
 }
 
 /** Source content usage statistics */
@@ -155,9 +205,6 @@ export interface SourceContentUsageStats {
   /** Summary counts */
   readonly counts: {
     readonly total: number;
-    readonly fullText: number;
-    readonly summary: number;
-    readonly contentFallback: number;
   };
 }
 

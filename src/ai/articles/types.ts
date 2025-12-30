@@ -176,8 +176,13 @@ export interface ScoutOutput {
   };
   readonly researchPool: ResearchPool;
   readonly sourceUrls: readonly string[];
-  /** Token usage for Scout phase LLM calls */
+  /** Token usage for Scout phase LLM calls (excludes cleaning) */
   readonly tokenUsage: TokenUsage;
+  /**
+   * Token usage for content cleaning (separate from Scout LLM calls).
+   * Only present when cleaning is enabled and content was cleaned.
+   */
+  readonly cleaningTokenUsage?: TokenUsage;
   /**
    * Confidence level based on research quality.
    * - 'high': Good source count and briefing quality
@@ -190,6 +195,11 @@ export interface ScoutOutput {
    * Exa costs are actual (from API), Tavily costs are estimated.
    */
   readonly searchApiCosts: SearchApiCosts;
+  /**
+   * Sources filtered out due to low quality or relevance.
+   * Tracked for transparency and debugging.
+   */
+  readonly filteredSources: readonly FilteredSourceSummary[];
 }
 
 // ============================================================================
@@ -214,6 +224,11 @@ export interface ScoutOutput {
 export interface GameArticleContext {
   readonly gameName: string;
   readonly gameSlug?: string | null;
+  /**
+   * Strapi document ID of the game entity.
+   * Used for linking cleaned sources to the game in the database.
+   */
+  readonly gameDocumentId?: string | null;
   readonly releaseDate?: string | null;
   readonly genres?: readonly string[];
   readonly platforms?: readonly string[];
@@ -272,6 +287,11 @@ export interface AggregatedTokenUsage {
   readonly specialist: TokenUsage;
   /** Reviewer token usage (may be empty if reviewer was disabled) */
   readonly reviewer?: TokenUsage;
+  /**
+   * Cleaner token usage (may be empty if cleaning was disabled or no content was cleaned).
+   * Tracked separately from other phases for cost visibility.
+   */
+  readonly cleaner?: TokenUsage;
   readonly total: TokenUsage;
   /**
    * Actual total LLM cost in USD from OpenRouter.
@@ -397,8 +417,9 @@ export function addTavilySearch(
 
 /**
  * Content type used for a source in the LLM context.
+ * Always 'full' - we always use full content from sources.
  */
-export type ContentType = 'full' | 'summary' | 'content';
+export type ContentType = 'full';
 
 /**
  * Tracking of which content type was used for a single source.
@@ -406,7 +427,7 @@ export type ContentType = 'full' | 'summary' | 'content';
 export interface SourceUsageItem {
   readonly url: string;
   readonly title: string;
-  /** Which content type was used in the LLM context */
+  /** Which content type was used in the LLM context (always 'full') */
   readonly contentType: ContentType;
   /** Phase where this source was used */
   readonly phase: 'scout' | 'specialist';
@@ -414,8 +435,6 @@ export interface SourceUsageItem {
   readonly section?: string;
   /** Search query that returned this source */
   readonly query: string;
-  /** Whether this source had a summary available */
-  readonly hasSummary: boolean;
   /** Which search API returned this source (exa or tavily) */
   readonly searchSource?: SearchSource;
 }
@@ -429,9 +448,6 @@ export interface SourceContentUsage {
   /** Summary counts */
   readonly counts: {
     readonly total: number;
-    readonly fullText: number;
-    readonly summary: number;
-    readonly contentFallback: number;
   };
 }
 
@@ -443,9 +459,6 @@ export function createEmptySourceContentUsage(): SourceContentUsage {
     sources: [],
     counts: {
       total: 0,
-      fullText: 0,
-      summary: 0,
-      contentFallback: 0,
     },
   };
 }
@@ -457,20 +470,11 @@ export function addSourceUsage(
   usage: SourceContentUsage,
   items: readonly SourceUsageItem[]
 ): SourceContentUsage {
-  const newCounts = { ...usage.counts };
-  for (const item of items) {
-    newCounts.total++;
-    if (item.contentType === 'full') {
-      newCounts.fullText++;
-    } else if (item.contentType === 'summary') {
-      newCounts.summary++;
-    } else {
-      newCounts.contentFallback++;
-    }
-  }
   return {
     sources: [...usage.sources, ...items],
-    counts: newCounts,
+    counts: {
+      total: usage.counts.total + items.length,
+    },
   };
 }
 
@@ -582,6 +586,32 @@ export interface ArticleGenerationMetadata {
   readonly researchConfidence: ResearchConfidence;
   /** Recovery metadata (present when any retries or fixes were applied) */
   readonly recovery?: RecoveryMetadata;
+  /**
+   * Sources filtered out due to low quality or relevance.
+   * Tracked for transparency and debugging.
+   */
+  readonly filteredSources?: readonly FilteredSourceSummary[];
+}
+
+/**
+ * Summary of a filtered source for metadata tracking.
+ */
+export interface FilteredSourceSummary {
+  readonly url: string;
+  readonly domain: string;
+  readonly title: string;
+  readonly qualityScore: number;
+  readonly relevanceScore: number;
+  /** Reason for filtering */
+  readonly reason: 'low_relevance' | 'low_quality' | 'excluded_domain' | 'pre_filtered' | 'scrape_failure';
+  /** Human-readable details */
+  readonly details: string;
+  /** Search query that returned this source */
+  readonly query?: string;
+  /** Search provider that returned this source */
+  readonly searchSource?: 'tavily' | 'exa';
+  /** Stage where filtering happened */
+  readonly filterStage?: 'programmatic' | 'pre_filter' | 'full_clean' | 'post_clean';
 }
 
 /**
@@ -924,5 +954,168 @@ export function createMockClock(initialTime: number, autoAdvance?: number): Cloc
       return time;
     },
   };
+}
+
+// ============================================================================
+// Cleaner Agent Types
+// ============================================================================
+
+/**
+ * Quality tier for domains based on average score.
+ * This is an enum because it maps to specific score thresholds.
+ */
+export type DomainTier = 'excellent' | 'good' | 'average' | 'poor' | 'excluded';
+
+/**
+ * Raw source input before cleaning.
+ */
+export interface RawSourceInput {
+  readonly url: string;
+  readonly title: string;
+  readonly content: string;
+  readonly searchSource: SearchSource;
+}
+
+/**
+ * Cleaned source output from the Cleaner agent.
+ */
+export interface CleanedSource {
+  readonly url: string;
+  readonly domain: string;
+  readonly title: string;
+  /** Short summary for quick reference (future: use for cache-only article generation) */
+  readonly summary: string | null;
+  readonly cleanedContent: string;
+  readonly originalContentLength: number;
+  /** Content quality score (0-100): structure, depth, authority */
+  readonly qualityScore: number;
+  /**
+   * Relevance to gaming score (0-100): Is this about games/gaming?
+   * Content can be high quality but low relevance (e.g., Python docs).
+   * Only content with high relevance should be used for game articles.
+   */
+  readonly relevanceScore: number;
+  readonly qualityNotes: string;
+  /** AI-determined content type (e.g., "wiki", "guide", "forum", "news article", etc.) */
+  readonly contentType: string;
+  readonly junkRatio: number;
+  readonly searchSource: SearchSource;
+}
+
+/**
+ * Cache check result for a single URL.
+ */
+export interface CacheCheckResult {
+  readonly url: string;
+  readonly hit: boolean;
+  readonly cached?: CleanedSource;
+  readonly raw?: RawSourceInput;
+}
+
+/**
+ * Stored source content from database.
+ */
+export interface StoredSourceContent {
+  readonly id: number;
+  readonly documentId: string;
+  readonly url: string;
+  readonly domain: string;
+  readonly title: string;
+  /** Short summary for quick reference */
+  readonly summary: string | null;
+  readonly cleanedContent: string;
+  readonly originalContentLength: number;
+  readonly qualityScore: number;
+  /** Relevance to gaming score (0-100) */
+  readonly relevanceScore: number;
+  readonly qualityNotes: string | null;
+  /** AI-determined content type */
+  readonly contentType: string;
+  readonly junkRatio: number;
+  readonly accessCount: number;
+  readonly lastAccessedAt: string | null;
+  readonly searchSource: SearchSource;
+}
+
+/**
+ * Stored domain quality from database.
+ */
+export interface StoredDomainQuality {
+  readonly id: number;
+  readonly documentId: string;
+  readonly domain: string;
+  readonly avgQualityScore: number;
+  /** Average relevance to gaming (0-100) */
+  readonly avgRelevanceScore: number;
+  readonly totalSources: number;
+  readonly tier: DomainTier;
+  readonly isExcluded: boolean;
+  readonly excludeReason: string | null;
+  /** AI-inferred domain type */
+  readonly domainType: string;
+}
+
+/**
+ * Dependencies for the Cleaner agent.
+ */
+export interface CleanerDeps {
+  readonly generateObject: typeof import('ai').generateObject;
+  readonly model: import('ai').LanguageModel;
+  readonly logger?: import('../../utils/logger').Logger;
+  readonly signal?: AbortSignal;
+  /** Game name for relevance scoring context */
+  readonly gameName?: string;
+}
+
+/**
+ * Options for cleaning sources.
+ */
+export interface CleanSourcesOptions {
+  /** Game name for relevance scoring context */
+  readonly gameName?: string;
+  /** Game document ID for linking cleaned sources */
+  readonly gameDocumentId?: string | null;
+}
+
+/**
+ * Result of cleaning a single source.
+ */
+export interface CleanSingleSourceResult {
+  /** Cleaned source or null if cleaning failed */
+  readonly source: CleanedSource | null;
+  /** Token usage for this cleaning operation */
+  readonly tokenUsage: TokenUsage;
+}
+
+/**
+ * Result of cleaning multiple sources.
+ */
+export interface CleanSourcesResult {
+  /** All sources (cached + newly cleaned) */
+  readonly sources: readonly CleanedSource[];
+  /** Number of cache hits */
+  readonly cacheHits: number;
+  /** Number of cache misses (newly cleaned) */
+  readonly cacheMisses: number;
+  /** Total time for cleaning in ms */
+  readonly durationMs: number;
+  /** Aggregated token usage from all cleaning LLM calls */
+  readonly tokenUsage: TokenUsage;
+}
+
+/**
+ * Cleaner agent output schema for LLM.
+ */
+export interface CleanerLLMOutput {
+  readonly cleanedContent: string;
+  /** Short 1-2 sentence summary for quick reference */
+  readonly summary: string;
+  /** Content quality score (0-100): depth, structure, authority */
+  readonly qualityScore: number;
+  /** Gaming relevance score (0-100): Is this about video games? */
+  readonly relevanceScore: number;
+  readonly qualityNotes: string;
+  /** AI-determined content type (free-form, e.g., "wiki article", "strategy guide", "forum discussion") */
+  readonly contentType: string;
 }
 

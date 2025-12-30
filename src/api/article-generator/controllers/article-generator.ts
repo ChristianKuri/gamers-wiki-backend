@@ -171,21 +171,26 @@ export default ({ strapi }: { strapi: Core.Strapi }) => ({
     const publisherName = (game as any).publishers?.[0]?.name || null;
 
     // Articles are always generated in English; translation is a separate process
-    const draft = await generateGameArticleDraft({
-      gameName: game.name,
-      gameSlug: game.slug,
-      releaseDate: game.releaseDate,
-      genres: genreNames,
-      platforms: platformNames,
-      developer: developerName,
-      publisher: publisherName,
-      igdbDescription: game.description,
-      instruction: body.instruction,
-      categoryHints: (categories || []).map((c) => ({
-        slug: c.slug as any,
-        systemPrompt: (c as any).systemPrompt ?? null,
-      })),
-    });
+    // Pass strapi to enable content cleaning and caching
+    const draft = await generateGameArticleDraft(
+      {
+        gameName: game.name,
+        gameSlug: game.slug,
+        gameDocumentId: game.documentId,
+        releaseDate: game.releaseDate,
+        genres: genreNames,
+        platforms: platformNames,
+        developer: developerName,
+        publisher: publisherName,
+        igdbDescription: game.description,
+        instruction: body.instruction,
+        categoryHints: (categories || []).map((c) => ({
+          slug: c.slug as any,
+          systemPrompt: (c as any).systemPrompt ?? null,
+        })),
+      },
+      { strapi }
+    );
 
     // Find the category doc by slug
     const categoryMatch = (categories || []).find((c) => c.slug === draft.categorySlug);
