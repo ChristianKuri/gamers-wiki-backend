@@ -88,7 +88,19 @@ export function isArticleGenerationError(error: unknown): error is ArticleGenera
 export interface SearchResultItem {
   readonly title: string;
   readonly url: string;
+  /**
+   * Full text content (may be truncated based on API settings).
+   * For Exa: raw page content up to textMaxCharacters.
+   * For Tavily: extracted page content.
+   */
   readonly content: string;
+  /**
+   * AI-generated summary (if available).
+   * For Exa: query-aware summary from Gemini Flash.
+   * For Tavily: not available (use content).
+   * @see https://docs.exa.ai/reference/contents-retrieval#summary-summary-true
+   */
+  readonly summary?: string;
   readonly score?: number;
 }
 
@@ -118,6 +130,11 @@ export interface CategorizedSearchResult {
    * Defaults to 'tavily' for backwards compatibility if not specified.
    */
   readonly searchSource?: SearchSource;
+  /**
+   * Actual cost in USD for this search (from Exa API response).
+   * Only populated for Exa searches where the API returns costDollars.
+   */
+  readonly costUsd?: number;
 }
 
 // ============================================================================
@@ -168,6 +185,11 @@ export interface ScoutOutput {
    * - 'low': Limited research, article quality may be compromised
    */
   readonly confidence: ResearchConfidence;
+  /**
+   * Search API costs aggregated from all searches.
+   * Exa costs are actual (from API), Tavily costs are estimated.
+   */
+  readonly searchApiCosts: SearchApiCosts;
 }
 
 // ============================================================================
@@ -199,6 +221,11 @@ export interface GameArticleContext {
   readonly publisher?: string | null;
   readonly igdbDescription?: string | null;
   readonly instruction?: string | null;
+  /**
+   * Explicitly requested article category.
+   * If provided, this overrides intent detection and forces the article type.
+   */
+  readonly categorySlug?: ArticleCategorySlug;
   readonly categoryHints?: readonly CategoryHint[];
   /**
    * Target word count for the article.
@@ -228,6 +255,12 @@ export interface TokenUsage {
   readonly input: number;
   /** Number of output (completion) tokens */
   readonly output: number;
+  /**
+   * Actual cost in USD from OpenRouter.
+   * Captured from providerMetadata.openrouter.usage.cost.
+   * This is the real cost, not an estimate from token counts.
+   */
+  readonly actualCostUsd?: number;
 }
 
 /**
@@ -240,8 +273,205 @@ export interface AggregatedTokenUsage {
   /** Reviewer token usage (may be empty if reviewer was disabled) */
   readonly reviewer?: TokenUsage;
   readonly total: TokenUsage;
-  /** Estimated total cost in USD (if pricing data is available) */
+  /**
+   * Actual total LLM cost in USD from OpenRouter.
+   * Sum of actualCostUsd from all phases.
+   * Replaces the old estimatedCostUsd which was calculated from token counts.
+   */
+  readonly actualCostUsd?: number;
+  /**
+   * @deprecated Use actualCostUsd instead. Kept for backwards compatibility.
+   */
   readonly estimatedCostUsd?: number;
+}
+
+/**
+ * Search API cost from Exa.
+ * Captured from Exa API response costDollars field.
+ */
+export interface ExaSearchCost {
+  /** Cost in USD for this search */
+  readonly costUsd: number;
+  /** Search type used (affects pricing) */
+  readonly searchType?: 'neural' | 'deep';
+}
+
+/**
+ * Search API cost from Tavily.
+ * Captured from Tavily API response usage.credits field.
+ * Cost: $0.008 per credit (basic=1, advanced=2)
+ */
+export interface TavilySearchCost {
+  /** Number of credits used for this search */
+  readonly credits: number;
+  /** Cost in USD for this search (credits × $0.008) */
+  readonly costUsd: number;
+}
+
+/** Tavily cost per credit in USD */
+export const TAVILY_COST_PER_CREDIT = 0.008;
+
+/**
+ * Aggregated search API costs across all phases.
+ * Tracks actual costs from both Exa and Tavily API responses.
+ */
+export interface SearchApiCosts {
+  /** Total search API cost in USD */
+  readonly totalUsd: number;
+  /** Number of Exa searches performed */
+  readonly exaSearchCount: number;
+  /** Number of Tavily searches performed */
+  readonly tavilySearchCount: number;
+  /** Total cost from Exa (from API responses) */
+  readonly exaCostUsd: number;
+  /** Total cost from Tavily (from API responses, or estimated if not available) */
+  readonly tavilyCostUsd: number;
+  /** Total Tavily credits used (from API responses) */
+  readonly tavilyCredits: number;
+}
+
+/**
+ * Creates an empty search API costs object.
+ */
+export function createEmptySearchApiCosts(): SearchApiCosts {
+  return {
+    totalUsd: 0,
+    exaSearchCount: 0,
+    tavilySearchCount: 0,
+    exaCostUsd: 0,
+    tavilyCostUsd: 0,
+    tavilyCredits: 0,
+  };
+}
+
+/**
+ * Adds an Exa search cost to the aggregate.
+ */
+export function addExaSearchCost(
+  costs: SearchApiCosts,
+  exaCost: ExaSearchCost
+): SearchApiCosts {
+  return {
+    ...costs,
+    exaSearchCount: costs.exaSearchCount + 1,
+    exaCostUsd: costs.exaCostUsd + exaCost.costUsd,
+    totalUsd: costs.totalUsd + exaCost.costUsd,
+  };
+}
+
+/**
+ * Adds a Tavily search cost to the aggregate.
+ * Uses actual credits from API response, or estimates if not available.
+ *
+ * @param tavilyCost - Cost info from Tavily API, or undefined for estimate
+ */
+export function addTavilySearch(
+  costs: SearchApiCosts,
+  tavilyCost?: TavilySearchCost
+): SearchApiCosts {
+  // If we have actual cost from API, use it
+  if (tavilyCost) {
+    return {
+      ...costs,
+      tavilySearchCount: costs.tavilySearchCount + 1,
+      tavilyCredits: costs.tavilyCredits + tavilyCost.credits,
+      tavilyCostUsd: costs.tavilyCostUsd + tavilyCost.costUsd,
+      totalUsd: costs.totalUsd + tavilyCost.costUsd,
+    };
+  }
+
+  // Fallback: estimate 1 credit for basic search
+  const estimatedCost = TAVILY_COST_PER_CREDIT;
+  return {
+    ...costs,
+    tavilySearchCount: costs.tavilySearchCount + 1,
+    tavilyCredits: costs.tavilyCredits + 1,
+    tavilyCostUsd: costs.tavilyCostUsd + estimatedCost,
+    totalUsd: costs.totalUsd + estimatedCost,
+  };
+}
+
+// ============================================================================
+// Source Content Usage Tracking
+// ============================================================================
+
+/**
+ * Content type used for a source in the LLM context.
+ */
+export type ContentType = 'full' | 'summary' | 'content';
+
+/**
+ * Tracking of which content type was used for a single source.
+ */
+export interface SourceUsageItem {
+  readonly url: string;
+  readonly title: string;
+  /** Which content type was used in the LLM context */
+  readonly contentType: ContentType;
+  /** Phase where this source was used */
+  readonly phase: 'scout' | 'specialist';
+  /** Section headline (for specialist phase) */
+  readonly section?: string;
+  /** Search query that returned this source */
+  readonly query: string;
+  /** Whether this source had a summary available */
+  readonly hasSummary: boolean;
+  /** Which search API returned this source (exa or tavily) */
+  readonly searchSource?: SearchSource;
+}
+
+/**
+ * Aggregated tracking of source content usage across all phases.
+ */
+export interface SourceContentUsage {
+  /** All sources with their content type usage */
+  readonly sources: readonly SourceUsageItem[];
+  /** Summary counts */
+  readonly counts: {
+    readonly total: number;
+    readonly fullText: number;
+    readonly summary: number;
+    readonly contentFallback: number;
+  };
+}
+
+/**
+ * Creates an empty source content usage tracker.
+ */
+export function createEmptySourceContentUsage(): SourceContentUsage {
+  return {
+    sources: [],
+    counts: {
+      total: 0,
+      fullText: 0,
+      summary: 0,
+      contentFallback: 0,
+    },
+  };
+}
+
+/**
+ * Adds source usage items to the tracker.
+ */
+export function addSourceUsage(
+  usage: SourceContentUsage,
+  items: readonly SourceUsageItem[]
+): SourceContentUsage {
+  const newCounts = { ...usage.counts };
+  for (const item of items) {
+    newCounts.total++;
+    if (item.contentType === 'full') {
+      newCounts.fullText++;
+    } else if (item.contentType === 'summary') {
+      newCounts.summary++;
+    } else {
+      newCounts.contentFallback++;
+    }
+  }
+  return {
+    sources: [...usage.sources, ...items],
+    counts: newCounts,
+  };
 }
 
 /**
@@ -253,11 +483,52 @@ export function createEmptyTokenUsage(): TokenUsage {
 
 /**
  * Adds two token usage objects together.
+ * Also aggregates actualCostUsd if present.
  */
 export function addTokenUsage(a: TokenUsage, b: TokenUsage): TokenUsage {
+  // Sum actual costs if either has one
+  const aCost = a.actualCostUsd ?? 0;
+  const bCost = b.actualCostUsd ?? 0;
+  const hasCost = a.actualCostUsd !== undefined || b.actualCostUsd !== undefined;
+
   return {
     input: a.input + b.input,
     output: a.output + b.output,
+    ...(hasCost ? { actualCostUsd: aCost + bCost } : {}),
+  };
+}
+
+/**
+ * Extracts actual cost from OpenRouter provider metadata.
+ * The @openrouter/ai-sdk-provider returns cost in providerMetadata.openrouter.usage.cost
+ *
+ * @param result - The result from generateText or generateObject
+ * @returns The actual cost in USD, or undefined if not available
+ */
+export function extractOpenRouterCost(result: {
+  providerMetadata?: Record<string, unknown>;
+}): number | undefined {
+  const openrouterMeta = result.providerMetadata?.openrouter as Record<string, unknown> | undefined;
+  const usage = openrouterMeta?.usage as Record<string, unknown> | undefined;
+  const cost = usage?.cost;
+  return typeof cost === 'number' ? cost : undefined;
+}
+
+/**
+ * Creates a TokenUsage object from an AI SDK result.
+ * Extracts both token counts and actual cost from OpenRouter.
+ *
+ * @param result - The result from generateText or generateObject
+ * @returns TokenUsage with input, output, and actualCostUsd
+ */
+export function createTokenUsageFromResult(result: {
+  usage?: { inputTokens?: number; outputTokens?: number };
+  providerMetadata?: Record<string, unknown>;
+}): TokenUsage {
+  return {
+    input: result.usage?.inputTokens ?? 0,
+    output: result.usage?.outputTokens ?? 0,
+    actualCostUsd: extractOpenRouterCost(result),
   };
 }
 
@@ -290,6 +561,21 @@ export interface ArticleGenerationMetadata {
   readonly sourcesCollected: number;
   /** Token usage by phase (optional - may not be available if API doesn't report it) */
   readonly tokenUsage?: AggregatedTokenUsage;
+  /**
+   * Search API costs from Tavily and Exa.
+   * Exa costs are actual (from API response), Tavily costs are estimated.
+   */
+  readonly searchApiCosts?: SearchApiCosts;
+  /**
+   * Total estimated cost for article generation in USD.
+   * Combines LLM token costs + Search API costs.
+   */
+  readonly totalEstimatedCostUsd?: number;
+  /**
+   * Tracking of which content type was used for each source.
+   * Shows whether full text or summary was used in the LLM context.
+   */
+  readonly sourceContentUsage?: SourceContentUsage;
   /** Correlation ID for log tracing */
   readonly correlationId: string;
   /** Research confidence level from Scout phase */
@@ -304,17 +590,18 @@ export interface ArticleGenerationMetadata {
  */
 export interface ReviewIssue {
   readonly severity: 'critical' | 'major' | 'minor';
-  readonly category: 'redundancy' | 'coverage' | 'factual' | 'style' | 'seo';
+  readonly category: 'checklist' | 'structure' | 'redundancy' | 'coverage' | 'factual' | 'style' | 'seo';
   /** Section headline or "title", "excerpt", etc. */
   readonly location?: string;
   readonly message: string;
   readonly suggestion?: string;
   /**
    * Recommended fix strategy for autonomous recovery.
+   * - inline_insert: Surgical insertion of words/clauses (e.g., "at Lookout Landing")
    * - direct_edit: Minor text replacement (clichés, typos)
    * - regenerate: Rewrite entire section
    * - add_section: Create new section for coverage gaps
-   * - expand: Add content to existing section
+   * - expand: Add ONE focused paragraph to existing section
    * - no_action: Minor issue, skip fixing
    */
   readonly fixStrategy: FixStrategy;
@@ -425,17 +712,21 @@ export interface ValidationIssue {
 /**
  * Available fix strategies for the autonomous Fixer.
  *
+ * - inline_insert: Surgical insertion of words/clauses into existing sentences (e.g., adding location context)
  * - direct_edit: Minor text replacement (clichés, typos, style fixes)
  * - regenerate: Rewrite entire section with feedback
  * - add_section: Create new section for coverage gaps
- * - expand: Add content to existing section (preserves existing content)
+ * - expand: Add ONE focused paragraph to existing section (preserves existing content)
+ * - batch: Multiple issues fixed in a single pass (internal, used when >1 issue per section)
  * - no_action: Minor issue that doesn't warrant a fix
  */
 export type FixStrategy =
+  | 'inline_insert'
   | 'direct_edit'
   | 'regenerate'
   | 'add_section'
   | 'expand'
+  | 'batch'
   | 'no_action';
 
 /**
@@ -499,11 +790,64 @@ export interface RecoveryMetadata {
    * Only present if fixerIterations > 1.
    */
   readonly markdownHistory?: readonly string[];
+  /**
+   * Honest metrics about recovery outcomes (not just operations).
+   * Only present if fixerIterations > 0.
+   */
+  readonly outcomeMetrics?: FixerOutcomeMetrics;
+}
+
+/**
+ * Honest metrics about fixer outcomes.
+ * Distinguishes between operations performed vs actual outcomes.
+ */
+export interface FixerOutcomeMetrics {
+  /** Number of fix operations attempted (sections worked on) */
+  readonly operationsAttempted: number;
+  /** Number of fix operations that changed the markdown */
+  readonly operationsSucceeded: number;
+  /** Issues by severity BEFORE fixing started */
+  readonly issuesBefore: IssueSeverityCounts;
+  /** Issues by severity AFTER fixing completed */
+  readonly issuesAfter: IssueSeverityCounts;
+  /** Net change in issue counts (negative = improvement) */
+  readonly netChange: IssueSeverityCounts;
+  /** Whether the reviewer approved the final article */
+  readonly reviewerApproved: boolean;
+  /** 
+   * Note about issue tracking: Issues may change between reviews.
+   * A fix may resolve one issue but the reviewer may identify new issues.
+   * "operationsSucceeded" means markdown changed, NOT that specific issues were resolved.
+   */
+  readonly note: string;
+}
+
+/**
+ * Issue counts by severity level.
+ */
+export interface IssueSeverityCounts {
+  readonly critical: number;
+  readonly major: number;
+  readonly minor: number;
+  readonly total: number;
 }
 
 // ============================================================================
 // Dependency Injection Types
 // ============================================================================
+
+/**
+ * Result from search function, includes optional cost tracking.
+ */
+export interface SearchFunctionResult {
+  readonly query: string;
+  readonly answer: string | null;
+  readonly results: readonly { title: string; url: string; content?: string; score?: number }[];
+  /** Cost in USD for this search (from Tavily API response) */
+  readonly costUsd?: number;
+  /** Credits used for this search (from Tavily API response) */
+  readonly credits?: number;
+}
 
 /**
  * Search function type for dependency injection.
@@ -515,12 +859,10 @@ export type SearchFunction = (
     maxResults?: number;
     includeAnswer?: boolean;
     includeRawContent?: boolean;
+    /** Domains to exclude (e.g., YouTube for no text content) */
+    excludeDomains?: readonly string[];
   }
-) => Promise<{
-  query: string;
-  answer: string | null;
-  results: readonly { title: string; url: string; content?: string; score?: number }[];
-}>;
+) => Promise<SearchFunctionResult>;
 
 // ============================================================================
 // Clock Abstraction (for testability)

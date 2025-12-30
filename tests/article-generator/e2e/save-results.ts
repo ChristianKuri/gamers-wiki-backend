@@ -57,12 +57,39 @@ export interface PhaseDurations {
   readonly validation: number;
 }
 
+/** Token usage for a single phase */
+export interface PhaseTokenUsage {
+  readonly input: number;
+  readonly output: number;
+  /** Actual cost in USD from OpenRouter (when available) */
+  readonly actualCostUsd?: number;
+}
+
 /** Token usage by phase */
 export interface TokenUsageByPhase {
-  readonly scout: { input: number; output: number };
-  readonly editor: { input: number; output: number };
-  readonly specialist: { input: number; output: number };
-  readonly reviewer?: { input: number; output: number };
+  readonly scout: PhaseTokenUsage;
+  readonly editor: PhaseTokenUsage;
+  readonly specialist: PhaseTokenUsage;
+  readonly reviewer?: PhaseTokenUsage;
+}
+
+/**
+ * Search API costs (Tavily + Exa).
+ * Tracked from actual API responses where available.
+ */
+export interface SearchApiCosts {
+  /** Total search API cost in USD */
+  readonly totalUsd: number;
+  /** Number of Exa searches performed */
+  readonly exaSearchCount: number;
+  /** Number of Tavily searches performed */
+  readonly tavilySearchCount: number;
+  /** Total cost from Exa (from API responses) */
+  readonly exaCostUsd: number;
+  /** Total cost from Tavily (from API responses, $0.008/credit) */
+  readonly tavilyCostUsd: number;
+  /** Total Tavily credits used */
+  readonly tavilyCredits: number;
 }
 
 /** Generation statistics */
@@ -76,6 +103,7 @@ export interface GenerationStats {
   readonly tokens: {
     readonly byPhase: TokenUsageByPhase;
     readonly total: { input: number; output: number };
+    /** LLM token cost estimate in USD */
     readonly estimatedCostUsd: number;
   };
   readonly models: {
@@ -88,6 +116,48 @@ export interface GenerationStats {
     readonly queriesExecuted: number;
     readonly sourcesCollected: number;
     readonly confidence: 'high' | 'medium' | 'low';
+  };
+  /**
+   * Search API costs (Tavily + Exa).
+   * Tracked from actual API responses where available.
+   */
+  readonly searchCosts?: SearchApiCosts;
+  /**
+   * Total estimated cost for article generation in USD.
+   * Combines LLM costs + Search API costs.
+   */
+  readonly totalCostUsd?: number;
+  /**
+   * Source content usage tracking.
+   * Shows which sources used full text vs summary.
+   */
+  readonly sourceContentUsage?: SourceContentUsageStats;
+}
+
+/** Content type used for a source */
+export type ContentType = 'full' | 'summary' | 'content';
+
+/** Individual source usage tracking */
+export interface SourceUsageItem {
+  readonly url: string;
+  readonly title: string;
+  readonly contentType: ContentType;
+  readonly phase: 'scout' | 'specialist';
+  readonly section?: string;
+  readonly query: string;
+  readonly hasSummary: boolean;
+}
+
+/** Source content usage statistics */
+export interface SourceContentUsageStats {
+  /** Per-source tracking */
+  readonly sources: readonly SourceUsageItem[];
+  /** Summary counts */
+  readonly counts: {
+    readonly total: number;
+    readonly fullText: number;
+    readonly summary: number;
+    readonly contentFallback: number;
   };
 }
 
@@ -150,6 +220,8 @@ export interface PlanSection {
   readonly headline: string;
   readonly goal: string;
   readonly researchQueries: readonly string[];
+  /** Elements this section must cover (assigned by Editor from requiredElements) */
+  readonly mustCover: readonly string[];
 }
 
 /** Article plan from Editor */

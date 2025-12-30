@@ -79,8 +79,10 @@ export const ARTICLE_PLAN_CONSTRAINTS = {
   TITLE_RECOMMENDED_MAX_LENGTH: 70,
 
   // Excerpt constraints (for SEO meta description)
+  // Google typically shows 150-160 chars, but can display up to 300
   EXCERPT_MIN_LENGTH: 120,
-  EXCERPT_MAX_LENGTH: 160,
+  EXCERPT_RECOMMENDED_MAX_LENGTH: 160, // Ideal for SEO - used in prompts
+  EXCERPT_MAX_LENGTH: 200, // Hard cap for schema - allows some flexibility
 
   // Section constraints
   MIN_SECTIONS: 4,
@@ -101,7 +103,7 @@ export const ARTICLE_PLAN_CONSTRAINTS = {
 
   // Required elements constraints
   MIN_REQUIRED_ELEMENTS: 3,
-  MAX_REQUIRED_ELEMENTS: 10,
+  MAX_REQUIRED_ELEMENTS: 50, // Increased from 10 - comprehensive guides may need more elements
 } as const;
 
 // ============================================================================
@@ -149,22 +151,112 @@ export const WORD_COUNT_CONSTRAINTS = {
 // ============================================================================
 
 export const SCOUT_CONFIG = {
-  /** Maximum length of a single snippet in search context */
-  MAX_SNIPPET_LENGTH: 800,
+  /**
+   * Maximum length of a single snippet in search context.
+   * INCREASED: Now that Exa returns 20,000c per result, use more of it.
+   * 10,000c × 5 results = 50,000c max in Scout context (reasonable for 1M token LLM).
+   */
+  MAX_SNIPPET_LENGTH: 10000,
   /** Maximum number of snippets to include */
   MAX_SNIPPETS: 10,
-  /** Number of results for overview search */
-  OVERVIEW_SEARCH_RESULTS: 8,
-  /** Number of results for category-specific search */
-  CATEGORY_SEARCH_RESULTS: 6,
+  /**
+   * Number of results for overview search (Tavily).
+   * OPTIMIZED: 10 results - same cost as fewer, gets wikis.
+   */
+  OVERVIEW_SEARCH_RESULTS: 10,
+  /**
+   * Number of results for category-specific search (Tavily).
+   * OPTIMIZED: 10 results based on A/B testing (Dec 2024).
+   * - basic search costs 1 credit ($0.008) regardless of result count
+   * - 10 results gets wikis + major gaming sites without noise
+   * - basic-5 missed wikis, basic-20 added low-quality sources
+   */
+  CATEGORY_SEARCH_RESULTS: 10,
+  /**
+   * Number of results for Exa semantic search.
+   * OPTIMIZED: 10 results based on A/B testing (Dec 2024).
+   * - 10 results = $0.015 (neural $0.005 + 10 × $0.001/page)
+   * - 70% more content for 50% more cost vs 5 results
+   */
+  EXA_SEARCH_RESULTS: 10,
+  /**
+   * Whether to request AI-generated summaries from Exa.
+   * DISABLED: A/B testing showed summaries add 8-16 SECONDS latency per search.
+   * Cost is only +$0.001/page but latency is unacceptable.
+   * Full text at 20,000c provides better value without the wait.
+   * @see https://docs.exa.ai/reference/contents-retrieval#summary-summary-true
+   */
+  EXA_INCLUDE_SUMMARY: false,
+  /**
+   * Domains to exclude from ALL search results (Exa AND Tavily).
+   * Saves money and improves quality by filtering out low-value sources.
+   *
+   * Categories excluded:
+   * - Video platforms: No useful text content (youtube, tiktok, twitch)
+   * - Social media: User-generated noise, low authority (facebook, twitter, etc)
+   * - Marketplaces: Not gaming content (g2a, cdkeys, voidu, etc)
+   * - Gold selling: Spam/scam sites (mtmmo, u4gm)
+   * - Q&A sites: Low authority, user-generated (quora)
+   * - Generic tech: Not gaming-focused (techradar, radiotimes)
+   * - News aggregators: Duplicate content (news.google.com)
+   *
+   * @see A/B test results Dec 2024 - basic-20 included mtmmo.com and u4gm.com gold sellers
+   */
+  EXA_EXCLUDE_DOMAINS: [
+    // Video platforms (no text content)
+    'youtube.com',
+    'youtu.be',
+    'tiktok.com',
+    'twitch.tv',
+    // Social media (low authority)
+    'facebook.com',
+    'twitter.com',
+    'x.com',
+    'instagram.com',
+    // Game marketplaces (not content)
+    'g2a.com',
+    'cdkeys.com',
+    'eneba.com',
+    'kinguin.net',
+    'voidu.com',
+    // Gold selling / RMT sites (spam)
+    'mtmmo.com',
+    'u4gm.com',
+    // Q&A sites (low authority)
+    'quora.com',
+    // Generic tech (not gaming-focused)
+    'techradar.com',
+    'radiotimes.com',
+    'beebom.com',
+    // VPN/tool sites writing SEO content
+    'exitlag.com',
+    // News aggregators
+    'news.google.com',
+  ] as readonly string[],
+  /**
+   * Number of top results to provide with FULL TEXT content.
+   * These results get both summary AND full content for maximum detail.
+   * Remaining results get summary only (more efficient).
+   * Set to 0 to use summaries for all results.
+   */
+  FULL_TEXT_RESULTS_COUNT: 2,
   /** Number of results for recent news search */
   RECENT_SEARCH_RESULTS: 5,
   /** Maximum number of category-specific searches to run */
   MAX_CATEGORY_SEARCHES: 2,
-  /** Search depth for overview queries */
-  OVERVIEW_SEARCH_DEPTH: 'advanced' as const,
-  /** Search depth for category queries */
-  CATEGORY_SEARCH_DEPTH: 'advanced' as const,
+  /**
+   * Search depth for overview queries (Tavily).
+   * OPTIMIZED: 'basic' based on A/B testing (Dec 2024).
+   * - basic = 1 credit ($0.008), advanced = 2 credits ($0.016)
+   * - basic-10 gets wikis + quality sources at half the cost
+   * - With proper exclude_domains, basic quality is sufficient
+   */
+  OVERVIEW_SEARCH_DEPTH: 'basic' as const,
+  /**
+   * Search depth for category queries (Tavily).
+   * OPTIMIZED: 'basic' - same cost savings as overview.
+   */
+  CATEGORY_SEARCH_DEPTH: 'basic' as const,
   /** Search depth for recent news queries */
   RECENT_SEARCH_DEPTH: 'basic' as const,
   /**
@@ -206,6 +298,12 @@ export const EDITOR_CONFIG = {
   TEMPERATURE: 0.4,
   /** Number of overview lines to include in prompt */
   OVERVIEW_LINES_IN_PROMPT: 10,
+  /**
+   * Timeout for Editor generateObject calls in milliseconds.
+   * If the LLM takes longer than this, abort and retry.
+   * 30 seconds should be plenty for plan generation.
+   */
+  TIMEOUT_MS: 30000,
 } as const;
 
 // ============================================================================
@@ -225,10 +323,17 @@ export const SPECIALIST_CONFIG = {
   MAX_PARAGRAPHS: 5,
   /** Maximum length of Scout overview to include */
   MAX_SCOUT_OVERVIEW_LENGTH: 2500,
-  /** Characters of research context per result */
-  RESEARCH_CONTEXT_PER_RESULT: 600,
-  /** Threshold for "thin research" warning */
-  THIN_RESEARCH_THRESHOLD: 500,
+  /**
+   * Characters of research context per result.
+   * INCREASED: Now that Exa returns 20,000c per result, use more of it.
+   * 10,000c × 5 results = 50,000c max per section (reasonable for 1M token LLM).
+   */
+  RESEARCH_CONTEXT_PER_RESULT: 10000,
+  /**
+   * Threshold for "thin research" warning.
+   * INCREASED: With larger content per result, threshold should be higher.
+   */
+  THIN_RESEARCH_THRESHOLD: 2000,
   /**
    * Temperature for Specialist LLM calls.
    *
@@ -242,10 +347,80 @@ export const SPECIALIST_CONFIG = {
   RESULTS_PER_RESEARCH_CONTEXT: 5,
   /** Maximum output tokens per section */
   MAX_OUTPUT_TOKENS_PER_SECTION: 1500,
-  /** Search depth for section research */
-  SEARCH_DEPTH: 'advanced' as const,
-  /** Maximum search results per query */
-  MAX_SEARCH_RESULTS: 5,
+  /**
+   * Search depth for section research (Tavily).
+   * OPTIMIZED: 'basic' based on A/B testing (Dec 2024).
+   * - basic = 1 credit, advanced = 2 credits
+   * - With exclude_domains filtering, basic provides good quality
+   */
+  SEARCH_DEPTH: 'basic' as const,
+  /**
+   * Maximum search results per query (Tavily).
+   * OPTIMIZED: 10 results based on A/B testing (Dec 2024).
+   * - Same cost (1 credit) regardless of count
+   * - 10 results gets wikis without low-quality noise
+   */
+  MAX_SEARCH_RESULTS: 10,
+  /**
+   * Number of results for Exa semantic search per section.
+   * OPTIMIZED: 5 results based on A/B testing (Dec 2024).
+   * - 5 results = $0.010 (neural $0.005 + 5 × $0.001/page)
+   * - Section-specific queries are focused - fewer results needed
+   */
+  EXA_SEARCH_RESULTS: 5,
+  /**
+   * Whether to request AI-generated summaries from Exa.
+   * DISABLED: A/B testing showed summaries add 8-16 SECONDS latency per search.
+   * Cost is only +$0.001/page but latency is unacceptable.
+   * Full text at 20,000c provides better value without the wait.
+   * @see https://docs.exa.ai/reference/contents-retrieval#summary-summary-true
+   */
+  EXA_INCLUDE_SUMMARY: false,
+  /**
+   * Domains to exclude from ALL search results (Exa AND Tavily).
+   * Saves money and improves quality by filtering out low-value sources.
+   * Same list as SCOUT_CONFIG - keep in sync.
+   *
+   * @see SCOUT_CONFIG.EXA_EXCLUDE_DOMAINS for detailed categorization
+   */
+  EXA_EXCLUDE_DOMAINS: [
+    // Video platforms (no text content)
+    'youtube.com',
+    'youtu.be',
+    'tiktok.com',
+    'twitch.tv',
+    // Social media (low authority)
+    'facebook.com',
+    'twitter.com',
+    'x.com',
+    'instagram.com',
+    // Game marketplaces (not content)
+    'g2a.com',
+    'cdkeys.com',
+    'eneba.com',
+    'kinguin.net',
+    'voidu.com',
+    // Gold selling / RMT sites (spam)
+    'mtmmo.com',
+    'u4gm.com',
+    // Q&A sites (low authority)
+    'quora.com',
+    // Generic tech (not gaming-focused)
+    'techradar.com',
+    'radiotimes.com',
+    'beebom.com',
+    // VPN/tool sites writing SEO content
+    'exitlag.com',
+    // News aggregators
+    'news.google.com',
+  ] as readonly string[],
+  /**
+   * Number of top results to provide with FULL TEXT content per section query.
+   * The first N results get both summary AND full content for maximum detail.
+   * Remaining results get summary only (more efficient).
+   * Set to 0 to use summaries for all results.
+   */
+  FULL_TEXT_RESULTS_COUNT: 1,
   /** Maximum sources to include in article */
   MAX_SOURCES: 25,
   /**
@@ -300,7 +475,7 @@ export const REVIEWER_CONFIG = {
   /** Maximum output tokens for review */
   MAX_OUTPUT_TOKENS: 2000,
   /** Maximum article content length to include in review (chars) */
-  MAX_ARTICLE_CONTENT_LENGTH: 15000,
+  MAX_ARTICLE_CONTENT_LENGTH: 45000,
   /** Maximum research context length to include in review (chars) */
   MAX_RESEARCH_CONTEXT_LENGTH: 5000,
   /**
@@ -327,46 +502,46 @@ export const FIXER_CONFIG = {
    * Maximum number of Editor phase retries when plan validation fails.
    * Each retry includes validation feedback in the prompt.
    */
-  MAX_PLAN_RETRIES: 2,
+  MAX_PLAN_RETRIES: 3,
   /**
    * Maximum number of retries for a single section during Specialist phase.
    * Applied when a section write fails due to transient errors.
    */
   MAX_SECTION_RETRIES: 2,
   /**
-   * Maximum number of Fixer iterations (Reviewer → Fix → Reviewer cycles).
-   * Each iteration can apply multiple fixes, then re-reviews.
+   * Maximum number of Fixer iterations for non-critical issues.
+   * After this, only critical issues continue to be fixed.
    */
-  MAX_FIXER_ITERATIONS: 2,
+  MAX_FIXER_ITERATIONS: 3,
   /**
-   * Temperature for Fixer LLM calls (direct edit, expand).
-   * Moderate value to balance accuracy with stylistic flexibility.
+   * Maximum total iterations when critical issues remain.
+   * Fixer will continue beyond MAX_FIXER_ITERATIONS if critical issues exist.
    */
-  TEMPERATURE: 0.4,
+  MAX_CRITICAL_FIX_ITERATIONS: 10,
   /**
-   * Maximum number of direct edits to apply in a single iteration.
-   * Prevents runaway token usage when many minor issues exist.
+   * Temperature for Fixer LLM calls.
+   * Slightly higher to allow natural, varied edits.
    */
-  MAX_DIRECT_EDITS_PER_ITERATION: 5,
+  TEMPERATURE: 0.5,
   /**
-   * Maximum output tokens for direct edit operations.
-   * Should be enough for a few paragraph replacements.
+   * Maximum number of fixes to apply in a single iteration.
    */
-  MAX_OUTPUT_TOKENS_DIRECT_EDIT: 1000,
+  MAX_FIXES_PER_ITERATION: 5,
   /**
-   * Maximum output tokens for expand operations.
-   * Should be enough for 2-3 paragraphs of new content.
+   * Maximum output tokens for smart fix operations.
+   * Give the LLM plenty of space to think and work.
    */
-  MAX_OUTPUT_TOKENS_EXPAND: 1500,
+  MAX_OUTPUT_TOKENS_SMART_FIX: 4000,
   /**
    * Priority order for fix strategies when a section has multiple issues.
    * Higher priority strategies are applied first (leftmost = highest priority).
    * - regenerate: Complete rewrite fixes multiple issues at once
    * - add_section: Coverage gaps need new content
-   * - expand: Thin sections need more depth
-   * - direct_edit: Minor fixes last (may be obviated by other fixes)
+   * - inline_insert: Surgical insertions (most precise, low risk)
+   * - direct_edit: Minor fixes (low risk)
+   * - expand: Thin sections need more depth (higher risk of bloat)
    */
-  STRATEGY_PRIORITY: ['regenerate', 'add_section', 'expand', 'direct_edit'] as const,
+  STRATEGY_PRIORITY: ['regenerate', 'add_section', 'inline_insert', 'direct_edit', 'expand'] as const,
 } as const;
 
 // ============================================================================
@@ -574,10 +749,10 @@ function validateConfiguration(): void {
   validateNonNegative(FIXER_CONFIG.MAX_PLAN_RETRIES, 'FIXER_CONFIG.MAX_PLAN_RETRIES');
   validateNonNegative(FIXER_CONFIG.MAX_SECTION_RETRIES, 'FIXER_CONFIG.MAX_SECTION_RETRIES');
   validateNonNegative(FIXER_CONFIG.MAX_FIXER_ITERATIONS, 'FIXER_CONFIG.MAX_FIXER_ITERATIONS');
+  validatePositive(FIXER_CONFIG.MAX_CRITICAL_FIX_ITERATIONS, 'FIXER_CONFIG.MAX_CRITICAL_FIX_ITERATIONS');
   validateTemperature(FIXER_CONFIG.TEMPERATURE, 'FIXER_CONFIG.TEMPERATURE');
-  validatePositive(FIXER_CONFIG.MAX_DIRECT_EDITS_PER_ITERATION, 'FIXER_CONFIG.MAX_DIRECT_EDITS_PER_ITERATION');
-  validatePositive(FIXER_CONFIG.MAX_OUTPUT_TOKENS_DIRECT_EDIT, 'FIXER_CONFIG.MAX_OUTPUT_TOKENS_DIRECT_EDIT');
-  validatePositive(FIXER_CONFIG.MAX_OUTPUT_TOKENS_EXPAND, 'FIXER_CONFIG.MAX_OUTPUT_TOKENS_EXPAND');
+  validatePositive(FIXER_CONFIG.MAX_FIXES_PER_ITERATION, 'FIXER_CONFIG.MAX_FIXES_PER_ITERATION');
+  validatePositive(FIXER_CONFIG.MAX_OUTPUT_TOKENS_SMART_FIX, 'FIXER_CONFIG.MAX_OUTPUT_TOKENS_SMART_FIX');
 
   // Retry Config
   validatePositive(RETRY_CONFIG.MAX_RETRIES, 'RETRY_CONFIG.MAX_RETRIES');

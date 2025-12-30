@@ -62,9 +62,9 @@ const createMockArticlePlan = (overrides: Partial<ArticlePlan> = {}): ArticlePla
   excerpt: 'Master the Lands Between with this comprehensive guide.',
   tags: ['beginner', 'guide', 'tips'],
   sections: [
-    { headline: 'Getting Started', goal: 'Help new players', researchQueries: ['elden ring basics'] },
-    { headline: 'Character Builds', goal: 'Cover builds', researchQueries: ['elden ring builds'] },
-    { headline: 'Exploration Tips', goal: 'Guide exploration', researchQueries: ['elden ring exploration'] },
+    { headline: 'Getting Started', goal: 'Help new players', researchQueries: ['elden ring basics'], mustCover: ['Game basics'] },
+    { headline: 'Character Builds', goal: 'Cover builds', researchQueries: ['elden ring builds'], mustCover: ['Build types'] },
+    { headline: 'Exploration Tips', goal: 'Guide exploration', researchQueries: ['elden ring exploration'], mustCover: ['Exploration tips'] },
   ],
   safety: { noScoresUnlessReview: true },
   ...overrides,
@@ -173,7 +173,7 @@ describe('runSpecialist', () => {
 
       const plan = createMockArticlePlan({
         sections: [
-          { headline: 'S1', goal: 'G1', researchQueries: ['query1', 'query2'] },
+          { headline: 'S1', goal: 'G1', researchQueries: ['query1', 'query2'], mustCover: ['item1'] },
         ],
       });
 
@@ -200,9 +200,9 @@ describe('runSpecialist', () => {
 
       const plan = createMockArticlePlan({
         sections: [
-          { headline: 'S1', goal: 'G1', researchQueries: ['shared query'] },
-          { headline: 'S2', goal: 'G2', researchQueries: ['shared query'] }, // duplicate
-          { headline: 'S3', goal: 'G3', researchQueries: ['unique query'] },
+          { headline: 'S1', goal: 'G1', researchQueries: ['shared query'], mustCover: ['item1'] },
+          { headline: 'S2', goal: 'G2', researchQueries: ['shared query'], mustCover: ['item2'] }, // duplicate
+          { headline: 'S3', goal: 'G3', researchQueries: ['unique query'], mustCover: ['item3'] },
         ],
       });
 
@@ -246,7 +246,7 @@ describe('runSpecialist', () => {
 
       const plan = createMockArticlePlan({
         sections: [
-          { headline: 'S1', goal: 'G1', researchQueries: ['existing query', 'new query'] },
+          { headline: 'S1', goal: 'G1', researchQueries: ['existing query', 'new query'], mustCover: ['item1'] },
         ],
       });
 
@@ -279,7 +279,7 @@ describe('runSpecialist', () => {
 
       const plan = createMockArticlePlan({
         sections: [
-          { headline: 'S1', goal: 'G1', researchQueries: ['failing query'] },
+          { headline: 'S1', goal: 'G1', researchQueries: ['failing query'], mustCover: ['item1'] },
         ],
       });
 
@@ -300,7 +300,8 @@ describe('runSpecialist', () => {
     it('writes sections sequentially by default', async () => {
       const callOrder: string[] = [];
       const mockGenerateText = vi.fn().mockImplementation(async (opts) => {
-        const match = opts.prompt.match(/Headline: ([^\n]+)/);
+        // Match the current prompt format: This section: "Headline"
+        const match = opts.prompt.match(/This section: "([^"]+)"/);
         callOrder.push(match?.[1] || 'unknown');
         return { text: 'Content.', usage: {} };
       });
@@ -312,9 +313,9 @@ describe('runSpecialist', () => {
 
       const plan = createMockArticlePlan({
         sections: [
-          { headline: 'First', goal: 'G1', researchQueries: [] },
-          { headline: 'Second', goal: 'G2', researchQueries: [] },
-          { headline: 'Third', goal: 'G3', researchQueries: [] },
+          { headline: 'First', goal: 'G1', researchQueries: [], mustCover: ['item1'] },
+          { headline: 'Second', goal: 'G2', researchQueries: [], mustCover: ['item2'] },
+          { headline: 'Third', goal: 'G3', researchQueries: [], mustCover: ['item3'] },
         ],
       });
 
@@ -386,7 +387,7 @@ describe('runSpecialist', () => {
 
       const plan = createMockArticlePlan({
         sections: [
-          { headline: 'S1', goal: 'G1', researchQueries: ['query1', 'query2'] },
+          { headline: 'S1', goal: 'G1', researchQueries: ['query1', 'query2'], mustCover: ['item1'] },
         ],
       });
 
@@ -457,7 +458,7 @@ describe('runSpecialist', () => {
 
       const plan = createMockArticlePlan({
         sections: [
-          { headline: 'S1', goal: 'G1', researchQueries: ['query'] },
+          { headline: 'S1', goal: 'G1', researchQueries: ['query'], mustCover: ['item1'] },
         ],
       });
 
@@ -490,7 +491,7 @@ describe('runSpecialist', () => {
 
       const plan = createMockArticlePlan({
         sections: [
-          { headline: 'S1', goal: 'G1', researchQueries: ['query'] },
+          { headline: 'S1', goal: 'G1', researchQueries: ['query'], mustCover: ['item1'] },
         ],
       });
 
@@ -522,7 +523,7 @@ describe('runSpecialist', () => {
 
       const plan = createMockArticlePlan({
         sections: [
-          { headline: 'S1', goal: 'G1', researchQueries: ['query'] },
+          { headline: 'S1', goal: 'G1', researchQueries: ['query'], mustCover: ['item1'] },
         ],
       });
 
@@ -591,7 +592,7 @@ describe('runSpecialist', () => {
 
       const plan = createMockArticlePlan({
         sections: [
-          { headline: 'S1', goal: 'G1', researchQueries: ['query'] },
+          { headline: 'S1', goal: 'G1', researchQueries: ['query'], mustCover: ['item1'] },
         ],
       });
 
@@ -618,7 +619,7 @@ describe('runSpecialist', () => {
 
       const plan = createMockArticlePlan({
         sections: [
-          { headline: 'S1', goal: 'G1', researchQueries: ['new query'] },
+          { headline: 'S1', goal: 'G1', researchQueries: ['new query'], mustCover: ['item1'] },
         ],
       });
 
@@ -655,7 +656,7 @@ describe('runSpecialist', () => {
 
       const plan = createMockArticlePlan({
         sections: [
-          { headline: 'S1', goal: 'G1', researchQueries: [] }, // No new queries
+          { headline: 'S1', goal: 'G1', researchQueries: [], mustCover: ['item1'] }, // No new queries
         ],
       });
 

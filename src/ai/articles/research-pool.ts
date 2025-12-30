@@ -295,12 +295,31 @@ export function extractResearchForQueries(
 // ============================================================================
 
 /**
+ * Raw result item from search API.
+ */
+interface RawSearchResultItem {
+  readonly title: string;
+  readonly url: string;
+  /** Default snippet (~800c for Tavily basic) */
+  readonly content?: string;
+  /**
+   * Full page content (Tavily with include_raw_content='markdown').
+   * A/B testing Dec 2024: 23,666c avg vs 840c default snippet - 28x more content for FREE!
+   */
+  readonly raw_content?: string;
+  /** AI-generated summary (Exa only) */
+  readonly summary?: string;
+  readonly score?: number;
+}
+
+/**
  * Processes raw search results into a CategorizedSearchResult.
  *
  * @param query - The search query
  * @param category - The category for this search
  * @param rawResults - Raw results from search API
  * @param searchSource - The search API used ('tavily' or 'exa'), defaults to 'tavily'
+ * @param costUsd - Optional cost in USD for this search (from Exa API response)
  * @returns Processed categorized result
  */
 export function processSearchResults(
@@ -308,9 +327,10 @@ export function processSearchResults(
   category: SearchCategory,
   rawResults: {
     answer?: string | null;
-    results: readonly { title: string; url: string; content?: string; score?: number }[];
+    results: readonly RawSearchResultItem[];
   },
-  searchSource: SearchSource = 'tavily'
+  searchSource: SearchSource = 'tavily',
+  costUsd?: number
 ): CategorizedSearchResult {
   const processedResults: SearchResultItem[] = rawResults.results
     .map((r) => {
@@ -319,7 +339,11 @@ export function processSearchResults(
       return {
         title: r.title,
         url: normalized,
-        content: r.content ?? '',
+        // Prefer raw_content (full page) over content (snippet) when available
+        // A/B test Dec 2024: raw_content gives 23,666c avg vs 840c snippet
+        content: r.raw_content ?? r.content ?? '',
+        // Preserve summary if available (Exa only)
+        ...(r.summary ? { summary: r.summary } : {}),
         ...(typeof r.score === 'number' ? { score: r.score } : {}),
       };
     })
@@ -332,6 +356,7 @@ export function processSearchResults(
     category,
     timestamp: Date.now(),
     searchSource,
+    ...(costUsd !== undefined ? { costUsd } : {}),
   };
 }
 

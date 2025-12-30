@@ -55,14 +55,19 @@ kill_port_if_in_use
 
 # Start Strapi in background with test database
 # Note: Strapi uses DATABASE_NAME env var (see config/database.ts)
-echo "🚀 Starting Strapi with test database..."
+# Use 'start' mode (not 'develop') to avoid file-watching restarts during tests
 if command -v nvm >/dev/null 2>&1; then
   # IMPORTANT: don't use `nvm exec ... &` because killing that PID may not kill
   # the spawned Node process. Instead, switch Node in this shell and start Strapi
   # normally so STRAPI_PID tracks the real process.
   nvm use "$NODE_VERSION" >/dev/null
 fi
-PORT=$TEST_PORT DATABASE_NAME=$TEST_DB npm run develop &
+
+echo "🔨 Building Strapi..."
+NODE_ENV=production npm run build
+
+echo "🚀 Starting Strapi with test database (production mode - no file watching)..."
+PORT=$TEST_PORT DATABASE_NAME=$TEST_DB NODE_ENV=production npm run start &
 STRAPI_PID=$!
 
 # Cleanup function to stop Strapi on exit

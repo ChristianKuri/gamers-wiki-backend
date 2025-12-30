@@ -30,6 +30,7 @@ export {
   REVIEWER_CONFIG,
   countIssuesBySeverity,
   shouldRejectArticle,
+  hasActionableCriticalIssues,
   getIssuesByCategory,
   type ReviewerDeps,
   type ReviewerOutput,

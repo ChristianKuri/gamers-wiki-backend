@@ -69,9 +69,9 @@ const createMockArticlePlan = (overrides: Record<string, any> = {}) => ({
   excerpt: 'Master the Lands Between with this comprehensive guide covering builds and exploration tips.',
   tags: ['beginner', 'guide', 'tips'],
   sections: [
-    { headline: 'Getting Started', goal: 'Help new players', researchQueries: ['elden ring basics'] },
-    { headline: 'Character Builds', goal: 'Cover builds', researchQueries: ['elden ring builds'] },
-    { headline: 'Exploration Tips', goal: 'Guide exploration', researchQueries: ['elden ring exploration'] },
+    { headline: 'Getting Started', goal: 'Help new players', researchQueries: ['elden ring basics'], mustCover: ['Game basics'] },
+    { headline: 'Character Builds', goal: 'Cover builds', researchQueries: ['elden ring builds'], mustCover: ['Build types'] },
+    { headline: 'Exploration Tips', goal: 'Guide exploration', researchQueries: ['elden ring exploration'], mustCover: ['Exploration tips'] },
   ],
   ...overrides,
 });

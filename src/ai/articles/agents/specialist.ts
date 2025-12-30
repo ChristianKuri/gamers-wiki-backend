@@ -35,16 +35,22 @@ import {
   type SectionWriteState,
 } from '../section-context';
 import {
+  addExaSearchCost,
+  addTavilySearch,
   addTokenUsage,
+  createEmptySearchApiCosts,
   createEmptyTokenUsage,
+  createTokenUsageFromResult,
   type CategorizedSearchResult,
   type GameArticleContext,
   type ResearchPool,
   type ResearchProgressCallback,
   type ScoutOutput,
+  type SearchApiCosts,
   type SearchFunction,
   type SearchSource,
   type SectionProgressCallback,
+  type SourceUsageItem,
   type TokenUsage,
 } from '../types';
 
@@ -88,6 +94,16 @@ export interface SpecialistOutput {
   readonly researchPool: ResearchPool;
   /** Token usage for Specialist phase LLM calls */
   readonly tokenUsage: TokenUsage;
+  /**
+   * Search API costs aggregated from all section research.
+   * Exa costs are actual (from API), Tavily costs are estimated.
+   */
+  readonly searchApiCosts: SearchApiCosts;
+  /**
+   * Tracking of which content type (full/summary) was used for each source.
+   * Useful for debugging and quality analysis.
+   */
+  readonly sourceUsage: readonly SourceUsageItem[];
 }
 
 // ============================================================================
@@ -139,13 +155,16 @@ async function executeSingleSearch(
           searchDepth: SPECIALIST_CONFIG.SEARCH_DEPTH,
           maxResults: SPECIALIST_CONFIG.MAX_SEARCH_RESULTS,
           includeAnswer: true,
+          // Exclude YouTube - video pages have no useful text content
+          excludeDomains: [...SPECIALIST_CONFIG.EXA_EXCLUDE_DOMAINS],
         }),
       { context: `Specialist search: "${query.slice(0, 50)}..."`, signal }
     );
 
+    // Pass through cost from Tavily response if available
     return {
       query,
-      result: processSearchResults(query, 'section-specific', result, 'tavily'),
+      result: processSearchResults(query, 'section-specific', result, 'tavily', result.costUsd),
       success: true,
     };
   } catch (error) {
@@ -170,7 +189,8 @@ async function executeSingleSearch(
 }
 
 /**
- * Executes a single Exa semantic search with retry logic.
+ * Executes a single Exa deep search with retry logic.
+ * Uses 'deep' search for comprehensive results with query expansion.
  * Best for "how to" and meaning-based queries in guide articles.
  *
  * @param query - Semantic query string (natural language works best)
@@ -187,15 +207,22 @@ async function executeSingleExaSearch(
 ): Promise<SearchOperationResult> {
   try {
     const exaOptions: ExaSearchOptions = {
-      numResults: SPECIALIST_CONFIG.MAX_SEARCH_RESULTS,
-      type: 'neural',
+      numResults: SPECIALIST_CONFIG.EXA_SEARCH_RESULTS,
+      // Uses default from exa.ts (neural) - 4x faster, same cost
       useAutoprompt: true,
+      // Summary disabled - adds 8-16s latency, use full content instead
+      includeSummary: SPECIALIST_CONFIG.EXA_INCLUDE_SUMMARY,
+      // Exclude YouTube - video pages have no useful text content
+      excludeDomains: [...SPECIALIST_CONFIG.EXA_EXCLUDE_DOMAINS],
     };
 
     const result = await withRetry(
       () => exaSearch(query, exaOptions),
       { context: `Specialist Exa search: "${query.slice(0, 50)}..."`, signal }
     );
+
+    // Extract cost from Exa response (if available)
+    const costUsd = result.costDollars?.total;
 
     return {
       query,
@@ -207,11 +234,14 @@ async function executeSingleExaSearch(
           results: result.results.map((r) => ({
             title: r.title,
             url: r.url,
-            content: r.content,
+            // Preserve both content AND summary for hybrid approach
+            content: r.content ?? '',
+            summary: r.summary,
             score: r.score,
           })),
         },
-        'exa' as SearchSource
+        'exa' as SearchSource,
+        costUsd
       ),
       success: true,
     };
@@ -277,6 +307,8 @@ interface BatchResearchResult {
   readonly successCount: number;
   readonly failureCount: number;
   readonly failedQueries: readonly string[];
+  /** Aggregated search API costs from batch research */
+  readonly searchApiCosts: SearchApiCosts;
 }
 
 /**
@@ -326,6 +358,7 @@ async function batchResearchForSections(
       successCount: 0,
       failureCount: 0,
       failedQueries: [],
+      searchApiCosts: createEmptySearchApiCosts(),
     };
   }
 
@@ -379,6 +412,7 @@ async function batchResearchForSections(
   const failedQueries: string[] = [];
   let completedQueries = 0;
   const totalQueries = tavilyQueries.length + exaQueries.length;
+  let searchApiCosts = createEmptySearchApiCosts();
 
   // Report initial progress
   onProgress?.(0, totalQueries);
@@ -386,7 +420,8 @@ async function batchResearchForSections(
   // Helper to process a batch of queries
   const processBatch = async (
     batch: string[],
-    executeFunc: (query: string) => Promise<SearchOperationResult>
+    executeFunc: (query: string) => Promise<SearchOperationResult>,
+    isExa: boolean
   ): Promise<void> => {
     const batchResults = await Promise.all(batch.map(executeFunc));
 
@@ -394,8 +429,36 @@ async function batchResearchForSections(
       if (searchResult.success) {
         poolBuilder.add(searchResult.result);
         successCount++;
+
+        // Track search costs
+        if (isExa) {
+          const costUsd = searchResult.result.costUsd;
+          if (costUsd !== undefined) {
+            searchApiCosts = addExaSearchCost(searchApiCosts, { costUsd });
+          } else {
+            // Estimate deep search cost if not returned
+            searchApiCosts = addExaSearchCost(searchApiCosts, { costUsd: 0.015 });
+          }
+        } else {
+          // Tavily search - use actual cost from API if available
+          const costUsd = searchResult.result.costUsd;
+          if (costUsd !== undefined) {
+            searchApiCosts = addTavilySearch(searchApiCosts, {
+              credits: 1, // Basic search = 1 credit
+              costUsd,
+            });
+          } else {
+            searchApiCosts = addTavilySearch(searchApiCosts);
+          }
+        }
       } else {
         failedQueries.push(searchResult.query);
+        // Still count the search attempt for cost tracking (API was called even if failed)
+        if (isExa) {
+          searchApiCosts = addExaSearchCost(searchApiCosts, { costUsd: 0.015 });
+        } else {
+          searchApiCosts = addTavilySearch(searchApiCosts);
+        }
       }
     }
 
@@ -417,7 +480,7 @@ async function batchResearchForSections(
         `queries ${batchStart + 1}-${batchEnd} of ${tavilyQueries.length}`
     );
 
-    await processBatch(batch, (query) => executeSingleSearch(search, query, signal, log, true));
+    await processBatch(batch, (query) => executeSingleSearch(search, query, signal, log, true), false);
 
     if (batchDelay > 0 && batchEnd < tavilyQueries.length) {
       await sleep(batchDelay);
@@ -438,7 +501,7 @@ async function batchResearchForSections(
         `queries ${batchStart + 1}-${batchEnd} of ${exaQueries.length}`
     );
 
-    await processBatch(batch, (query) => executeSingleExaSearch(query, signal, log, true));
+    await processBatch(batch, (query) => executeSingleExaSearch(query, signal, log, true), true);
 
     if (batchDelay > 0 && batchEnd < exaQueries.length) {
       await sleep(batchDelay);
@@ -460,11 +523,21 @@ async function batchResearchForSections(
     );
   }
 
+  // Log cost summary
+  if (searchApiCosts.totalUsd > 0) {
+    log.debug(
+      `Search API costs: $${searchApiCosts.totalUsd.toFixed(4)} ` +
+        `(Tavily: ${searchApiCosts.tavilySearchCount} searches $${searchApiCosts.tavilyCostUsd.toFixed(4)}, ` +
+        `Exa: ${searchApiCosts.exaSearchCount} searches $${searchApiCosts.exaCostUsd.toFixed(4)})`
+    );
+  }
+
   return {
     pool: poolBuilder.build(),
     successCount,
     failureCount: failedQueries.length,
     failedQueries,
+    searchApiCosts,
   };
 }
 
@@ -553,6 +626,8 @@ function calculateDynamicParagraphCounts(
 interface WriteSectionResult {
   readonly text: string;
   readonly tokenUsage: TokenUsage;
+  /** Tracking of which content type was used for each source */
+  readonly sourceUsage: readonly SourceUsageItem[];
 }
 
 /**
@@ -561,8 +636,6 @@ interface WriteSectionResult {
 interface WriteSectionOptions {
   readonly minParagraphs: number;
   readonly maxParagraphs: number;
-  /** Required elements to include in the checklist (only for last section) */
-  readonly requiredElements?: readonly string[];
   /** Cross-reference context from previous sections (sequential mode only) */
   readonly crossReferenceContext?: string;
 }
@@ -603,15 +676,15 @@ async function writeSection(
     );
   }
 
-  // Build research context
-  const researchContext = buildResearchContext(
+  // Build research context with hybrid approach (top N get full text)
+  // Now returns both context string and source usage tracking
+  const researchResult = buildResearchContext(
     sectionResearch,
     SPECIALIST_CONFIG.RESULTS_PER_RESEARCH_CONTEXT,
-    SPECIALIST_CONFIG.RESEARCH_CONTEXT_PER_RESULT
+    SPECIALIST_CONFIG.RESEARCH_CONTEXT_PER_RESULT,
+    SPECIALIST_CONFIG.FULL_TEXT_RESULTS_COUNT,
+    section.headline
   );
-
-  // Only pass required elements to the last section for final verification
-  const requiredElementsForSection = isLast ? options.requiredElements : undefined;
 
   const sectionContext: SpecialistSectionContext = {
     sectionIndex,
@@ -621,24 +694,24 @@ async function writeSection(
     isFirst,
     isLast,
     previousContext,
-    researchContext,
+    researchContext: researchResult.context,
     scoutOverview: scoutOutput.briefing.overview,
     categoryInsights: scoutOutput.briefing.categoryInsights,
     isThinResearch,
     researchContentLength,
-    requiredElements: requiredElementsForSection,
     crossReferenceContext: options.crossReferenceContext,
+    mustCover: section.mustCover,
   };
 
   log.debug(`Writing section ${sectionIndex + 1}/${plan.sections.length}: ${section.headline}`);
 
-  const { text, usage } = await withRetry(
+  const result = await withRetry(
     () =>
       deps.generateText({
         model: deps.model,
         temperature,
         maxOutputTokens: SPECIALIST_CONFIG.MAX_OUTPUT_TOKENS_PER_SECTION,
-        system: getSpecialistSystemPrompt(localeInstruction, categoryToneGuide),
+        system: getSpecialistSystemPrompt(localeInstruction, categoryToneGuide, plan.categorySlug),
         prompt: getSpecialistSectionUserPrompt(
           sectionContext,
           plan,
@@ -651,12 +724,10 @@ async function writeSection(
     { context: `Specialist section "${section.headline}"`, signal: deps.signal }
   );
 
-  // AI SDK v4 uses inputTokens/outputTokens instead of promptTokens/completionTokens
-  const tokenUsage: TokenUsage = usage
-    ? { input: usage.inputTokens ?? 0, output: usage.outputTokens ?? 0 }
-    : createEmptyTokenUsage();
+  // Use createTokenUsageFromResult to capture both tokens and actual cost from OpenRouter
+  const tokenUsage = createTokenUsageFromResult(result);
 
-  return { text: text.trim(), tokenUsage };
+  return { text: result.text.trim(), tokenUsage, sourceUsage: researchResult.sourceUsage };
 }
 
 // ============================================================================
@@ -693,7 +764,7 @@ export async function runSpecialist(
   // Use Exa for semantic queries in guide articles
   const useExaForSemanticQueries = plan.categorySlug === 'guides';
   log.info('Starting batch research for all sections...');
-  const { pool: enrichedPool, successCount, failureCount } = await batchResearchForSections(
+  const { pool: enrichedPool, successCount, failureCount, searchApiCosts } = await batchResearchForSections(
     plan,
     scoutOutput.researchPool,
     deps.search,
@@ -719,16 +790,16 @@ export async function runSpecialist(
     );
   }
 
-  // Build write options with dynamic paragraph counts and required elements
+  // Build write options with dynamic paragraph counts
   const writeOptions: WriteSectionOptions = {
     minParagraphs,
     maxParagraphs,
-    requiredElements: plan.requiredElements,
   };
 
   // ===== SECTION WRITING PHASE =====
   let sectionTexts: string[];
   let totalTokenUsage = createEmptyTokenUsage();
+  let allSourceUsage: SourceUsageItem[] = [];
 
   // Shared deps for writeSection calls
   const writeDeps = {
@@ -767,9 +838,10 @@ export async function runSpecialist(
     const sectionResults = await Promise.all(sectionPromises);
     sectionTexts = sectionResults.map((r) => r.text);
 
-    // Aggregate token usage from all sections
+    // Aggregate token usage and source usage from all sections
     for (const result of sectionResults) {
       totalTokenUsage = addTokenUsage(totalTokenUsage, result.tokenUsage);
+      allSourceUsage = [...allSourceUsage, ...result.sourceUsage];
     }
   } else {
     // Sequential mode: Write sections in order with context flow and cross-section awareness
@@ -804,6 +876,7 @@ export async function runSpecialist(
 
       sectionTexts.push(result.text);
       totalTokenUsage = addTokenUsage(totalTokenUsage, result.tokenUsage);
+      allSourceUsage = [...allSourceUsage, ...result.sourceUsage];
       previousContext = result.text.slice(-SPECIALIST_CONFIG.CONTEXT_TAIL_LENGTH);
 
       // Update section write state for cross-section awareness (guides only)
@@ -825,7 +898,18 @@ export async function runSpecialist(
   let markdown = `# ${plan.title}\n\n`;
   for (let i = 0; i < plan.sections.length; i++) {
     const section = plan.sections[i];
-    markdown += `## ${section.headline}\n\n${sectionTexts[i]}\n\n`;
+    const sectionText = sectionTexts[i];
+    
+    // Safety check: if Specialist already included an H2 heading, don't add another
+    const alreadyHasH2 = sectionText.trimStart().startsWith('## ');
+    
+    if (alreadyHasH2) {
+      // Specialist included H2 - use as-is
+      markdown += `${sectionText}\n\n`;
+    } else {
+      // No H2 - add the planned headline
+      markdown += `## ${section.headline}\n\n${sectionText}\n\n`;
+    }
   }
 
   // Collect all sources from research pool
@@ -833,11 +917,19 @@ export async function runSpecialist(
   const finalUrls = ensureUniqueStrings(allSources, SPECIALIST_CONFIG.MAX_SOURCES);
   markdown += formatSources(finalUrls);
 
+  // Log source usage summary
+  const fullTextCount = allSourceUsage.filter((s) => s.contentType === 'full').length;
+  const summaryCount = allSourceUsage.filter((s) => s.contentType === 'summary').length;
+  const contentCount = allSourceUsage.filter((s) => s.contentType === 'content').length;
+  log.info(`Source content usage: ${fullTextCount} full text, ${summaryCount} summary, ${contentCount} content fallback`);
+
   return {
     markdown: markdown.trim() + '\n',
     sources: finalUrls,
     researchPool: enrichedPool,
     tokenUsage: totalTokenUsage,
+    searchApiCosts,
+    sourceUsage: allSourceUsage,
   };
 }
 
@@ -873,10 +965,6 @@ export interface WriteSingleSectionOptions {
    * Used to calculate paragraph range.
    */
   readonly targetWordCount?: number;
-  /**
-   * Required elements that must be covered (passed to last section only).
-   */
-  readonly requiredElements?: readonly string[];
 }
 
 /**
@@ -931,10 +1019,6 @@ export async function writeSingleSection(
     plan.sections.length
   );
 
-  // Only pass required elements to the last section
-  const isLast = sectionIndex === plan.sections.length - 1;
-  const requiredElements = isLast ? options?.requiredElements : undefined;
-
   // If feedback is provided, modify the section's goal to include it
   let effectiveSection = section;
   if (options?.feedback) {
@@ -957,7 +1041,6 @@ export async function writeSingleSection(
     {
       minParagraphs,
       maxParagraphs,
-      requiredElements,
     }
   );
 

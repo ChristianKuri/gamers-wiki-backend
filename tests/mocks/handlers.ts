@@ -107,15 +107,31 @@ function getUserText(messages: Array<{ role: string; content: string }>): string
 }
 
 function isArticlePlanPrompt(userText: string): boolean {
+  // Various prompt formats for article plans:
+  // - Category-specific: "Create a COMPLETE guide plan for" (guides), "Create a COMPLETE review plan for" (reviews), etc.
+  // - Generic: "Design an article plan for" (auto-detect mode)
+  // - Legacy: "Plan an article about the game", "Return ONLY valid JSON"
   return (
     userText.includes('Plan an article about the game') ||
     userText.includes('Return ONLY valid JSON') ||
-    userText.includes('categorySlug must be one of')
+    userText.includes('categorySlug must be one of') ||
+    userText.includes('Create a COMPLETE guide plan for') ||
+    userText.includes('Create a COMPLETE review plan for') ||
+    userText.includes('Create a COMPLETE news plan for') ||
+    userText.includes('Create a COMPLETE list plan for') ||
+    userText.includes('=== OUTPUT REQUIREMENTS ===') ||
+    userText.includes('Design an article plan for') ||
+    userText.includes('=== STRUCTURAL REQUIREMENTS ===')
   );
 }
 
 function isArticleSectionPrompt(userText: string): boolean {
-  return userText.includes('Write the next section of a game article');
+  // New format: "Write section X of Y for a guide about..."
+  // Old format: "Write the next section of a game article"
+  return (
+    userText.includes('Write the next section of a game article') ||
+    /Write section \d+ of \d+ for a (guide|review|news|list)/i.test(userText)
+  );
 }
 
 function isScoutBriefingPrompt(userText: string): boolean {
@@ -124,11 +140,12 @@ function isScoutBriefingPrompt(userText: string): boolean {
 
 function isReviewerPrompt(userText: string): boolean {
   const lower = userText.toLowerCase();
-  // Must have both ARTICLE PLAN and ARTICLE CONTENT markers - unique to Reviewer prompt
+  // Must have both PLAN DETAILS and ARTICLE CONTENT markers - unique to Reviewer prompt
+  // The prompt starts with "Review this GUIDE/LIST/etc article draft"
   return (
-    lower.includes('review the following article draft') &&
-    lower.includes('=== article plan ===') &&
-    lower.includes('=== article content ===')
+    (lower.includes('review this') && lower.includes('article draft')) &&
+    (lower.includes('=== plan details ===') || lower.includes('=== article plan ===')) &&
+    (lower.includes('=== article content ==='))
   );
 }
 
@@ -164,26 +181,36 @@ function buildMockArticlePlan(locale: 'en' | 'es', category: 'guides' | 'lists' 
       excerpt:
         'Discover the most powerful weapons in the game, ranked by damage output, versatility, and how easy they are to obtain in the early game.',
       tags: ['weapons', 'best gear', 'top 10', 'rankings'],
+      requiredElements: [
+        'Sword of Legends stats and location',
+        'Moonlight Greatsword location',
+        'Dragon Halberd requirements',
+        'Shadow Dagger build info',
+      ],
       sections: [
         {
           headline: 'Sword of Legends',
           goal: 'Describe the top-ranked weapon.',
           researchQueries: ['best weapon damage stats'],
+          mustCover: ['Sword of Legends stats and location'],
         },
         {
           headline: 'Moonlight Greatsword',
           goal: 'Describe the second weapon.',
           researchQueries: ['moonlight greatsword location'],
+          mustCover: ['Moonlight Greatsword location'],
         },
         {
           headline: 'Dragon Halberd',
           goal: 'Describe the third weapon.',
           researchQueries: ['dragon halberd requirements'],
+          mustCover: ['Dragon Halberd requirements'],
         },
         {
           headline: 'Shadow Dagger',
           goal: 'Describe the fourth weapon.',
           researchQueries: ['shadow dagger build'],
+          mustCover: ['Shadow Dagger build info'],
         },
       ],
       safety: { noPrices: true, noScoresUnlessReview: true },
@@ -197,26 +224,36 @@ function buildMockArticlePlan(locale: 'en' | 'es', category: 'guides' | 'lists' 
       excerpt:
         'Empieza fuerte con rutas seguras, mejoras clave y los errores más comunes durante tus primeras horas, para progresar más rápido y evitar frustraciones.',
       tags: ['principiantes', 'primeras horas', 'consejos'],
+      requiredElements: [
+        'Ruta inicial segura',
+        'Elección de clase',
+        'Estadísticas prioritarias',
+        'Errores comunes',
+      ],
       sections: [
         {
           headline: 'Qué hacer primero',
           goal: 'Dar una ruta inicial segura y prioridades claras.',
           researchQueries: ['mejor ruta inicio primeras horas guia'],
+          mustCover: ['Ruta inicial segura'],
         },
         {
           headline: 'Clase inicial y recuerdo',
           goal: 'Explicar elecciones iniciales y su impacto.',
           researchQueries: ['mejor clase inicial recomendación'],
+          mustCover: ['Elección de clase'],
         },
         {
           headline: 'Subir de nivel y prioridades',
           goal: 'Enseñar prioridades de estadísticas y objetivos tempranos.',
           researchQueries: ['recomendación vigor temprano'],
+          mustCover: ['Estadísticas prioritarias'],
         },
         {
           headline: 'Errores a evitar',
           goal: 'Listar errores típicos y cómo corregirlos.',
           researchQueries: ['errores comunes principiantes'],
+          mustCover: ['Errores comunes'],
         },
       ],
       safety: { noPrices: true, noScoresUnlessReview: true },
@@ -229,26 +266,36 @@ function buildMockArticlePlan(locale: 'en' | 'es', category: 'guides' | 'lists' 
     excerpt:
       'Start strong with safe routes, key upgrades, and the most common mistakes to avoid in your first hours—so you level faster, stay alive, and enjoy the opening.',
     tags: ['beginner tips', 'early game', 'progression'],
+    requiredElements: [
+      'Safe opening route and priorities',
+      'Starting class selection',
+      'Core stat priorities',
+      'Common beginner mistakes',
+    ],
     sections: [
       {
         headline: 'What to Do First',
         goal: 'Give a safe opening path and immediate priorities.',
         researchQueries: ['best early game route first hours guide'],
+        mustCover: ['Safe opening route and priorities'],
       },
       {
         headline: 'Starter Class and Keepsake',
         goal: 'Explain starter choices and why they matter.',
         researchQueries: ['best starting class recommendation'],
+        mustCover: ['Starting class selection'],
       },
       {
         headline: 'Leveling and Stat Priorities',
         goal: 'Teach core stats and early targets.',
         researchQueries: ['early game vigor recommendation'],
+        mustCover: ['Core stat priorities'],
       },
       {
         headline: 'Common Mistakes to Avoid',
         goal: 'List typical beginner mistakes and fixes.',
         researchQueries: ['common beginner mistakes'],
+        mustCover: ['Common beginner mistakes'],
       },
     ],
     safety: { noPrices: true, noScoresUnlessReview: true },

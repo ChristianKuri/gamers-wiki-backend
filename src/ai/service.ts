@@ -5,7 +5,7 @@
  * All prompts and model configurations are managed in the config folder.
  */
 
-import { createOpenAI } from '@ai-sdk/openai';
+import { createOpenRouter } from '@openrouter/ai-sdk-provider';
 import { generateText } from 'ai';
 import { 
   gameDescriptionsConfig,
@@ -33,8 +33,8 @@ import {
 } from './config';
 
 // OpenRouter client configuration
-const openrouter = createOpenAI({
-  baseURL: 'https://openrouter.ai/api/v1',
+// Using dedicated @openrouter/ai-sdk-provider for accurate cost tracking
+const openrouter = createOpenRouter({
   apiKey: process.env.OPENROUTER_API_KEY || '',
 });
 

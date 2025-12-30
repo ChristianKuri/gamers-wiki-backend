@@ -6,6 +6,8 @@ import {
   validateArticlePlan,
   getErrors,
   getWarnings,
+  detectRepetitiveText,
+  findCorruptedPlanField,
 } from '../../../src/ai/articles/validation';
 import { ARTICLE_PLAN_CONSTRAINTS } from '../../../src/ai/articles/config';
 import type { ArticlePlan } from '../../../src/ai/articles/article-plan';
@@ -358,21 +360,25 @@ describe('validateArticlePlan', () => {
         headline: 'Getting Started',
         goal: 'Help new players understand the basics',
         researchQueries: ['Elden Ring beginner tips', 'Elden Ring first steps'],
+        mustCover: ['Game controls', 'UI overview'],
       },
       {
         headline: 'Character Creation',
         goal: 'Guide players through class selection',
         researchQueries: ['Elden Ring best starting class'],
+        mustCover: ['Starting classes'],
       },
       {
         headline: 'Early Game Exploration',
         goal: 'Show safe early areas to explore',
         researchQueries: ['Elden Ring Limgrave guide'],
+        mustCover: ['Limgrave locations'],
       },
       {
         headline: 'Combat Basics',
         goal: 'Teach fundamental combat mechanics',
         researchQueries: ['Elden Ring combat tips'],
+        mustCover: ['Combat mechanics'],
       },
     ],
     safety: { noScoresUnlessReview: true },
@@ -395,6 +401,7 @@ describe('validateArticlePlan', () => {
             headline: 'Only Section',
             goal: 'The only section',
             researchQueries: ['query'],
+            mustCover: ['item'],
           },
         ],
       };
@@ -410,6 +417,7 @@ describe('validateArticlePlan', () => {
         headline: 'Section',
         goal: 'A goal',
         researchQueries: ['query'],
+        mustCover: ['item'],
       };
       const plan = {
         ...createValidPlan(),
@@ -431,9 +439,9 @@ describe('validateArticlePlan', () => {
       const plan = {
         ...createValidPlan(),
         sections: [
-          { headline: 'Introduction', goal: 'Goal 1', researchQueries: ['q1'] },
-          { headline: 'Getting Started', goal: 'Goal 2', researchQueries: ['q2'] },
-          { headline: 'Introduction', goal: 'Goal 3', researchQueries: ['q3'] },
+          { headline: 'Introduction', goal: 'Goal 1', researchQueries: ['q1'], mustCover: ['i1'] },
+          { headline: 'Getting Started', goal: 'Goal 2', researchQueries: ['q2'], mustCover: ['i2'] },
+          { headline: 'Introduction', goal: 'Goal 3', researchQueries: ['q3'], mustCover: ['i3'] },
         ],
       };
 
@@ -447,9 +455,9 @@ describe('validateArticlePlan', () => {
       const plan = {
         ...createValidPlan(),
         sections: [
-          { headline: 'Introduction', goal: 'Goal 1', researchQueries: ['q1'] },
-          { headline: 'Getting Started', goal: 'Goal 2', researchQueries: ['q2'] },
-          { headline: 'INTRODUCTION', goal: 'Goal 3', researchQueries: ['q3'] },
+          { headline: 'Introduction', goal: 'Goal 1', researchQueries: ['q1'], mustCover: ['i1'] },
+          { headline: 'Getting Started', goal: 'Goal 2', researchQueries: ['q2'], mustCover: ['i2'] },
+          { headline: 'INTRODUCTION', goal: 'Goal 3', researchQueries: ['q3'], mustCover: ['i3'] },
         ],
       };
 
@@ -473,9 +481,9 @@ describe('validateArticlePlan', () => {
       const plan = {
         ...createValidPlan(),
         sections: [
-          { headline: '', goal: 'Goal', researchQueries: ['query'] },
-          { headline: 'Valid', goal: 'Goal', researchQueries: ['query'] },
-          { headline: 'Another', goal: 'Goal', researchQueries: ['query'] },
+          { headline: '', goal: 'Goal', researchQueries: ['query'], mustCover: ['i1'] },
+          { headline: 'Valid', goal: 'Goal', researchQueries: ['query'], mustCover: ['i2'] },
+          { headline: 'Another', goal: 'Goal', researchQueries: ['query'], mustCover: ['i3'] },
         ],
       };
 
@@ -489,9 +497,9 @@ describe('validateArticlePlan', () => {
       const plan = {
         ...createValidPlan(),
         sections: [
-          { headline: '   ', goal: 'Goal', researchQueries: ['query'] },
-          { headline: 'Valid', goal: 'Goal', researchQueries: ['query'] },
-          { headline: 'Another', goal: 'Goal', researchQueries: ['query'] },
+          { headline: '   ', goal: 'Goal', researchQueries: ['query'], mustCover: ['i1'] },
+          { headline: 'Valid', goal: 'Goal', researchQueries: ['query'], mustCover: ['i2'] },
+          { headline: 'Another', goal: 'Goal', researchQueries: ['query'], mustCover: ['i3'] },
         ],
       };
 
@@ -505,9 +513,9 @@ describe('validateArticlePlan', () => {
       const plan = {
         ...createValidPlan(),
         sections: [
-          { headline: 'Section 1', goal: '', researchQueries: ['query'] },
-          { headline: 'Section 2', goal: 'Valid', researchQueries: ['query'] },
-          { headline: 'Section 3', goal: 'Valid', researchQueries: ['query'] },
+          { headline: 'Section 1', goal: '', researchQueries: ['query'], mustCover: ['i1'] },
+          { headline: 'Section 2', goal: 'Valid', researchQueries: ['query'], mustCover: ['i2'] },
+          { headline: 'Section 3', goal: 'Valid', researchQueries: ['query'], mustCover: ['i3'] },
         ],
       };
 
@@ -521,9 +529,9 @@ describe('validateArticlePlan', () => {
       const plan = {
         ...createValidPlan(),
         sections: [
-          { headline: 'Section 1', goal: 'Goal', researchQueries: [] },
-          { headline: 'Section 2', goal: 'Goal', researchQueries: ['query'] },
-          { headline: 'Section 3', goal: 'Goal', researchQueries: ['query'] },
+          { headline: 'Section 1', goal: 'Goal', researchQueries: [], mustCover: ['i1'] },
+          { headline: 'Section 2', goal: 'Goal', researchQueries: ['query'], mustCover: ['i2'] },
+          { headline: 'Section 3', goal: 'Goal', researchQueries: ['query'], mustCover: ['i3'] },
         ],
       };
 
@@ -537,9 +545,9 @@ describe('validateArticlePlan', () => {
       const plan = {
         ...createValidPlan(),
         sections: [
-          { headline: 'Section 1', goal: 'Goal', researchQueries: ['valid', '', '  '] },
-          { headline: 'Section 2', goal: 'Goal', researchQueries: ['query'] },
-          { headline: 'Section 3', goal: 'Goal', researchQueries: ['query'] },
+          { headline: 'Section 1', goal: 'Goal', researchQueries: ['valid', '', '  '], mustCover: ['i1'] },
+          { headline: 'Section 2', goal: 'Goal', researchQueries: ['query'], mustCover: ['i2'] },
+          { headline: 'Section 3', goal: 'Goal', researchQueries: ['query'], mustCover: ['i3'] },
         ],
       };
 
@@ -556,9 +564,10 @@ describe('validateArticlePlan', () => {
         ...createValidPlan(),
         title: 'Getting Started',
         sections: [
-          { headline: 'Getting Started', goal: 'Goal 1', researchQueries: ['q1'] },
-          { headline: 'Section 2', goal: 'Goal 2', researchQueries: ['q2'] },
-          { headline: 'Section 3', goal: 'Goal 3', researchQueries: ['q3'] },
+          { headline: 'Getting Started', goal: 'Goal 1', researchQueries: ['q1'], mustCover: ['i1'] },
+          { headline: 'Section 2', goal: 'Goal 2', researchQueries: ['q2'], mustCover: ['i2'] },
+          { headline: 'Section 3', goal: 'Goal 3', researchQueries: ['q3'], mustCover: ['i3'] },
+          { headline: 'Section 4', goal: 'Goal 4', researchQueries: ['q4'], mustCover: ['i4'] },
         ],
       };
 
@@ -573,9 +582,10 @@ describe('validateArticlePlan', () => {
         ...createValidPlan(),
         title: 'GETTING STARTED',
         sections: [
-          { headline: 'getting started', goal: 'Goal 1', researchQueries: ['q1'] },
-          { headline: 'Section 2', goal: 'Goal 2', researchQueries: ['q2'] },
-          { headline: 'Section 3', goal: 'Goal 3', researchQueries: ['q3'] },
+          { headline: 'getting started', goal: 'Goal 1', researchQueries: ['q1'], mustCover: ['i1'] },
+          { headline: 'Section 2', goal: 'Goal 2', researchQueries: ['q2'], mustCover: ['i2'] },
+          { headline: 'Section 3', goal: 'Goal 3', researchQueries: ['q3'], mustCover: ['i3'] },
+          { headline: 'Section 4', goal: 'Goal 4', researchQueries: ['q4'], mustCover: ['i4'] },
         ],
       };
 
@@ -639,6 +649,233 @@ describe('validateArticlePlan', () => {
 
       expect(errors).toHaveLength(0);
     });
+  });
+
+  describe('token repetition corruption detection', () => {
+    it('returns error for corrupted requiredElements', () => {
+      const corruptedText = 'Normal text if needededededededededededededededededededededededededededededededededededededededededededededede';
+      const plan = {
+        ...createValidPlan(),
+        requiredElements: [corruptedText],
+      };
+
+      const issues = validateArticlePlan(plan);
+      const errors = getErrors(issues);
+
+      expect(errors.length).toBe(1);
+      expect(errors[0].message).toContain('LLM output corruption');
+      expect(errors[0].message).toContain('requiredElements[0]');
+    });
+
+    it('returns error for corrupted section goal', () => {
+      const corruptedGoal = 'Help players with the basicsededededededededededededededededededededededededededededededede' +
+        'edededededededededededededededededededededededededededededededededededededededededed';
+      const plan = {
+        ...createValidPlan(),
+        sections: [
+          { headline: 'Section 1', goal: corruptedGoal, researchQueries: ['q1'], mustCover: ['item1'] },
+          { headline: 'Section 2', goal: 'Valid goal', researchQueries: ['q2'], mustCover: ['item2'] },
+          { headline: 'Section 3', goal: 'Valid goal', researchQueries: ['q3'], mustCover: ['item3'] },
+          { headline: 'Section 4', goal: 'Valid goal', researchQueries: ['q4'], mustCover: ['item4'] },
+        ],
+      };
+
+      const issues = validateArticlePlan(plan);
+      const errors = getErrors(issues);
+
+      expect(errors.length).toBe(1);
+      expect(errors[0].message).toContain('LLM output corruption');
+      expect(errors[0].message).toContain('sections[0].goal');
+    });
+
+    it('does not flag normal text as corrupted', () => {
+      const plan = createValidPlan();
+      const issues = validateArticlePlan(plan);
+      const corruptionErrors = getErrors(issues).filter((e) =>
+        e.message.includes('corruption')
+      );
+
+      expect(corruptionErrors).toHaveLength(0);
+    });
+  });
+});
+
+describe('detectRepetitiveText', () => {
+  it('returns false for normal text', () => {
+    const result = detectRepetitiveText('This is a normal piece of text without any repetition issues.');
+    expect(result.isCorrupted).toBe(false);
+  });
+
+  it('returns false for short strings', () => {
+    // Short strings are not checked for efficiency
+    const result = detectRepetitiveText('short');
+    expect(result.isCorrupted).toBe(false);
+  });
+
+  it('detects classic LLM repetition pattern (ede...)', () => {
+    // Simulates the actual bug pattern from the E2E test
+    const corrupted = 'Normal text if needededededededededededededededededededededededededededededededededededededededededededededede' +
+      'edededededededededededededededededededededededededededededededededededededededed';
+    const result = detectRepetitiveText(corrupted);
+
+    expect(result.isCorrupted).toBe(true);
+    // Algorithm may find 'ed', 'de', or 'ede' as the repeating pattern (shortest first)
+    expect(['ed', 'de', 'ede']).toContain(result.pattern);
+    expect(result.repetitions).toBeGreaterThan(15);
+  });
+
+  it('detects single character repetition', () => {
+    const corrupted = 'Text with eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee' +
+      'eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee';
+    const result = detectRepetitiveText(corrupted);
+
+    expect(result.isCorrupted).toBe(true);
+  });
+
+  it('detects longer pattern repetition', () => {
+    // Test with a 5-char pattern
+    const corrupted = 'Start' + 'abcde'.repeat(50) + 'end';
+    const result = detectRepetitiveText(corrupted);
+
+    expect(result.isCorrupted).toBe(true);
+    expect(result.pattern).toBe('abcde');
+  });
+
+  it('does not flag legitimate repetition in prose', () => {
+    // Some words naturally repeat in normal writing
+    const normal = 'The game is good. The graphics are great. The sound is excellent. ' +
+      'The controls are tight. The story is compelling. The characters are memorable. ' +
+      'The world is vast. The combat is satisfying. The progression is rewarding.';
+    const result = detectRepetitiveText(normal);
+
+    expect(result.isCorrupted).toBe(false);
+  });
+
+  it('does not flag markdown formatting', () => {
+    const markdown = '## Section One\n\n**Bold text** and **more bold** and **another bold**\n\n' +
+      '## Section Two\n\n- Item one\n- Item two\n- Item three\n\n' +
+      '## Section Three\n\nMore content here.';
+    const result = detectRepetitiveText(markdown);
+
+    expect(result.isCorrupted).toBe(false);
+  });
+});
+
+describe('findCorruptedPlanField', () => {
+  const validPlan = {
+    title: 'Valid Title For Testing',
+    excerpt: 'This is a valid excerpt that meets all requirements and is not corrupted in any way.',
+    tags: ['tag1', 'tag2', 'tag3'],
+    sections: [
+      { headline: 'Section 1', goal: 'Goal 1', researchQueries: ['query1'], mustCover: ['item1'] },
+      { headline: 'Section 2', goal: 'Goal 2', researchQueries: ['query2'], mustCover: ['item2'] },
+    ],
+    requiredElements: ['Element 1', 'Element 2'],
+  };
+
+  it('returns null for valid plan', () => {
+    const result = findCorruptedPlanField(validPlan);
+    expect(result).toBeNull();
+  });
+
+  it('detects corruption in title', () => {
+    const plan = {
+      ...validPlan,
+      title: 'Valid' + 'xyz'.repeat(100),
+    };
+    const result = findCorruptedPlanField(plan);
+
+    expect(result).not.toBeNull();
+    expect(result!.field).toBe('title');
+  });
+
+  it('detects corruption in excerpt', () => {
+    const plan = {
+      ...validPlan,
+      excerpt: 'Starting text' + 'abc'.repeat(100),
+    };
+    const result = findCorruptedPlanField(plan);
+
+    expect(result).not.toBeNull();
+    expect(result!.field).toBe('excerpt');
+  });
+
+  it('detects corruption in tags', () => {
+    const plan = {
+      ...validPlan,
+      tags: ['valid', 'tag' + 'xyz'.repeat(100), 'another'],
+    };
+    const result = findCorruptedPlanField(plan);
+
+    expect(result).not.toBeNull();
+    expect(result!.field).toBe('tags[1]');
+  });
+
+  it('detects corruption in requiredElements', () => {
+    const plan = {
+      ...validPlan,
+      requiredElements: ['Valid element', 'Corrupted' + 'ede'.repeat(100)],
+    };
+    const result = findCorruptedPlanField(plan);
+
+    expect(result).not.toBeNull();
+    expect(result!.field).toBe('requiredElements[1]');
+  });
+
+  it('detects corruption in section headline', () => {
+    const plan = {
+      ...validPlan,
+      sections: [
+        { headline: 'Corrupted' + 'abc'.repeat(100), goal: 'Goal', researchQueries: ['q'], mustCover: ['i'] },
+        { headline: 'Valid', goal: 'Goal', researchQueries: ['q'], mustCover: ['i'] },
+      ],
+    };
+    const result = findCorruptedPlanField(plan);
+
+    expect(result).not.toBeNull();
+    expect(result!.field).toBe('sections[0].headline');
+  });
+
+  it('detects corruption in section goal', () => {
+    const plan = {
+      ...validPlan,
+      sections: [
+        { headline: 'Valid', goal: 'Goal' + 'xyz'.repeat(100), researchQueries: ['q'], mustCover: ['i'] },
+        { headline: 'Valid 2', goal: 'Goal 2', researchQueries: ['q2'], mustCover: ['i2'] },
+      ],
+    };
+    const result = findCorruptedPlanField(plan);
+
+    expect(result).not.toBeNull();
+    expect(result!.field).toBe('sections[0].goal');
+  });
+
+  it('detects corruption in research queries', () => {
+    const plan = {
+      ...validPlan,
+      sections: [
+        { headline: 'Valid', goal: 'Goal', researchQueries: ['valid', 'query' + 'ede'.repeat(100)], mustCover: ['i'] },
+        { headline: 'Valid 2', goal: 'Goal 2', researchQueries: ['q2'], mustCover: ['i2'] },
+      ],
+    };
+    const result = findCorruptedPlanField(plan);
+
+    expect(result).not.toBeNull();
+    expect(result!.field).toBe('sections[0].researchQueries[1]');
+  });
+
+  it('detects corruption in mustCover', () => {
+    const plan = {
+      ...validPlan,
+      sections: [
+        { headline: 'Valid', goal: 'Goal', researchQueries: ['q'], mustCover: ['item' + 'abc'.repeat(100)] },
+        { headline: 'Valid 2', goal: 'Goal 2', researchQueries: ['q2'], mustCover: ['i2'] },
+      ],
+    };
+    const result = findCorruptedPlanField(plan);
+
+    expect(result).not.toBeNull();
+    expect(result!.field).toBe('sections[0].mustCover[0]');
   });
 });
 

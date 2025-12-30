@@ -45,12 +45,11 @@
  * });
  */
 
-import { createOpenAI } from '@ai-sdk/openai';
+import { createOpenRouter } from '@openrouter/ai-sdk-provider';
 import { generateObject, generateText } from 'ai';
 
 import { getModel } from '../config';
 import { tavilySearch } from '../tools/tavily';
-import { getModelPricing } from './config';
 import {
   createContextualLogger,
   createPrefixedLogger,
@@ -66,8 +65,10 @@ import { runFixer, type FixerContext, type FixerDeps } from './fixer';
 import { countContentH2Sections } from './markdown-utils';
 import { withRetry } from './retry';
 import {
+  addSourceUsage,
   addTokenUsage,
   ArticleGenerationError,
+  createEmptySourceContentUsage,
   createEmptyTokenUsage,
   systemClock,
   type AggregatedTokenUsage,
@@ -76,10 +77,13 @@ import {
   type ArticleProgressCallback,
   type Clock,
   type FixApplied,
+  type FixerOutcomeMetrics,
   type GameArticleContext,
   type GameArticleDraft,
   type RecoveryMetadata,
   type ScoutOutput,
+  type SearchApiCosts,
+  type SourceContentUsage,
   type TokenUsage,
 } from './types';
 import { PhaseTimer } from './phase-timer';
@@ -94,7 +98,7 @@ import { validateArticleDraft, validateArticlePlan, validateGameArticleContext, 
  * Dependencies for article generation (enables testing with mocks).
  */
 export interface ArticleGeneratorDeps {
-  readonly openrouter: ReturnType<typeof createOpenAI>;
+  readonly openrouter: ReturnType<typeof createOpenRouter>;
   readonly search: typeof tavilySearch;
   readonly generateText: typeof generateText;
   readonly generateObject: typeof generateObject;
@@ -686,18 +690,22 @@ async function executeEditorPhaseWithRetry(
       const { plan, tokenUsage } = result.output;
       totalTokenUsage = addTokenUsage(totalTokenUsage, tokenUsage);
 
-      // Only end timer and report progress on first attempt
-      // (retry attempts are internal, not user-visible)
+      // Always end timer (includes retry time since timer started on first attempt)
+      const editorDurationMs = phaseTimer.end('editor');
+
+      // Report progress (user-visible completion message)
       if (!isRetry) {
-        phaseTimer.end('editor');
         log.info(
-          `Editor (${editorModel}) complete in ${result.durationMs}ms: ` +
+          `Editor (${editorModel}) complete in ${editorDurationMs}ms: ` +
             `${plan.categorySlug} article with ${plan.sections.length} sections`
         );
-        progressTracker.completePhase('editor', `Planned ${plan.sections.length} sections`);
       } else {
-        log.info(`Editor retry ${attempt} produced plan with ${plan.sections.length} sections`);
+        log.info(
+          `Editor (${editorModel}) complete in ${editorDurationMs}ms after ${attempt} retry(s): ` +
+            `${plan.categorySlug} article with ${plan.sections.length} sections`
+        );
       }
+      progressTracker.completePhase('editor', `Planned ${plan.sections.length} sections`);
 
       // Validate plan structure before expensive Specialist phase
       const planIssues = validateArticlePlan(plan);
@@ -843,13 +851,13 @@ function createDefaultDeps(): ArticleGeneratorDeps {
     );
   }
 
-  // Support configurable base URL for proxies or alternative endpoints
-  const baseURL = process.env.OPENROUTER_BASE_URL ?? GENERATOR_CONFIG.DEFAULT_OPENROUTER_BASE_URL;
-
+  // Use dedicated OpenRouter provider for accurate cost tracking
+  // providerMetadata.openrouter.usage.cost gives actual cost per call
   return {
-    openrouter: createOpenAI({
-      baseURL,
+    openrouter: createOpenRouter({
       apiKey: process.env.OPENROUTER_API_KEY,
+      // Optional: custom base URL for proxies (uncomment if needed)
+      // baseUrl: process.env.OPENROUTER_BASE_URL,
     }),
     search: tavilySearch,
     generateText,
@@ -1018,7 +1026,7 @@ export async function generateGameArticleDraft(
 
   // Track markdown as mutable for Fixer phase
   let currentMarkdown = specialistResult.output.markdown;
-  const { sources, researchPool: finalResearchPool, tokenUsage: specialistTokenUsage } = specialistResult.output;
+  const { sources, researchPool: finalResearchPool, tokenUsage: specialistTokenUsage, sourceUsage: specialistSourceUsage } = specialistResult.output;
 
   // Recovery tracking
   const allFixesApplied: FixApplied[] = [];
@@ -1113,17 +1121,15 @@ export async function generateGameArticleDraft(
       originalMarkdownBeforeFixer = currentMarkdown;
     }
 
-    while (
-      actionableIssues.length > 0 &&
-      fixerIterations < FIXER_CONFIG.MAX_FIXER_ITERATIONS
-    ) {
-      fixerIterations++;
-      log.info(`Fixer iteration ${fixerIterations}/${FIXER_CONFIG.MAX_FIXER_ITERATIONS}...`);
+    // Helper to count critical issues
+    const countCritical = (issues: readonly { severity: string }[]) =>
+      issues.filter((i) => i.severity === 'critical').length;
 
-      // Apply fixes
+    // Helper to run a fix iteration
+    const runFixIteration = async (issuesToFix: typeof reviewerOutput.issues) => {
       const fixerResult = await runFixer(
         currentMarkdown,
-        reviewerOutput.issues,
+        issuesToFix,
         fixerContext,
         fixerDeps,
         fixerIterations
@@ -1132,56 +1138,112 @@ export async function generateGameArticleDraft(
       currentMarkdown = fixerResult.markdown;
       allFixesApplied.push(...fixerResult.fixesApplied);
       fixerTokenUsage = addTokenUsage(fixerTokenUsage, fixerResult.tokenUsage);
-
-      // Track markdown after this iteration (for history)
       markdownHistory.push(currentMarkdown);
 
+      return fixerResult;
+    };
+
+    // Helper to re-review
+    const reReview = async () => {
+      log.info('Re-reviewing article after fixes...');
+      reviewerResult = await runPhase(
+        'Reviewer',
+        'VALIDATION_FAILED',
+        () =>
+          runReviewer(currentMarkdown, plan, scoutOutput, {
+            generateObject: resolvedDeps.generateObject,
+            model: resolvedDeps.openrouter(reviewerModel),
+            logger: createPrefixedLogger('[Reviewer]'),
+            signal: basePhaseOptions.signal,
+          }),
+        { ...basePhaseOptions, modelName: reviewerModel }
+      );
+
+      reviewerOutput = reviewerResult.output;
+      reviewerTokenUsage = addTokenUsage(reviewerTokenUsage, reviewerOutput.tokenUsage);
+
+      log.info(
+        `Re-review complete: ${reviewerOutput.approved ? 'APPROVED' : 'NEEDS ATTENTION'} ` +
+          `(${logIssueCounts(reviewerOutput.issues)} issues)`
+      );
+
+      // Update actionable issues
+      actionableIssues.length = 0;
+      actionableIssues.push(...reviewerOutput.issues.filter((i) => i.fixStrategy !== 'no_action'));
+    };
+
+    // PHASE 1: Fix all issues (up to MAX_FIXER_ITERATIONS)
+    // Stop early if article is APPROVED - don't risk introducing regressions
+    while (
+      !reviewerOutput.approved &&
+      actionableIssues.length > 0 &&
+      fixerIterations < FIXER_CONFIG.MAX_FIXER_ITERATIONS
+    ) {
+      fixerIterations++;
+      log.info(`Fixer iteration ${fixerIterations}/${FIXER_CONFIG.MAX_FIXER_ITERATIONS}...`);
+
+      const fixerResult = await runFixIteration(reviewerOutput.issues);
       const successfulFixes = fixerResult.fixesApplied.filter((f) => f.success).length;
       log.info(
         `Fixer iteration ${fixerIterations}: ${successfulFixes}/${fixerResult.fixesApplied.length} fixes applied`
       );
 
-      // Re-review after fixes
       if (successfulFixes > 0) {
-        log.info('Re-reviewing article after fixes...');
-        reviewerResult = await runPhase(
-          'Reviewer',
-          'VALIDATION_FAILED',
-          () =>
-            runReviewer(currentMarkdown, plan, scoutOutput, {
-              generateObject: resolvedDeps.generateObject,
-              model: resolvedDeps.openrouter(reviewerModel),
-              logger: createPrefixedLogger('[Reviewer]'),
-              signal: basePhaseOptions.signal,
-              // Don't pass temperature override - let Reviewer use its default
-            }),
-          { ...basePhaseOptions, modelName: reviewerModel }
-        );
-
-        reviewerOutput = reviewerResult.output;
-        reviewerTokenUsage = addTokenUsage(reviewerTokenUsage, reviewerOutput.tokenUsage);
-
-        log.info(
-          `Re-review complete: ${reviewerOutput.approved ? 'APPROVED' : 'NEEDS ATTENTION'} ` +
-            `(${logIssueCounts(reviewerOutput.issues)} issues)`
-        );
-
-        // Update actionable issues for next iteration check
-        actionableIssues.length = 0;
-        actionableIssues.push(...reviewerOutput.issues.filter((i) => i.fixStrategy !== 'no_action'));
+        await reReview();
       } else {
-        // No successful fixes, stop iterating
         log.warn('No fixes were successful, stopping Fixer loop');
         break;
       }
     }
 
+    // PHASE 2: Continue fixing ONLY critical issues (up to MAX_CRITICAL_FIX_ITERATIONS total)
+    let criticalIssues = reviewerOutput.issues.filter((i) => i.severity === 'critical');
+    
+    while (
+      criticalIssues.length > 0 &&
+      fixerIterations < FIXER_CONFIG.MAX_CRITICAL_FIX_ITERATIONS
+    ) {
+      fixerIterations++;
+      log.info(
+        `Critical fix iteration ${fixerIterations}/${FIXER_CONFIG.MAX_CRITICAL_FIX_ITERATIONS} ` +
+          `(${criticalIssues.length} critical issues remaining)...`
+      );
+
+      const fixerResult = await runFixIteration(criticalIssues);
+      const successfulFixes = fixerResult.fixesApplied.filter((f) => f.success).length;
+      log.info(
+        `Critical fix iteration ${fixerIterations}: ${successfulFixes}/${fixerResult.fixesApplied.length} fixes applied`
+      );
+
+      if (successfulFixes > 0) {
+        await reReview();
+        criticalIssues = reviewerOutput.issues.filter((i) => i.severity === 'critical');
+      } else {
+        log.warn('No critical fixes were successful, stopping');
+        break;
+      }
+    }
+
+    // Final warning if critical issues remain
+    if (countCritical(reviewerOutput.issues) > 0) {
+      log.warn(
+        `⚠️ ${countCritical(reviewerOutput.issues)} critical issue(s) remain after ${fixerIterations} iterations!`
+      );
+    }
+
     phaseTimer.end('reviewer');
 
     if (fixerIterations > 0) {
+      const opsSucceeded = allFixesApplied.filter((f) => f.success).length;
+      const beforeCounts = initialReviewerIssues
+        ? `${initialReviewerIssues.filter((i) => i.severity === 'critical').length}C/${initialReviewerIssues.filter((i) => i.severity === 'major').length}M`
+        : '?';
+      const afterCounts = reviewerOutput
+        ? `${reviewerOutput.issues.filter((i) => i.severity === 'critical').length}C/${reviewerOutput.issues.filter((i) => i.severity === 'major').length}M`
+        : '?';
       log.info(
-        `Fixer complete: ${fixerIterations} iteration(s), ${allFixesApplied.length} total fixes ` +
-          `(${allFixesApplied.filter((f) => f.success).length} successful)`
+        `Fixer complete: ${fixerIterations} iteration(s), ${allFixesApplied.length} operations ` +
+          `(${opsSucceeded} succeeded). Issues: ${beforeCounts} → ${afterCounts} (critical/major)`
       );
     }
 
@@ -1259,31 +1321,14 @@ export async function generateGameArticleDraft(
   // Check if any tokens were reported (some APIs may not report usage)
   const hasTokenUsage = totalTokenUsage.input > 0 || totalTokenUsage.output > 0;
 
-  // Calculate estimated cost based on model pricing
-  let estimatedCostUsd: number | undefined;
-  if (hasTokenUsage) {
-    const scoutPricing = getModelPricing(scoutModel);
-    const editorPricing = getModelPricing(editorModel);
-    const specialistPricing = getModelPricing(specialistModel);
-    const reviewerPricing = getModelPricing(reviewerModel);
+  // Get actual LLM cost from OpenRouter (aggregated via addTokenUsage)
+  // This is the real cost from providerMetadata.openrouter.usage.cost
+  const actualCostUsd = totalTokenUsage.actualCostUsd;
 
-    estimatedCostUsd =
-      (scoutTokenUsage.input / 1000) * scoutPricing.inputPer1k +
-      (scoutTokenUsage.output / 1000) * scoutPricing.outputPer1k +
-      (editorTotalTokenUsage.input / 1000) * editorPricing.inputPer1k +
-      (editorTotalTokenUsage.output / 1000) * editorPricing.outputPer1k +
-      (specialistTokenUsage.input / 1000) * specialistPricing.inputPer1k +
-      (specialistTokenUsage.output / 1000) * specialistPricing.outputPer1k +
-      (reviewerTokenUsage.input / 1000) * reviewerPricing.inputPer1k +
-      (reviewerTokenUsage.output / 1000) * reviewerPricing.outputPer1k +
-      // Fixer uses reviewer model, so use same pricing
-      (fixerTokenUsage.input / 1000) * reviewerPricing.inputPer1k +
-      (fixerTokenUsage.output / 1000) * reviewerPricing.outputPer1k;
-
-    // Round to 6 decimal places for precision
-    estimatedCostUsd = Math.round(estimatedCostUsd * 1_000_000) / 1_000_000;
-
-    log.info(`Estimated generation cost: $${estimatedCostUsd.toFixed(4)} USD`);
+  if (actualCostUsd !== undefined) {
+    log.info(`Actual LLM generation cost: $${actualCostUsd.toFixed(4)} USD (from OpenRouter)`);
+  } else if (hasTokenUsage) {
+    log.warn('No actual cost data from OpenRouter - cost tracking may be incomplete');
   }
 
   const tokenUsage: AggregatedTokenUsage | undefined = hasTokenUsage
@@ -1293,12 +1338,51 @@ export async function generateGameArticleDraft(
         specialist: specialistTokenUsage,
         ...(shouldRunReviewer ? { reviewer: reviewerTokenUsage } : {}),
         total: totalTokenUsage,
-        estimatedCostUsd,
+        actualCostUsd,
+        // Keep estimatedCostUsd for backwards compatibility (deprecated)
+        estimatedCostUsd: actualCostUsd,
       }
     : undefined;
 
+  // Helper to count issues by severity
+  const countBySeverity = (issues: readonly { severity: string }[]): FixerOutcomeMetrics['issuesBefore'] => ({
+    critical: issues.filter((i) => i.severity === 'critical').length,
+    major: issues.filter((i) => i.severity === 'major').length,
+    minor: issues.filter((i) => i.severity === 'minor').length,
+    total: issues.length,
+  });
+
+  // Build outcome metrics if fixer ran
+  const buildOutcomeMetrics = (): FixerOutcomeMetrics | undefined => {
+    if (fixerIterations === 0 || !initialReviewerIssues || !reviewerOutput) {
+      return undefined;
+    }
+
+    const issuesBefore = countBySeverity(initialReviewerIssues);
+    const issuesAfter = countBySeverity(reviewerOutput.issues);
+    const netChange = {
+      critical: issuesAfter.critical - issuesBefore.critical,
+      major: issuesAfter.major - issuesBefore.major,
+      minor: issuesAfter.minor - issuesBefore.minor,
+      total: issuesAfter.total - issuesBefore.total,
+    };
+
+    return {
+      operationsAttempted: allFixesApplied.length,
+      operationsSucceeded: allFixesApplied.filter((f) => f.success).length,
+      issuesBefore,
+      issuesAfter,
+      netChange,
+      reviewerApproved: reviewerOutput.approved,
+      note:
+        'Operations count markdown changes, not issues resolved. ' +
+        'Reviewer may identify new issues after each fix, causing issue drift.',
+    };
+  };
+
   // Build recovery metadata if any retries or fixes were applied
   const hasRecovery = planRetries > 0 || fixerIterations > 0 || Object.keys(sectionRetries).length > 0;
+  const outcomeMetrics = buildOutcomeMetrics();
   const recovery: RecoveryMetadata | undefined = hasRecovery
     ? {
         planRetries,
@@ -1311,8 +1395,37 @@ export async function generateGameArticleDraft(
         ...(originalMarkdownBeforeFixer ? { originalMarkdown: originalMarkdownBeforeFixer } : {}),
         // Include markdown history if multiple Fixer iterations (for incremental comparison)
         ...(markdownHistory.length > 1 ? { markdownHistory } : {}),
+        // Include honest outcome metrics
+        ...(outcomeMetrics ? { outcomeMetrics } : {}),
       }
     : undefined;
+
+  // ===== AGGREGATE SEARCH API COSTS =====
+  const specialistSearchCosts = specialistResult.output.searchApiCosts;
+  const searchApiCosts: SearchApiCosts = {
+    totalUsd: scoutOutput.searchApiCosts.totalUsd + specialistSearchCosts.totalUsd,
+    exaSearchCount:
+      scoutOutput.searchApiCosts.exaSearchCount + specialistSearchCosts.exaSearchCount,
+    tavilySearchCount:
+      scoutOutput.searchApiCosts.tavilySearchCount + specialistSearchCosts.tavilySearchCount,
+    exaCostUsd: scoutOutput.searchApiCosts.exaCostUsd + specialistSearchCosts.exaCostUsd,
+    tavilyCostUsd:
+      scoutOutput.searchApiCosts.tavilyCostUsd + specialistSearchCosts.tavilyCostUsd,
+    tavilyCredits:
+      scoutOutput.searchApiCosts.tavilyCredits + specialistSearchCosts.tavilyCredits,
+  };
+
+  // Calculate total cost (LLM + Search APIs)
+  // Use actual cost from OpenRouter when available
+  const llmCostUsd = tokenUsage?.actualCostUsd ?? 0;
+  const totalEstimatedCostUsd = llmCostUsd + searchApiCosts.totalUsd;
+
+  // Build source content usage tracking (Specialist phase only for now)
+  // TODO: Add Scout phase source tracking in future
+  const sourceContentUsage: SourceContentUsage = addSourceUsage(
+    createEmptySourceContentUsage(),
+    specialistSourceUsage
+  );
 
   // Build immutable metadata for debugging and analytics
   const metadata: ArticleGenerationMetadata = {
@@ -1322,6 +1435,9 @@ export async function generateGameArticleDraft(
     queriesExecuted: finalResearchPool.queryCache.size,
     sourcesCollected: finalResearchPool.allUrls.size,
     tokenUsage,
+    searchApiCosts,
+    totalEstimatedCostUsd,
+    sourceContentUsage,
     correlationId,
     researchConfidence: scoutOutput.confidence,
     ...(recovery ? { recovery } : {}),

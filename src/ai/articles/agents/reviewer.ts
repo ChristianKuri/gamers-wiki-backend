@@ -23,6 +23,7 @@ import {
 } from '../prompts/reviewer-prompts';
 import {
   createEmptyTokenUsage,
+  createTokenUsageFromResult,
   type FixStrategy,
   type ScoutOutput,
   type TokenUsage,
@@ -109,7 +110,7 @@ export interface ReviewerDeps {
  * All valid fix strategy values as a const array.
  * Used to create the Zod enum for AI SDK schema.
  */
-const FIX_STRATEGY_VALUES = ['direct_edit', 'regenerate', 'add_section', 'expand', 'no_action'] as const;
+const FIX_STRATEGY_VALUES = ['inline_insert', 'direct_edit', 'regenerate', 'add_section', 'expand', 'no_action'] as const;
 
 /**
  * Schema for review issues.
@@ -124,7 +125,7 @@ const FIX_STRATEGY_VALUES = ['direct_edit', 'regenerate', 'add_section', 'expand
  */
 const ReviewIssueBaseSchema = z.object({
   severity: z.enum(['critical', 'major', 'minor']),
-  category: z.enum(['redundancy', 'coverage', 'factual', 'style', 'seo']),
+  category: z.enum(['checklist', 'structure', 'redundancy', 'coverage', 'factual', 'style', 'seo']),
   location: z.string().optional(),
   message: z.string(),
   suggestion: z.string().optional(),
@@ -144,6 +145,34 @@ const ReviewerOutputSchema = z.object({
 });
 
 /**
+ * Generates a default fix instruction when the LLM fails to provide one.
+ * This prevents important issues (especially checklist failures) from being dropped.
+ */
+function generateDefaultFixInstruction(issue: z.infer<typeof ReviewIssueBaseSchema>): string {
+  const location = issue.location || 'the appropriate section';
+  
+  // For checklist failures (missing required elements)
+  if (issue.category === 'checklist' || issue.message.includes('CHECKLIST FAILURE')) {
+    return `Add paragraph in "${location}" covering the missing element. ` +
+      `Based on issue: ${issue.message.slice(0, 200)}. ` +
+      `Include: name, location, how to obtain/use, and relevance.`;
+  }
+  
+  // For structural issues
+  if (issue.category === 'structure') {
+    return `Fix structural issue in "${location}": ${issue.message.slice(0, 150)}`;
+  }
+  
+  // For coverage issues (location/detail missing)
+  if (issue.category === 'coverage' || issue.fixStrategy === 'inline_insert') {
+    return `In section "${location}", add the missing information: ${issue.message.slice(0, 150)}`;
+  }
+  
+  // Default fallback
+  return `Fix in "${location}": ${issue.message.slice(0, 150)}`;
+}
+
+/**
  * Validates and filters review issues, removing those with invalid fix configurations.
  * Issues without required fixInstruction are logged as warnings and filtered out.
  *
@@ -159,15 +188,28 @@ function filterValidIssues(
   const skippedCount = { missingFixInstruction: 0, invalidLocation: 0 };
 
   for (const issue of issues) {
-    // Skip issues with actionable strategy but no fixInstruction
+    // Handle issues with actionable strategy but missing fixInstruction
     if (issue.fixStrategy !== 'no_action') {
       if (!issue.fixInstruction || issue.fixInstruction.trim().length === 0) {
-        log.warn(
-          `Skipping issue (missing fixInstruction): "${issue.message.slice(0, 60)}..." ` +
-            `[strategy: ${issue.fixStrategy}]`
-        );
-        skippedCount.missingFixInstruction++;
-        continue;
+        // For critical/major issues (especially checklist), generate a default instruction
+        // rather than dropping important issues
+        if (issue.severity === 'critical' || issue.severity === 'major') {
+          const defaultInstruction = generateDefaultFixInstruction(issue);
+          log.warn(
+            `Issue missing fixInstruction (generated default): "${issue.message.slice(0, 60)}..." ` +
+              `[strategy: ${issue.fixStrategy}]`
+          );
+          // Mutate to add the generated instruction (the issue is already a plain object from Zod)
+          (issue as { fixInstruction: string }).fixInstruction = defaultInstruction;
+        } else {
+          // For minor issues, skip if no instruction
+          log.warn(
+            `Skipping minor issue (missing fixInstruction): "${issue.message.slice(0, 60)}..." ` +
+              `[strategy: ${issue.fixStrategy}]`
+          );
+          skippedCount.missingFixInstruction++;
+          continue;
+        }
       }
     }
 
@@ -226,10 +268,21 @@ export function countIssuesBySeverity(
 
 /**
  * Determines if the article should be rejected based on issues.
- * An article is rejected if it has any critical issues.
+ * An article is rejected if it has any critical issues with ACTIONABLE fix strategies.
+ * 
+ * Critical issues with "no_action" are informational and don't block approval
+ * (e.g., section placement notes where content exists but in a different section).
  */
 export function shouldRejectArticle(issues: readonly ReviewIssue[]): boolean {
-  return issues.some((i) => i.severity === 'critical');
+  return issues.some((i) => i.severity === 'critical' && i.fixStrategy !== 'no_action');
+}
+
+/**
+ * Checks if there are actionable critical issues that should prevent approval.
+ * Used to validate/override LLM's approval decision.
+ */
+export function hasActionableCriticalIssues(issues: readonly ReviewIssue[]): boolean {
+  return issues.some((i) => i.severity === 'critical' && i.fixStrategy !== 'no_action');
 }
 
 /**
@@ -295,30 +348,43 @@ export async function runReviewer(
 
   log.debug('Executing review with AI model...');
 
-  const { object, usage } = await withRetry(
+  const result = await withRetry(
     () =>
       deps.generateObject({
         model: deps.model,
         schema: ReviewerOutputSchema,
         temperature,
         maxOutputTokens: REVIEWER_CONFIG.MAX_OUTPUT_TOKENS,
-        system: getReviewerSystemPrompt(),
+        system: getReviewerSystemPrompt(plan.categorySlug),
         prompt: getReviewerUserPrompt(promptContext),
       }),
     { context: 'Reviewer analysis', signal: deps.signal }
   );
 
-  // Build token usage (AI SDK v4 uses inputTokens/outputTokens)
-  const tokenUsage: TokenUsage = usage
-    ? { input: usage.inputTokens ?? 0, output: usage.outputTokens ?? 0 }
-    : createEmptyTokenUsage();
+  const { object } = result;
+
+  // Use createTokenUsageFromResult to capture both tokens and actual cost from OpenRouter
+  const tokenUsage = createTokenUsageFromResult(result);
 
   // Filter out invalid issues (missing fixInstruction, invalid locations)
   const validIssues = filterValidIssues(object.issues, log);
 
   const counts = countIssuesBySeverity(validIssues);
+  
+  // Validate approval decision: override if LLM approved with actionable critical issues
+  // This catches the "approved: true with critical issues" bug
+  let finalApproved = object.approved;
+  const hasBlockingIssues = hasActionableCriticalIssues(validIssues);
+  
+  if (object.approved && hasBlockingIssues) {
+    log.warn(
+      `LLM approved but has ${counts.critical} actionable critical issue(s) - overriding to NEEDS REVISION`
+    );
+    finalApproved = false;
+  }
+  
   log.info(
-    `Review complete: ${object.approved ? 'APPROVED' : 'NEEDS REVISION'} ` +
+    `Review complete: ${finalApproved ? 'APPROVED' : 'NEEDS REVISION'} ` +
       `(${counts.critical} critical, ${counts.major} major, ${counts.minor} minor issues)`
   );
 
@@ -330,7 +396,7 @@ export async function runReviewer(
   }
 
   return {
-    approved: object.approved,
+    approved: finalApproved,
     issues: validIssues,
     suggestions: object.suggestions,
     tokenUsage,

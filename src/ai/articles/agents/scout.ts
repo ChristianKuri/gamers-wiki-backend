@@ -18,6 +18,7 @@ import { withRetry } from '../retry';
 import {
   buildExaQueriesForGuides,
   buildScoutQueries,
+  detectArticleIntent,
   getScoutCategorySystemPrompt,
   getScoutCategoryUserPrompt,
   getScoutOverviewSystemPrompt,
@@ -32,14 +33,19 @@ import {
   ResearchPoolBuilder,
 } from '../research-pool';
 import {
+  addExaSearchCost,
+  addTavilySearch,
   addTokenUsage,
   ArticleGenerationError,
+  createEmptySearchApiCosts,
   createEmptyTokenUsage,
+  createTokenUsageFromResult,
   type CategorizedSearchResult,
   type GameArticleContext,
   type ResearchConfidence,
   type ResearchPool,
   type ScoutOutput,
+  type SearchApiCosts,
   type SearchFunction,
   type SearchSource,
   type TokenUsage,
@@ -96,7 +102,10 @@ export interface ExecuteSearchOptions {
  */
 export interface ExecuteExaSearchOptions {
   readonly numResults?: number;
-  readonly type?: 'keyword' | 'neural' | 'auto';
+  /** Search type override. Default: 'neural' (from exa.ts) - 4x faster than 'deep', same cost */
+  readonly type?: 'deep' | 'auto' | 'neural' | 'keyword' | 'fast';
+  /** Additional query variations for better coverage (deep search feature) */
+  readonly additionalQueries?: readonly string[];
   readonly includeDomains?: readonly string[];
   readonly signal?: AbortSignal;
 }
@@ -124,16 +133,19 @@ export async function executeSearch(
         maxResults: options.maxResults,
         includeAnswer: true,
         includeRawContent: false,
+        // Exclude YouTube - video pages have no useful text content
+        excludeDomains: [...SCOUT_CONFIG.EXA_EXCLUDE_DOMAINS],
       }),
     { context: `Scout search (${category}): "${query.slice(0, 40)}..."`, signal: options.signal }
   );
 
-  return processSearchResults(query, category, result, 'tavily');
+  // Pass through cost from Tavily response if available
+  return processSearchResults(query, category, result, 'tavily', result.costUsd);
 }
 
 /**
- * Executes an Exa semantic search with retry logic.
- * Exa is best for meaning-based queries like "how does X work".
+ * Executes an Exa deep search with retry logic.
+ * Uses 'deep' search type for comprehensive results with query expansion.
  * Exported for unit testing.
  *
  * @param query - Semantic query string (natural language works best)
@@ -148,8 +160,18 @@ export async function executeExaSearch(
 ): Promise<CategorizedSearchResult> {
   const exaOptions: ExaSearchOptions = {
     numResults: options.numResults ?? SCOUT_CONFIG.CATEGORY_SEARCH_RESULTS,
-    type: options.type ?? 'neural',
+    // Use default from exa.ts (neural) - 4x faster, same cost
+    // Only override if explicitly specified in options
+    ...(options.type ? { type: options.type } : {}),
     useAutoprompt: true,
+    // Summary disabled - adds 8-16s latency, use full content instead
+    includeSummary: SCOUT_CONFIG.EXA_INCLUDE_SUMMARY,
+    // Exclude YouTube - video pages have no useful text content
+    excludeDomains: [...SCOUT_CONFIG.EXA_EXCLUDE_DOMAINS],
+    // Additional query variations for better coverage (deep search feature)
+    ...(options.additionalQueries && options.additionalQueries.length > 0
+      ? { additionalQueries: options.additionalQueries }
+      : {}),
     ...(options.includeDomains && options.includeDomains.length > 0
       ? { includeDomains: options.includeDomains }
       : {}),
@@ -160,34 +182,62 @@ export async function executeExaSearch(
     { context: `Scout Exa search (${category}): "${query.slice(0, 40)}..."`, signal: options.signal }
   );
 
-  // Log Exa search result
-  if (result.results.length > 0) {
-    // Logging happens at call site, but we could add more detail here if needed
-  } else {
-    // Empty results - could indicate API issue or no matches
-    // This is logged by withRetry on failure, so we don't need to log here
-  }
+  // Extract cost from Exa response (if available)
+  const costUsd = result.costDollars?.total;
 
   // Convert Exa response to CategorizedSearchResult format
+  // Preserve both content AND summary for hybrid approach
   return processSearchResults(
     query,
     category,
     {
-      // Exa doesn't provide answer summaries like Tavily
       answer: null,
       results: result.results.map((r) => ({
         title: r.title,
         url: r.url,
-        content: r.content,
+        // Keep full content for top results
+        content: r.content ?? '',
+        // Keep summary for efficient context (query-aware)
+        summary: r.summary,
         score: r.score,
       })),
     },
-    'exa' as SearchSource
+    'exa' as SearchSource,
+    costUsd
   );
 }
 
 /**
+ * Gets the display content for a search result using hybrid approach.
+ * Top N results get full content, remaining get summary (if available).
+ *
+ * @param result - The search result item
+ * @param index - Position in results (0-based)
+ * @param fullTextCount - Number of top results to show full text
+ * @param maxSnippetLength - Maximum length for content snippets
+ * @returns Content string to display
+ */
+function getHybridContent(
+  result: { content: string; summary?: string },
+  index: number,
+  fullTextCount: number,
+  maxSnippetLength: number
+): string {
+  // Top N results: use full content (for maximum detail)
+  if (index < fullTextCount) {
+    return result.content.slice(0, maxSnippetLength);
+  }
+  // Remaining results: prefer summary (more efficient, query-aware)
+  if (result.summary) {
+    return result.summary.slice(0, maxSnippetLength);
+  }
+  // Fallback to content if no summary
+  return result.content.slice(0, maxSnippetLength);
+}
+
+/**
  * Builds search context string from search results.
+ * Uses hybrid approach: top N results get full text, rest get summaries.
  * Exported for unit testing.
  *
  * @param results - Array of categorized search results
@@ -196,19 +246,25 @@ export async function executeExaSearch(
  */
 export function buildSearchContext(
   results: readonly CategorizedSearchResult[],
-  config: { resultsPerContext?: number; maxSnippetLength?: number } = {}
+  config: {
+    resultsPerContext?: number;
+    maxSnippetLength?: number;
+    fullTextCount?: number;
+  } = {}
 ): string {
   const resultsPerContext = config.resultsPerContext ?? SCOUT_CONFIG.RESULTS_PER_SEARCH_CONTEXT;
   const maxSnippetLength = config.maxSnippetLength ?? SCOUT_CONFIG.MAX_SNIPPET_LENGTH;
+  const fullTextCount = config.fullTextCount ?? SCOUT_CONFIG.FULL_TEXT_RESULTS_COUNT;
 
   return results
     .map((search) => {
       const snippets = search.results
         .slice(0, resultsPerContext)
-        .map(
-          (r) =>
-            `  - ${r.title} (${r.url})\n    ${r.content.slice(0, maxSnippetLength)}`
-        )
+        .map((r, index) => {
+          const displayContent = getHybridContent(r, index, fullTextCount, maxSnippetLength);
+          const contentLabel = index < fullTextCount ? '[FULL]' : (r.summary ? '[SUMMARY]' : '[CONTENT]');
+          return `  - ${r.title} (${r.url}) ${contentLabel}\n    ${displayContent}`;
+        })
         .join('\n');
 
       return `Query: "${search.query}"
@@ -406,6 +462,7 @@ export function calculateResearchConfidence(
  * @param researchPool - Built research pool
  * @param tokenUsage - Aggregated token usage from LLM calls
  * @param confidence - Research confidence level
+ * @param searchApiCosts - Aggregated search API costs
  * @returns Complete ScoutOutput
  */
 export function assembleScoutOutput(
@@ -415,7 +472,8 @@ export function assembleScoutOutput(
   fullContext: string,
   researchPool: ResearchPool,
   tokenUsage: TokenUsage,
-  confidence: ResearchConfidence
+  confidence: ResearchConfidence,
+  searchApiCosts: SearchApiCosts
 ): ScoutOutput {
   return {
     briefing: {
@@ -428,6 +486,7 @@ export function assembleScoutOutput(
     sourceUrls: Array.from(researchPool.allUrls),
     tokenUsage,
     confidence,
+    searchApiCosts,
   };
 }
 
@@ -454,6 +513,17 @@ export async function runScout(
   const { signal } = deps;
   const temperature = deps.temperature ?? SCOUT_CONFIG.TEMPERATURE;
   const localeInstruction = 'Write in English.';
+
+  // Resolve effective category for prompt tailoring
+  // If not explicitly provided, try to detect from instruction
+  let effectiveCategorySlug = context.categorySlug;
+  if (!effectiveCategorySlug) {
+    const intent = detectArticleIntent(context.instruction);
+    if (intent !== 'general') {
+      effectiveCategorySlug = intent;
+    }
+    // If generic, we default to guides logic inside the prompt functions or null here
+  }
 
   // Build search queries (Tavily keyword-based)
   const queries = buildScoutQueries(context);
@@ -532,9 +602,8 @@ export async function runScout(
     ? exaConfig.semantic.map((query) =>
         trackSearchProgress(
           executeExaSearch(query, 'category-specific', {
-            numResults: SCOUT_CONFIG.CATEGORY_SEARCH_RESULTS,
-            type: 'neural',
-            // Note: includeDomains is optional - Exa's neural search often finds good results without it
+            numResults: SCOUT_CONFIG.EXA_SEARCH_RESULTS,
+            // Uses default from exa.ts (neural) - 4x faster, same cost
             signal,
           })
         )
@@ -563,15 +632,44 @@ export async function runScout(
 
   const researchPool = poolBuilder.build();
 
+  // ===== AGGREGATE SEARCH API COSTS =====
+  let searchApiCosts = createEmptySearchApiCosts();
+
+  // Track Tavily searches with actual costs from API response
+  for (const result of tavilyResults) {
+    if (result.costUsd !== undefined) {
+      // Use actual cost from API response
+      searchApiCosts = addTavilySearch(searchApiCosts, {
+        credits: 1, // Tavily basic search = 1 credit
+        costUsd: result.costUsd,
+      });
+    } else {
+      // Fallback to estimate if cost not available
+      searchApiCosts = addTavilySearch(searchApiCosts);
+    }
+  }
+
+  // Track Exa searches (actual cost from API)
+  for (const result of exaResults) {
+    if (result.costUsd !== undefined) {
+      searchApiCosts = addExaSearchCost(searchApiCosts, { costUsd: result.costUsd });
+    } else {
+      // Exa search without cost info - estimate based on search type
+      // Deep search: $0.015, Neural: $0.005
+      searchApiCosts = addExaSearchCost(searchApiCosts, { costUsd: 0.015 });
+    }
+  }
+
   // Log Exa usage metrics if enabled
   if (useExa) {
     if (exaResults.length > 0) {
       const exaUrlCount = exaResults.reduce((sum, r) => sum + r.results.length, 0);
       const successfulQueries = exaResults.filter((r) => r.results.length > 0).length;
       const successRate = ((successfulQueries / exaResults.length) * 100).toFixed(1);
+      const exaCost = searchApiCosts.exaCostUsd.toFixed(4);
       log.debug(
         `Exa API: ${exaUrlCount} sources from ${exaResults.length} queries ` +
-          `(${successfulQueries}/${exaResults.length} successful, ${successRate}% success rate)`
+          `(${successfulQueries}/${exaResults.length} successful, ${successRate}% success rate, $${exaCost} cost)`
       );
     } else {
       log.debug('Exa API: No results returned from semantic queries');
@@ -627,8 +725,8 @@ export async function runScout(
           deps.generateText({
             model: deps.model,
             temperature,
-            system: getScoutOverviewSystemPrompt(localeInstruction),
-            prompt: getScoutOverviewUserPrompt(promptContext),
+            system: getScoutOverviewSystemPrompt(localeInstruction, effectiveCategorySlug),
+            prompt: getScoutOverviewUserPrompt(promptContext, effectiveCategorySlug),
           }),
         { context: 'Scout overview briefing', signal }
       )
@@ -639,8 +737,8 @@ export async function runScout(
           deps.generateText({
             model: deps.model,
             temperature,
-            system: getScoutCategorySystemPrompt(localeInstruction),
-            prompt: getScoutCategoryUserPrompt(context.gameName, context.instruction, categoryContext),
+            system: getScoutCategorySystemPrompt(localeInstruction, effectiveCategorySlug),
+            prompt: getScoutCategoryUserPrompt(context.gameName, context.instruction, categoryContext, effectiveCategorySlug),
           }),
         { context: 'Scout category briefing', signal }
       )
@@ -651,8 +749,8 @@ export async function runScout(
           deps.generateText({
             model: deps.model,
             temperature,
-            system: getScoutRecentSystemPrompt(localeInstruction),
-            prompt: getScoutRecentUserPrompt(context.gameName, recentContext),
+            system: getScoutRecentSystemPrompt(localeInstruction, effectiveCategorySlug),
+            prompt: getScoutRecentUserPrompt(context.gameName, recentContext, effectiveCategorySlug, context.instruction),
           }),
         { context: 'Scout recent briefing', signal }
       )
@@ -664,15 +762,10 @@ export async function runScout(
   const recentBriefing = recentResult.text.trim();
 
   // ===== AGGREGATE TOKEN USAGE =====
-  // AI SDK v4 uses inputTokens/outputTokens instead of promptTokens/completionTokens
+  // Use createTokenUsageFromResult to capture both tokens and actual cost from OpenRouter
   let tokenUsage = createEmptyTokenUsage();
   for (const result of [overviewResult, categoryResult, recentResult]) {
-    if (result.usage) {
-      tokenUsage = addTokenUsage(tokenUsage, {
-        input: result.usage.inputTokens ?? 0,
-        output: result.usage.outputTokens ?? 0,
-      });
-    }
+    tokenUsage = addTokenUsage(tokenUsage, createTokenUsageFromResult(result));
   }
 
   // ===== VALIDATION =====
@@ -694,6 +787,6 @@ export async function runScout(
 
   // ===== ASSEMBLE OUTPUT =====
   const fullContext = buildFullContext(context, overviewBriefing, categoryBriefing, recentBriefing);
-  return assembleScoutOutput(overviewBriefing, categoryBriefing, recentBriefing, fullContext, researchPool, tokenUsage, confidence);
+  return assembleScoutOutput(overviewBriefing, categoryBriefing, recentBriefing, fullContext, researchPool, tokenUsage, confidence, searchApiCosts);
 }
 
