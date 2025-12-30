@@ -212,6 +212,7 @@ export function extractGenerationStats(json: any): GenerationStats {
   const metadata = json?.draft?.metadata ?? {};
   const tokenUsage = metadata.tokenUsage ?? {};
   const searchApiCosts = metadata.searchApiCosts;
+  const sourceContentUsage = metadata.sourceContentUsage;
 
   return {
     success: json?.success ?? false,
@@ -248,6 +249,8 @@ export function extractGenerationStats(json: any): GenerationStats {
     ...(searchApiCosts ? { searchCosts: searchApiCosts } : {}),
     // Include total cost (LLM + Search APIs) if available
     ...(metadata.totalEstimatedCostUsd !== undefined ? { totalCostUsd: metadata.totalEstimatedCostUsd } : {}),
+    // Include source content usage tracking if available
+    ...(sourceContentUsage ? { sourceContentUsage } : {}),
   };
 }
 

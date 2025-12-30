@@ -50,6 +50,7 @@ import {
   type SearchFunction,
   type SearchSource,
   type SectionProgressCallback,
+  type SourceUsageItem,
   type TokenUsage,
 } from '../types';
 
@@ -98,6 +99,11 @@ export interface SpecialistOutput {
    * Exa costs are actual (from API), Tavily costs are estimated.
    */
   readonly searchApiCosts: SearchApiCosts;
+  /**
+   * Tracking of which content type (full/summary) was used for each source.
+   * Useful for debugging and quality analysis.
+   */
+  readonly sourceUsage: readonly SourceUsageItem[];
 }
 
 // ============================================================================
@@ -225,8 +231,9 @@ async function executeSingleExaSearch(
           results: result.results.map((r) => ({
             title: r.title,
             url: r.url,
-            // Prefer AI-generated summary over raw content if available
-            content: r.summary ?? r.content,
+            // Preserve both content AND summary for hybrid approach
+            content: r.content ?? '',
+            summary: r.summary,
             score: r.score,
           })),
         },
@@ -616,6 +623,8 @@ function calculateDynamicParagraphCounts(
 interface WriteSectionResult {
   readonly text: string;
   readonly tokenUsage: TokenUsage;
+  /** Tracking of which content type was used for each source */
+  readonly sourceUsage: readonly SourceUsageItem[];
 }
 
 /**
@@ -664,11 +673,14 @@ async function writeSection(
     );
   }
 
-  // Build research context
-  const researchContext = buildResearchContext(
+  // Build research context with hybrid approach (top N get full text)
+  // Now returns both context string and source usage tracking
+  const researchResult = buildResearchContext(
     sectionResearch,
     SPECIALIST_CONFIG.RESULTS_PER_RESEARCH_CONTEXT,
-    SPECIALIST_CONFIG.RESEARCH_CONTEXT_PER_RESULT
+    SPECIALIST_CONFIG.RESEARCH_CONTEXT_PER_RESULT,
+    SPECIALIST_CONFIG.FULL_TEXT_RESULTS_COUNT,
+    section.headline
   );
 
   const sectionContext: SpecialistSectionContext = {
@@ -679,7 +691,7 @@ async function writeSection(
     isFirst,
     isLast,
     previousContext,
-    researchContext,
+    researchContext: researchResult.context,
     scoutOverview: scoutOutput.briefing.overview,
     categoryInsights: scoutOutput.briefing.categoryInsights,
     isThinResearch,
@@ -712,7 +724,7 @@ async function writeSection(
   // Use createTokenUsageFromResult to capture both tokens and actual cost from OpenRouter
   const tokenUsage = createTokenUsageFromResult(result);
 
-  return { text: result.text.trim(), tokenUsage };
+  return { text: result.text.trim(), tokenUsage, sourceUsage: researchResult.sourceUsage };
 }
 
 // ============================================================================
@@ -784,6 +796,7 @@ export async function runSpecialist(
   // ===== SECTION WRITING PHASE =====
   let sectionTexts: string[];
   let totalTokenUsage = createEmptyTokenUsage();
+  let allSourceUsage: SourceUsageItem[] = [];
 
   // Shared deps for writeSection calls
   const writeDeps = {
@@ -822,9 +835,10 @@ export async function runSpecialist(
     const sectionResults = await Promise.all(sectionPromises);
     sectionTexts = sectionResults.map((r) => r.text);
 
-    // Aggregate token usage from all sections
+    // Aggregate token usage and source usage from all sections
     for (const result of sectionResults) {
       totalTokenUsage = addTokenUsage(totalTokenUsage, result.tokenUsage);
+      allSourceUsage = [...allSourceUsage, ...result.sourceUsage];
     }
   } else {
     // Sequential mode: Write sections in order with context flow and cross-section awareness
@@ -859,6 +873,7 @@ export async function runSpecialist(
 
       sectionTexts.push(result.text);
       totalTokenUsage = addTokenUsage(totalTokenUsage, result.tokenUsage);
+      allSourceUsage = [...allSourceUsage, ...result.sourceUsage];
       previousContext = result.text.slice(-SPECIALIST_CONFIG.CONTEXT_TAIL_LENGTH);
 
       // Update section write state for cross-section awareness (guides only)
@@ -899,12 +914,19 @@ export async function runSpecialist(
   const finalUrls = ensureUniqueStrings(allSources, SPECIALIST_CONFIG.MAX_SOURCES);
   markdown += formatSources(finalUrls);
 
+  // Log source usage summary
+  const fullTextCount = allSourceUsage.filter((s) => s.contentType === 'full').length;
+  const summaryCount = allSourceUsage.filter((s) => s.contentType === 'summary').length;
+  const contentCount = allSourceUsage.filter((s) => s.contentType === 'content').length;
+  log.info(`Source content usage: ${fullTextCount} full text, ${summaryCount} summary, ${contentCount} content fallback`);
+
   return {
     markdown: markdown.trim() + '\n',
     sources: finalUrls,
     researchPool: enrichedPool,
     tokenUsage: totalTokenUsage,
     searchApiCosts,
+    sourceUsage: allSourceUsage,
   };
 }
 

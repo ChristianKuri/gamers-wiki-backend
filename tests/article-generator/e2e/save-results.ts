@@ -127,6 +127,38 @@ export interface GenerationStats {
    * Combines LLM costs + Search API costs.
    */
   readonly totalCostUsd?: number;
+  /**
+   * Source content usage tracking.
+   * Shows which sources used full text vs summary.
+   */
+  readonly sourceContentUsage?: SourceContentUsageStats;
+}
+
+/** Content type used for a source */
+export type ContentType = 'full' | 'summary' | 'content';
+
+/** Individual source usage tracking */
+export interface SourceUsageItem {
+  readonly url: string;
+  readonly title: string;
+  readonly contentType: ContentType;
+  readonly phase: 'scout' | 'specialist';
+  readonly section?: string;
+  readonly query: string;
+  readonly hasSummary: boolean;
+}
+
+/** Source content usage statistics */
+export interface SourceContentUsageStats {
+  /** Per-source tracking */
+  readonly sources: readonly SourceUsageItem[];
+  /** Summary counts */
+  readonly counts: {
+    readonly total: number;
+    readonly fullText: number;
+    readonly summary: number;
+    readonly contentFallback: number;
+  };
 }
 
 /** Section statistics from markdown */

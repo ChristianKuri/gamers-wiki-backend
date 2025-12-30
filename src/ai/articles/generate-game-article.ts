@@ -65,8 +65,10 @@ import { runFixer, type FixerContext, type FixerDeps } from './fixer';
 import { countContentH2Sections } from './markdown-utils';
 import { withRetry } from './retry';
 import {
+  addSourceUsage,
   addTokenUsage,
   ArticleGenerationError,
+  createEmptySourceContentUsage,
   createEmptyTokenUsage,
   systemClock,
   type AggregatedTokenUsage,
@@ -81,6 +83,7 @@ import {
   type RecoveryMetadata,
   type ScoutOutput,
   type SearchApiCosts,
+  type SourceContentUsage,
   type TokenUsage,
 } from './types';
 import { PhaseTimer } from './phase-timer';
@@ -1023,7 +1026,7 @@ export async function generateGameArticleDraft(
 
   // Track markdown as mutable for Fixer phase
   let currentMarkdown = specialistResult.output.markdown;
-  const { sources, researchPool: finalResearchPool, tokenUsage: specialistTokenUsage } = specialistResult.output;
+  const { sources, researchPool: finalResearchPool, tokenUsage: specialistTokenUsage, sourceUsage: specialistSourceUsage } = specialistResult.output;
 
   // Recovery tracking
   const allFixesApplied: FixApplied[] = [];
@@ -1417,6 +1420,13 @@ export async function generateGameArticleDraft(
   const llmCostUsd = tokenUsage?.actualCostUsd ?? 0;
   const totalEstimatedCostUsd = llmCostUsd + searchApiCosts.totalUsd;
 
+  // Build source content usage tracking (Specialist phase only for now)
+  // TODO: Add Scout phase source tracking in future
+  const sourceContentUsage: SourceContentUsage = addSourceUsage(
+    createEmptySourceContentUsage(),
+    specialistSourceUsage
+  );
+
   // Build immutable metadata for debugging and analytics
   const metadata: ArticleGenerationMetadata = {
     generatedAt: new Date().toISOString(),
@@ -1427,6 +1437,7 @@ export async function generateGameArticleDraft(
     tokenUsage,
     searchApiCosts,
     totalEstimatedCostUsd,
+    sourceContentUsage,
     correlationId,
     researchConfidence: scoutOutput.confidence,
     ...(recovery ? { recovery } : {}),

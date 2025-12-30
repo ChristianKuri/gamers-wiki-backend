@@ -295,6 +295,18 @@ export function extractResearchForQueries(
 // ============================================================================
 
 /**
+ * Raw result item from search API.
+ */
+interface RawSearchResultItem {
+  readonly title: string;
+  readonly url: string;
+  readonly content?: string;
+  /** AI-generated summary (Exa only) */
+  readonly summary?: string;
+  readonly score?: number;
+}
+
+/**
  * Processes raw search results into a CategorizedSearchResult.
  *
  * @param query - The search query
@@ -309,7 +321,7 @@ export function processSearchResults(
   category: SearchCategory,
   rawResults: {
     answer?: string | null;
-    results: readonly { title: string; url: string; content?: string; score?: number }[];
+    results: readonly RawSearchResultItem[];
   },
   searchSource: SearchSource = 'tavily',
   costUsd?: number
@@ -322,6 +334,8 @@ export function processSearchResults(
         title: r.title,
         url: normalized,
         content: r.content ?? '',
+        // Preserve summary if available (Exa only)
+        ...(r.summary ? { summary: r.summary } : {}),
         ...(typeof r.score === 'number' ? { score: r.score } : {}),
       };
     })

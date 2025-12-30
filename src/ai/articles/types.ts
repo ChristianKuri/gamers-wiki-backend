@@ -88,7 +88,19 @@ export function isArticleGenerationError(error: unknown): error is ArticleGenera
 export interface SearchResultItem {
   readonly title: string;
   readonly url: string;
+  /**
+   * Full text content (may be truncated based on API settings).
+   * For Exa: raw page content up to textMaxCharacters.
+   * For Tavily: extracted page content.
+   */
   readonly content: string;
+  /**
+   * AI-generated summary (if available).
+   * For Exa: query-aware summary from Gemini Flash.
+   * For Tavily: not available (use content).
+   * @see https://docs.exa.ai/reference/contents-retrieval#summary-summary-true
+   */
+  readonly summary?: string;
   readonly score?: number;
 }
 
@@ -379,6 +391,87 @@ export function addTavilySearch(
   };
 }
 
+// ============================================================================
+// Source Content Usage Tracking
+// ============================================================================
+
+/**
+ * Content type used for a source in the LLM context.
+ */
+export type ContentType = 'full' | 'summary' | 'content';
+
+/**
+ * Tracking of which content type was used for a single source.
+ */
+export interface SourceUsageItem {
+  readonly url: string;
+  readonly title: string;
+  /** Which content type was used in the LLM context */
+  readonly contentType: ContentType;
+  /** Phase where this source was used */
+  readonly phase: 'scout' | 'specialist';
+  /** Section headline (for specialist phase) */
+  readonly section?: string;
+  /** Search query that returned this source */
+  readonly query: string;
+  /** Whether this source had a summary available */
+  readonly hasSummary: boolean;
+}
+
+/**
+ * Aggregated tracking of source content usage across all phases.
+ */
+export interface SourceContentUsage {
+  /** All sources with their content type usage */
+  readonly sources: readonly SourceUsageItem[];
+  /** Summary counts */
+  readonly counts: {
+    readonly total: number;
+    readonly fullText: number;
+    readonly summary: number;
+    readonly contentFallback: number;
+  };
+}
+
+/**
+ * Creates an empty source content usage tracker.
+ */
+export function createEmptySourceContentUsage(): SourceContentUsage {
+  return {
+    sources: [],
+    counts: {
+      total: 0,
+      fullText: 0,
+      summary: 0,
+      contentFallback: 0,
+    },
+  };
+}
+
+/**
+ * Adds source usage items to the tracker.
+ */
+export function addSourceUsage(
+  usage: SourceContentUsage,
+  items: readonly SourceUsageItem[]
+): SourceContentUsage {
+  const newCounts = { ...usage.counts };
+  for (const item of items) {
+    newCounts.total++;
+    if (item.contentType === 'full') {
+      newCounts.fullText++;
+    } else if (item.contentType === 'summary') {
+      newCounts.summary++;
+    } else {
+      newCounts.contentFallback++;
+    }
+  }
+  return {
+    sources: [...usage.sources, ...items],
+    counts: newCounts,
+  };
+}
+
 /**
  * Creates an empty token usage object.
  */
@@ -476,6 +569,11 @@ export interface ArticleGenerationMetadata {
    * Combines LLM token costs + Search API costs.
    */
   readonly totalEstimatedCostUsd?: number;
+  /**
+   * Tracking of which content type was used for each source.
+   * Shows whether full text or summary was used in the LLM context.
+   */
+  readonly sourceContentUsage?: SourceContentUsage;
   /** Correlation ID for log tracing */
   readonly correlationId: string;
   /** Research confidence level from Scout phase */
