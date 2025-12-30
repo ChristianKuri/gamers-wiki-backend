@@ -118,10 +118,11 @@ export interface ExaSearchOptions {
   readonly useAutoprompt?: boolean;
   /**
    * Maximum characters of text to include per result.
-   * Default: 20000
+   * Default: 50000 (matches CLEANER_CONFIG.MAX_INPUT_CHARS)
    *
-   * A/B Test: Content length has NO cost impact (up to 20,000c tested).
-   * Cost is $0.001/page regardless of length. Use 20,000c for full articles.
+   * A/B Test: Content length has NO cost impact!
+   * Cost is $0.001/page regardless of length.
+   * Long wiki pages can exceed 20k easily - use 50k for full content.
    */
   readonly textMaxCharacters?: number;
   /**
@@ -255,10 +256,11 @@ const MAX_RESULTS = 25;
 const DEFAULT_RESULTS = 10;
 
 // Content length (characters per result)
-// A/B Test: NO cost difference up to 20,000c!
-// Cost is $0.001/page regardless of textMaxCharacters value.
-// 20,000c captures full articles (~3,400 words).
-const DEFAULT_TEXT_MAX_CHARS = 20000;
+// A/B Test: NO cost difference regardless of textMaxCharacters!
+// Cost is $0.001/page whether 20k or 100k characters.
+// Set to 50,000 to match CLEANER_CONFIG.MAX_INPUT_CHARS.
+// Long wiki pages (Fextralife, Game8) can exceed 20k easily.
+const DEFAULT_TEXT_MAX_CHARS = 50000;
 
 // ============================================================================
 // Utility Functions

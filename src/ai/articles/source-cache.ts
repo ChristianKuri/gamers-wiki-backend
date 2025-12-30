@@ -41,7 +41,7 @@ interface SourceContentRow {
   cleaned_content: string;
   original_content_length: number;
   quality_score: number;
-  relevance_score: number;
+  relevance_score: number | null; // null for scrape failures (unknown relevance)
   quality_notes: string | null;
   content_type: string;
   junk_ratio: string; // decimal comes as string from Knex
@@ -49,6 +49,17 @@ interface SourceContentRow {
   last_accessed_at: string | null;
   search_source: 'tavily' | 'exa';
   published_at: string | null;
+}
+
+/**
+ * Minimal source info for scrape failures.
+ * Used to track failed URLs without spending LLM tokens.
+ */
+export interface ScrapeFailureSource {
+  readonly url: string;
+  readonly title: string;
+  readonly originalContentLength: number;
+  readonly searchSource: SearchSource;
 }
 
 /**
@@ -395,6 +406,83 @@ export async function checkSourceCache(
 }
 
 /**
+ * Store scrape failures in the database.
+ * These are URLs where content extraction failed (< MIN_CONTENT_LENGTH chars).
+ * Stores minimal record with qualityScore: 0 and relevanceScore: null.
+ * This prevents re-processing the same URL and enables domain failure tracking.
+ *
+ * @param strapi - Strapi instance
+ * @param failures - Sources that failed to scrape
+ */
+export async function storeScrapeFailures(
+  strapi: Core.Strapi,
+  failures: readonly ScrapeFailureSource[]
+): Promise<void> {
+  if (failures.length === 0) {
+    return;
+  }
+
+  const sourceContentService = getSourceContentService(strapi);
+  const knex = strapi.db.connection;
+  const now = new Date().toISOString();
+  const domainsToUpdate = new Set<string>();
+
+  for (const failure of failures) {
+    const normalizedUrl = normalizeUrl(failure.url);
+    if (!normalizedUrl) continue;
+
+    const domain = extractDomain(normalizedUrl);
+    domainsToUpdate.add(domain);
+
+    try {
+      // Check if already exists (don't count same URL twice)
+      const existing = await knex<SourceContentRow>('source_contents')
+        .where('url', normalizedUrl)
+        .first();
+
+      if (existing) {
+        strapi.log.debug(`[SourceCache] Scrape failure already recorded: ${normalizedUrl}`);
+        continue;
+      }
+
+      // Store minimal record for scrape failure
+      const failureData: Partial<SourceContentDocument> = {
+        url: normalizedUrl,
+        domain,
+        title: failure.title,
+        summary: null,
+        cleanedContent: `[Scrape failed - content too short: ${failure.originalContentLength} chars]`,
+        originalContentLength: failure.originalContentLength,
+        qualityScore: 0, // Known: scrape failed
+        // relevanceScore: null - omitted, we don't know relevance
+        qualityNotes: `Scrape failure: only ${failure.originalContentLength} chars extracted (min: ${CLEANER_CONFIG.MIN_CONTENT_LENGTH})`,
+        contentType: 'scrape_failure',
+        junkRatio: 1, // 100% junk since nothing useful was extracted
+        accessCount: 1,
+        lastAccessedAt: now,
+        searchSource: failure.searchSource,
+      };
+
+      await sourceContentService.create({
+        data: failureData as Partial<SourceContentDocument>,
+      });
+
+      strapi.log.debug(
+        `[SourceCache] Stored scrape failure (${failure.originalContentLength} chars): ${normalizedUrl}`
+      );
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      strapi.log.warn(`[SourceCache] Failed to store scrape failure ${failure.url}: ${message}`);
+    }
+  }
+
+  // Update domain quality for all affected domains
+  for (const domain of domainsToUpdate) {
+    await updateDomainQuality(strapi, domain);
+  }
+}
+
+/**
  * Store cleaned sources in the database.
  * Also updates domain quality aggregates.
  *
@@ -423,13 +511,14 @@ export async function storeCleanedSources(
     // ALWAYS track domain for quality updates (even if we don't store)
     domainsToUpdate.add(source.domain);
 
-    // Check if source meets thresholds for storage
-    const lowQuality = source.qualityScore < CLEANER_CONFIG.MIN_QUALITY_FOR_RESULTS;
+    // Check if source meets thresholds for STORAGE (lower than filtering threshold)
+    // This allows us to track bad-but-not-terrible content for domain quality stats
+    const veryLowQuality = source.qualityScore < CLEANER_CONFIG.MIN_QUALITY_FOR_STORAGE;
     const lowRelevance = source.relevanceScore < CLEANER_CONFIG.MIN_RELEVANCE_FOR_RESULTS;
 
-    if (lowQuality) {
+    if (veryLowQuality) {
       strapi.log.debug(
-        `[SourceCache] Not storing low-quality source (Q:${source.qualityScore} < ${CLEANER_CONFIG.MIN_QUALITY_FOR_RESULTS}): ${source.url}`
+        `[SourceCache] Not storing very-low-quality source (Q:${source.qualityScore} < ${CLEANER_CONFIG.MIN_QUALITY_FOR_STORAGE}): ${source.url}`
       );
     }
 
@@ -439,8 +528,9 @@ export async function storeCleanedSources(
       );
     }
 
-    // Skip storage but we still store a minimal record to track domain quality
-    if (lowQuality || lowRelevance) {
+    // Skip FULL storage only for very low quality or irrelevant content
+    // (quality 20-34 gets full storage so we can track it, but will be filtered from LLM results)
+    if (veryLowQuality || lowRelevance) {
       // Store minimal record for domain quality tracking (no content, saves space)
       try {
         const normalizedUrl = normalizeUrl(source.url);

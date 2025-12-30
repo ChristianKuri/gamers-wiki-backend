@@ -48,7 +48,7 @@
     },
     "relevanceScore": {
       "type": "integer",
-      "required": true,
+      "required": false,
       "min": 0,
       "max": 100
     },

@@ -555,7 +555,36 @@ export async function processSearchResultsWithCleaning(
   let cleaningTokenUsage: TokenUsage = createEmptyTokenUsage();
 
   if (misses.length > 0 && cleanerEnabled) {
-    const sourcesToClean = misses.map((m) => m.raw!);
+    // Filter out content too short to be real (scrape failures)
+    const allMissedSources = misses.map((m) => m.raw!);
+    const sourcesToClean = allMissedSources.filter(
+      (s) => s.content.length > CLEANER_CONFIG.MIN_CONTENT_LENGTH
+    );
+    const scrapeFailures = allMissedSources.filter(
+      (s) => s.content.length <= CLEANER_CONFIG.MIN_CONTENT_LENGTH
+    );
+
+    if (scrapeFailures.length > 0) {
+      logger?.info?.(
+        `Skipping ${scrapeFailures.length} source(s) with content ≤ ${CLEANER_CONFIG.MIN_CONTENT_LENGTH} chars (scrape failures)`
+      );
+
+      // Store scrape failures to track domains and prevent re-processing
+      const { storeScrapeFailures } = await import('./source-cache');
+      storeScrapeFailures(
+        strapi,
+        scrapeFailures.map((s) => ({
+          url: s.url,
+          title: s.title,
+          originalContentLength: s.content.length,
+          searchSource: s.searchSource,
+        }))
+      ).catch((err) => {
+        const message = err instanceof Error ? err.message : String(err);
+        logger?.warn?.(`Failed to store scrape failures: ${message}`);
+      });
+    }
+
     const cleanResult = await cleanSourcesBatch(sourcesToClean, {
       generateObject,
       model,
@@ -566,7 +595,7 @@ export async function processSearchResultsWithCleaning(
     cleanedSources = cleanResult.sources;
     cleaningTokenUsage = cleanResult.tokenUsage;
 
-    cleaningFailures = misses.length - cleanedSources.length;
+    cleaningFailures = sourcesToClean.length - cleanedSources.length;
 
     // Store cleaned sources in DB (fire-and-forget is OK here)
     if (cleanedSources.length > 0) {

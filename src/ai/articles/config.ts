@@ -65,6 +65,7 @@ export const UNIFIED_EXCLUDED_DOMAINS = new Set([
   'moddb.com',
   'www.moddb.com',
   'ersc-docs.github.io', // Mod documentation
+  'err.fandom.com', // Elden Ring Reforged mod wiki (not vanilla game)
 
   // === NOT_VIDEO_GAMES: Speedrunning (too niche for general guides) ===
   'soulsspeedruns.com',
@@ -81,6 +82,8 @@ export const UNIFIED_EXCLUDED_DOMAINS = new Set([
   'gitlab.com',
   'bitbucket.org',
   'openprocessing.org', // Art/coding platform
+  'lunanotes.io', // AI note-taking app
+  'coohom.com', // Interior design platform
 
   // === OFF_TOPIC: Document sharing ===
   'scribd.com',
@@ -616,6 +619,15 @@ export const CLEANER_CONFIG = {
    */
   TIMEOUT_MS: 30000,
   /**
+   * Minimum content length (chars) to attempt cleaning.
+   * Content below this is likely a scrape failure (JS-heavy site, paywall, etc.)
+   * and not worth spending LLM tokens on.
+   * 
+   * Analysis shows all scrape failures are < 200 chars, real content starts at 800+.
+   * 500 is a safe threshold that catches failures with margin for edge cases.
+   */
+  MIN_CONTENT_LENGTH: 500,
+  /**
    * Minimum relevance score for BOTH caching AND filtering.
    * Sources below this are considered off-topic for video games.
    * 70 = strict, ensures content is directly about video games.
@@ -629,8 +641,18 @@ export const CLEANER_CONFIG = {
    */
   MIN_RELEVANCE_FOR_RESULTS: 70,
   /**
-   * Minimum quality score for BOTH caching AND filtering.
-   * Sources with poor quality are neither cached nor passed to AI agents.
+   * Minimum quality score for STORAGE in database.
+   * Sources below this are not stored (except scrape failures with Q:0).
+   * Set to 20 to still track "bad but not terrible" content for domain stats.
+   * 
+   * Lower than MIN_QUALITY_FOR_RESULTS so we can:
+   * 1. Track domain quality even for poor articles
+   * 2. Avoid re-cleaning same bad URLs
+   */
+  MIN_QUALITY_FOR_STORAGE: 20,
+  /**
+   * Minimum quality score for FILTERING results to LLM.
+   * Sources below this are filtered out and not sent to AI agents.
    * 
    * Set to 35 to include truncated fragments from good sources (score ~45)
    * while filtering truly low-quality content (score 15-25).
@@ -910,8 +932,16 @@ function validateConfiguration(): void {
   validatePositive(CLEANER_CONFIG.MAX_OUTPUT_TOKENS, 'CLEANER_CONFIG.MAX_OUTPUT_TOKENS');
   validatePositive(CLEANER_CONFIG.BATCH_SIZE, 'CLEANER_CONFIG.BATCH_SIZE');
   validatePositive(CLEANER_CONFIG.TIMEOUT_MS, 'CLEANER_CONFIG.TIMEOUT_MS');
+  validateNonNegative(CLEANER_CONFIG.MIN_QUALITY_FOR_STORAGE, 'CLEANER_CONFIG.MIN_QUALITY_FOR_STORAGE');
   validateNonNegative(CLEANER_CONFIG.MIN_QUALITY_FOR_RESULTS, 'CLEANER_CONFIG.MIN_QUALITY_FOR_RESULTS');
   validateNonNegative(CLEANER_CONFIG.MIN_RELEVANCE_FOR_RESULTS, 'CLEANER_CONFIG.MIN_RELEVANCE_FOR_RESULTS');
+
+  // Ensure storage threshold <= filtering threshold (makes sense: store more than we show)
+  if (CLEANER_CONFIG.MIN_QUALITY_FOR_STORAGE > CLEANER_CONFIG.MIN_QUALITY_FOR_RESULTS) {
+    throw new Error(
+      `MIN_QUALITY_FOR_STORAGE (${CLEANER_CONFIG.MIN_QUALITY_FOR_STORAGE}) cannot be higher than MIN_QUALITY_FOR_RESULTS (${CLEANER_CONFIG.MIN_QUALITY_FOR_RESULTS})`
+    );
+  }
   validateNonNegative(CLEANER_CONFIG.AUTO_EXCLUDE_THRESHOLD, 'CLEANER_CONFIG.AUTO_EXCLUDE_THRESHOLD');
   validatePositive(CLEANER_CONFIG.AUTO_EXCLUDE_MIN_SAMPLES, 'CLEANER_CONFIG.AUTO_EXCLUDE_MIN_SAMPLES');
   validatePositive(CLEANER_CONFIG.MAX_INPUT_CHARS, 'CLEANER_CONFIG.MAX_INPUT_CHARS');
