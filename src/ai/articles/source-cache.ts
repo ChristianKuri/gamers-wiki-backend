@@ -117,16 +117,85 @@ function getDomainQualityService(strapi: Core.Strapi): StrapiDocumentService<Dom
 }
 
 // ============================================================================
+// Domain Exclusion
+// ============================================================================
+
+/**
+ * Check if a domain is excluded (either hardcoded or in DB).
+ * 
+ * @param domain - Domain to check (without www prefix)
+ * @param strapi - Optional Strapi instance for DB check
+ * @returns true if domain should be excluded
+ */
+export async function isDomainExcluded(
+  domain: string,
+  strapi?: Core.Strapi
+): Promise<boolean> {
+  // Check hardcoded list first (fast)
+  if (CLEANER_CONFIG.EXCLUDED_DOMAINS.has(domain)) {
+    return true;
+  }
+  
+  // Also check with www prefix
+  if (CLEANER_CONFIG.EXCLUDED_DOMAINS.has(`www.${domain}`)) {
+    return true;
+  }
+  
+  // Check DB if strapi is available
+  if (strapi) {
+    const domainQuality = await getDomainQuality(strapi, domain);
+    if (domainQuality?.isExcluded) {
+      return true;
+    }
+  }
+  
+  return false;
+}
+
+/**
+ * Get excluded domains from DB.
+ * Returns set of domain names that are marked as excluded.
+ * 
+ * @param strapi - Strapi instance
+ * @param domains - Domains to check
+ * @returns Set of excluded domain names
+ */
+async function getExcludedDomainsFromDb(
+  strapi: Core.Strapi,
+  domains: readonly string[]
+): Promise<Set<string>> {
+  if (domains.length === 0) {
+    return new Set();
+  }
+  
+  const knex = strapi.db.connection;
+  
+  try {
+    const rows = await knex<{ domain: string }>('domain_qualities')
+      .whereIn('domain', domains)
+      .andWhere('is_excluded', true)
+      .select('domain');
+    
+    return new Set(rows.map((r) => r.domain));
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    strapi.log.warn(`[SourceCache] Failed to check excluded domains: ${message}`);
+    return new Set();
+  }
+}
+
+// ============================================================================
 // Cache Operations
 // ============================================================================
 
 /**
  * Check cache for multiple URLs in parallel.
  * Returns cache hits and misses with their data.
+ * Filters out sources from excluded domains (hardcoded + DB).
  *
  * @param strapi - Strapi instance
  * @param rawSources - Raw sources to check
- * @returns Array of cache check results
+ * @returns Array of cache check results (excluded domains return hit=false, raw=null)
  */
 export async function checkSourceCache(
   strapi: Core.Strapi,
@@ -136,30 +205,64 @@ export async function checkSourceCache(
     return [];
   }
 
-  // Normalize URLs for lookup
-  const normalizedUrls = rawSources.map((s) => ({
-    original: s,
-    normalized: normalizeUrl(s.url),
-  }));
+  // Normalize URLs and extract domains
+  const normalizedUrls = rawSources.map((s) => {
+    const normalized = normalizeUrl(s.url);
+    const domain = normalized ? extractDomain(normalized) : '';
+    return {
+      original: s,
+      normalized,
+      domain,
+    };
+  });
 
   // Filter out invalid URLs
   const validUrls = normalizedUrls.filter((u) => u.normalized !== null);
+  
+  // Get unique domains to check for exclusion
+  const uniqueDomains = [...new Set(validUrls.map((u) => u.domain).filter(Boolean))];
+  
+  // Check hardcoded exclusions
+  const hardcodedExcluded = new Set(
+    uniqueDomains.filter((d) => 
+      CLEANER_CONFIG.EXCLUDED_DOMAINS.has(d) || 
+      CLEANER_CONFIG.EXCLUDED_DOMAINS.has(`www.${d}`)
+    )
+  );
+  
+  // Check DB exclusions for non-hardcoded domains
+  const domainsToCheckInDb = uniqueDomains.filter((d) => !hardcodedExcluded.has(d));
+  const dbExcluded = await getExcludedDomainsFromDb(strapi, domainsToCheckInDb);
+  
+  // Combine all excluded domains
+  const allExcluded = new Set([...hardcodedExcluded, ...dbExcluded]);
+  
+  // Log excluded domains if any
+  if (allExcluded.size > 0) {
+    strapi.log.debug(`[SourceCache] Excluding ${allExcluded.size} domain(s): ${[...allExcluded].join(', ')}`);
+  }
+  
+  // Filter out excluded domains from valid URLs
+  const nonExcludedUrls = validUrls.filter((u) => !allExcluded.has(u.domain));
 
-  if (validUrls.length === 0) {
-    return rawSources.map((raw) => ({
-      url: raw.url,
+  // If no valid non-excluded URLs, return early
+  if (nonExcludedUrls.length === 0) {
+    // Return all as misses with raw=null for excluded domains
+    return normalizedUrls.map((u) => ({
+      url: u.original.url,
       hit: false,
-      raw,
+      // If domain is excluded, don't include raw (prevents cleaning attempt)
+      raw: u.domain && allExcluded.has(u.domain) ? undefined : u.original,
     }));
   }
 
-  // Query database for all URLs at once
+  // Query database for non-excluded URLs only
   // Using raw Knex query for efficiency (document service doesn't support $in)
   const knex = strapi.db.connection;
   const cachedRows = await knex<SourceContentRow>('source_contents')
     .whereIn(
       'url',
-      validUrls.map((u) => u.normalized)
+      nonExcludedUrls.map((u) => u.normalized)
     )
     .andWhereNot('published_at', null)
     .select('*');
@@ -187,7 +290,7 @@ export async function checkSourceCache(
   }
 
   // Update access count for cache hits (fire-and-forget)
-  const hitUrls = validUrls
+  const hitUrls = nonExcludedUrls
     .filter((u) => u.normalized && cachedMap.has(u.normalized))
     .map((u) => u.normalized);
 
@@ -204,11 +307,18 @@ export async function checkSourceCache(
       });
   }
 
-  // Build results
+  // Build results - excluded domains return hit=false with no raw (skip processing)
   return rawSources.map((raw) => {
     const normalized = normalizeUrl(raw.url);
     if (!normalized) {
       return { url: raw.url, hit: false, raw };
+    }
+    
+    // Check if this domain is excluded
+    const domain = extractDomain(normalized);
+    if (allExcluded.has(domain)) {
+      // Excluded domain - return as miss with no raw data (won't attempt cleaning)
+      return { url: raw.url, hit: false };
     }
 
     const cached = cachedMap.get(normalized);

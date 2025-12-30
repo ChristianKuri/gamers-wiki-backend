@@ -548,6 +548,19 @@ export const FIXER_CONFIG = {
 // Cleaner Agent Configuration
 // ============================================================================
 
+/**
+ * Check if cleaner is enabled via env variable or config.
+ * Env variable ARTICLE_CLEANER_ENABLED overrides config.
+ * Set to 'false' to disable cleaning (use raw content + cache only).
+ */
+function isCleanerEnabled(): boolean {
+  const envValue = process.env.ARTICLE_CLEANER_ENABLED;
+  if (envValue !== undefined) {
+    return envValue.toLowerCase() !== 'false' && envValue !== '0';
+  }
+  return false; // Default disabled
+}
+
 export const CLEANER_CONFIG = {
   /**
    * Temperature for Cleaner LLM calls.
@@ -596,10 +609,51 @@ export const CLEANER_CONFIG = {
    */
   MIN_CLEANED_CHARS: 100,
   /**
-   * Whether the cleaner is enabled.
-   * Set to false to bypass cleaning entirely (use raw content).
+   * Whether the cleaner LLM is enabled.
+   * When false, only checks DB cache - doesn't run LLM on misses.
+   * Override with env var ARTICLE_CLEANER_ENABLED=false
    */
-  ENABLED: true,
+  get ENABLED(): boolean {
+    return isCleanerEnabled();
+  },
+  /**
+   * Hardcoded list of domains to always exclude.
+   * These domains consistently return irrelevant content.
+   * DB exclusions are checked separately and combined with this list.
+   */
+  EXCLUDED_DOMAINS: new Set([
+    // Mod sites - not relevant for game guides
+    'nexusmods.com',
+    'www.nexusmods.com',
+    'moddb.com',
+    'www.moddb.com',
+    
+    // Speedrunning/technical - too niche
+    'soulsspeedruns.com',
+    'speedrun.com',
+    
+    // Mod documentation
+    'ersc-docs.github.io',
+    
+    // Steam community (discussions are low quality)
+    'steamcommunity.com',
+    
+    // Completely irrelevant domains (search gone wrong)
+    'flask.palletsprojects.com',
+    'docs.python.org',
+    'stackoverflow.com',
+    'github.com',
+    'gitlab.com',
+    'bitbucket.org',
+    
+    // Social media (generally low signal)
+    'twitter.com',
+    'x.com',
+    'facebook.com',
+    
+    // Forums that are too noisy
+    'gamefaqs.gamespot.com', // Use specific game guides instead
+  ]),
   /**
    * Quality score thresholds for domain tiers.
    */

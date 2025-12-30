@@ -12,6 +12,7 @@
 import type { Core } from '@strapi/strapi';
 import type { LanguageModel } from 'ai';
 
+import { CLEANER_CONFIG } from './config';
 import type { Logger } from '../../utils/logger';
 import {
   createEmptyTokenUsage,
@@ -498,19 +499,21 @@ export async function processSearchResultsWithCleaning(
   const misses = cacheResults.filter((r) => !r.hit && r.raw);
 
   // Log cache status
-  const { logger } = cleaningDeps;
+  const cleanerEnabled = CLEANER_CONFIG.ENABLED;
+  
   if (hits.length > 0 || misses.length > 0) {
-    logger?.debug?.(
-      `Source cache: ${hits.length} hits, ${misses.length} misses for "${query.slice(0, 40)}..."`
+    logger?.info?.(
+      `Source cache: ${hits.length} hits, ${misses.length} misses for "${query.slice(0, 40)}..."` +
+      (cleanerEnabled ? '' : ' (cleaner disabled, using raw content for misses)')
     );
   }
 
-  // Clean uncached sources
+  // Clean uncached sources (only if cleaner is enabled)
   let cleanedSources: CleanedSource[] = [];
   let cleaningFailures = 0;
   let cleaningTokenUsage: TokenUsage = createEmptyTokenUsage();
 
-  if (misses.length > 0) {
+  if (misses.length > 0 && cleanerEnabled) {
     const sourcesToClean = misses.map((m) => m.raw!);
     const cleanResult = await cleanSourcesBatch(sourcesToClean, {
       generateObject,
@@ -531,6 +534,9 @@ export async function processSearchResultsWithCleaning(
         logger?.warn?.(`Failed to store cleaned sources: ${message}`);
       });
     }
+  } else if (misses.length > 0 && !cleanerEnabled) {
+    // Log that we're skipping cleaning
+    logger?.debug?.(`Skipping cleaning for ${misses.length} sources (cleaner disabled)`);
   }
 
   // Build lookup maps for merging
