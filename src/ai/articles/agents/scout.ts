@@ -46,6 +46,7 @@ import {
   createEmptyTokenUsage,
   createTokenUsageFromResult,
   type CategorizedSearchResult,
+  type FilteredSourceSummary,
   type GameArticleContext,
   type ResearchConfidence,
   type ResearchPool,
@@ -64,14 +65,16 @@ export { SCOUT_CONFIG } from '../config';
 // ============================================================================
 
 /**
- * Extended search result that includes cleaning token usage.
- * Used to track LLM costs from content cleaning operations.
+ * Extended search result that includes cleaning token usage and filtered sources.
+ * Used to track LLM costs from content cleaning operations and quality filtering.
  */
 export interface ScoutSearchResult {
   /** The categorized search result */
   readonly result: CategorizedSearchResult;
   /** Token usage from cleaning operations (if any) */
   readonly cleaningTokenUsage: TokenUsage;
+  /** Sources filtered out due to low quality or relevance */
+  readonly filteredSources: readonly FilteredSourceSummary[];
 }
 
 /**
@@ -153,6 +156,10 @@ export async function executeSearch(
   category: CategorizedSearchResult['category'],
   options: ExecuteSearchOptions
 ): Promise<ScoutSearchResult> {
+  // Use excluded domains from cleaningDeps if available (includes DB exclusions),
+  // otherwise fall back to static config list
+  const excludeDomains = options.cleaningDeps?.excludedDomains ?? [...SCOUT_CONFIG.EXA_EXCLUDE_DOMAINS];
+
   const result = await withRetry(
     () =>
       search(query, {
@@ -161,8 +168,7 @@ export async function executeSearch(
         includeAnswer: true,
         // Request raw content for cleaning (full page text)
         includeRawContent: Boolean(options.cleaningDeps),
-        // Exclude YouTube - video pages have no useful text content
-        excludeDomains: [...SCOUT_CONFIG.EXA_EXCLUDE_DOMAINS],
+        excludeDomains,
       }),
     { context: `Scout search (${category}): "${query.slice(0, 40)}..."`, signal: options.signal }
   );
@@ -180,6 +186,7 @@ export async function executeSearch(
     return {
       result: cleaningResult.result,
       cleaningTokenUsage: cleaningResult.cleaningTokenUsage,
+      filteredSources: cleaningResult.filteredSources,
     };
   }
 
@@ -187,6 +194,7 @@ export async function executeSearch(
   return {
     result: processSearchResults(query, category, result, 'tavily', result.costUsd),
     cleaningTokenUsage: createEmptyTokenUsage(),
+    filteredSources: [],
   };
 }
 
@@ -206,6 +214,10 @@ export async function executeExaSearch(
   category: CategorizedSearchResult['category'],
   options: ExecuteExaSearchOptions = {}
 ): Promise<ScoutSearchResult> {
+  // Use excluded domains from cleaningDeps if available (includes DB exclusions),
+  // otherwise fall back to static config list
+  const excludeDomains = options.cleaningDeps?.excludedDomains ?? [...SCOUT_CONFIG.EXA_EXCLUDE_DOMAINS];
+
   const exaOptions: ExaSearchOptions = {
     numResults: options.numResults ?? SCOUT_CONFIG.CATEGORY_SEARCH_RESULTS,
     // Use default from exa.ts (neural) - 4x faster, same cost
@@ -214,8 +226,7 @@ export async function executeExaSearch(
     useAutoprompt: true,
     // Summary disabled - adds 8-16s latency, use full content instead
     includeSummary: SCOUT_CONFIG.EXA_INCLUDE_SUMMARY,
-    // Exclude YouTube - video pages have no useful text content
-    excludeDomains: [...SCOUT_CONFIG.EXA_EXCLUDE_DOMAINS],
+    excludeDomains,
     // Additional query variations for better coverage (deep search feature)
     ...(options.additionalQueries && options.additionalQueries.length > 0
       ? { additionalQueries: options.additionalQueries }
@@ -260,6 +271,7 @@ export async function executeExaSearch(
     return {
       result: cleaningResult.result,
       cleaningTokenUsage: cleaningResult.cleaningTokenUsage,
+      filteredSources: cleaningResult.filteredSources,
     };
   }
 
@@ -268,6 +280,7 @@ export async function executeExaSearch(
   return {
     result: processSearchResults(query, category, rawResults, 'exa' as SearchSource, costUsd),
     cleaningTokenUsage: createEmptyTokenUsage(),
+    filteredSources: [],
   };
 }
 
@@ -528,6 +541,7 @@ export function calculateResearchConfidence(
  * @param confidence - Research confidence level
  * @param searchApiCosts - Aggregated search API costs
  * @param cleaningTokenUsage - Optional cleaning token usage (tracked separately)
+ * @param filteredSources - Sources filtered out due to low quality or relevance
  * @returns Complete ScoutOutput
  */
 export function assembleScoutOutput(
@@ -539,7 +553,8 @@ export function assembleScoutOutput(
   tokenUsage: TokenUsage,
   confidence: ResearchConfidence,
   searchApiCosts: SearchApiCosts,
-  cleaningTokenUsage?: TokenUsage
+  cleaningTokenUsage?: TokenUsage,
+  filteredSources: readonly FilteredSourceSummary[] = []
 ): ScoutOutput {
   const output: ScoutOutput = {
     briefing: {
@@ -553,6 +568,7 @@ export function assembleScoutOutput(
     tokenUsage,
     confidence,
     searchApiCosts,
+    filteredSources,
   };
 
   // Only include cleaningTokenUsage if there was actual cleaning
@@ -729,6 +745,23 @@ export async function runScout(
     );
   }
 
+  // ===== AGGREGATE FILTERED SOURCES =====
+  // Collect all sources that were filtered out due to low quality or relevance
+  const allFilteredSources: FilteredSourceSummary[] = [];
+  for (const searchResult of [...tavilyResults, ...exaResults]) {
+    allFilteredSources.push(...searchResult.filteredSources);
+  }
+
+  if (allFilteredSources.length > 0) {
+    const byReason = {
+      lowRelevance: allFilteredSources.filter((s) => s.reason === 'low_relevance').length,
+      lowQuality: allFilteredSources.filter((s) => s.reason === 'low_quality').length,
+    };
+    log.info(
+      `Filtered ${allFilteredSources.length} source(s): ${byReason.lowRelevance} low-relevance, ${byReason.lowQuality} low-quality`
+    );
+  }
+
   // ===== AGGREGATE SEARCH API COSTS =====
   let searchApiCosts = createEmptySearchApiCosts();
 
@@ -896,7 +929,8 @@ export async function runScout(
     tokenUsage,
     confidence,
     searchApiCosts,
-    cleaningTokenUsage
+    cleaningTokenUsage,
+    allFilteredSources
   );
 }
 

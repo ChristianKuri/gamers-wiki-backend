@@ -41,6 +41,7 @@ interface SourceContentRow {
   cleaned_content: string;
   original_content_length: number;
   quality_score: number;
+  relevance_score: number;
   quality_notes: string | null;
   content_type: string;
   junk_ratio: string; // decimal comes as string from Knex
@@ -58,6 +59,7 @@ interface DomainQualityRow {
   document_id: string;
   domain: string;
   avg_quality_score: string; // decimal comes as string from Knex
+  avg_relevance_score: string; // decimal comes as string from Knex
   total_sources: number;
   tier: DomainTier;
   is_excluded: boolean;
@@ -121,6 +123,50 @@ function getDomainQualityService(strapi: Core.Strapi): StrapiDocumentService<Dom
 // ============================================================================
 
 /**
+ * Get ALL excluded domains (static hardcoded + database auto-excluded).
+ * This is the SINGLE SOURCE OF TRUTH for domain exclusions.
+ * Use this for Exa/Tavily excludeDomains parameter.
+ * 
+ * @param strapi - Strapi instance for DB access
+ * @returns Array of domain strings to exclude from searches
+ */
+export async function getAllExcludedDomains(strapi: Core.Strapi): Promise<readonly string[]> {
+  // Start with static hardcoded list
+  const allExcluded = new Set<string>(CLEANER_CONFIG.EXCLUDED_DOMAINS);
+  
+  // Add all DB-excluded domains
+  const dbExcluded = await getAllExcludedDomainsFromDb(strapi);
+  for (const domain of dbExcluded) {
+    allExcluded.add(domain);
+  }
+  
+  return [...allExcluded];
+}
+
+/**
+ * Get ALL excluded domains from DB (not filtered by input list).
+ * Returns all domains marked as excluded in the database.
+ * 
+ * @param strapi - Strapi instance
+ * @returns Set of excluded domain names
+ */
+async function getAllExcludedDomainsFromDb(strapi: Core.Strapi): Promise<Set<string>> {
+  const knex = strapi.db.connection;
+  
+  try {
+    const rows = await knex<{ domain: string }>('domain_qualities')
+      .where('is_excluded', true)
+      .select('domain');
+    
+    return new Set(rows.map((r) => r.domain));
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    strapi.log.warn(`[SourceCache] Failed to fetch all excluded domains: ${message}`);
+    return new Set();
+  }
+}
+
+/**
  * Check if a domain is excluded (either hardcoded or in DB).
  * 
  * @param domain - Domain to check (without www prefix)
@@ -153,7 +199,7 @@ export async function isDomainExcluded(
 }
 
 /**
- * Get excluded domains from DB.
+ * Get excluded domains from DB for a specific list of domains.
  * Returns set of domain names that are marked as excluded.
  * 
  * @param strapi - Strapi instance
@@ -280,6 +326,7 @@ export async function checkSourceCache(
       cleanedContent: row.cleaned_content,
       originalContentLength: row.original_content_length,
       qualityScore: row.quality_score,
+      relevanceScore: row.relevance_score ?? 100, // Default to 100 for legacy data
       qualityNotes: row.quality_notes,
       contentType: row.content_type,
       junkRatio: parseFloat(row.junk_ratio),
@@ -334,6 +381,7 @@ export async function checkSourceCache(
           cleanedContent: cached.cleanedContent,
           originalContentLength: cached.originalContentLength,
           qualityScore: cached.qualityScore,
+          relevanceScore: cached.relevanceScore,
           qualityNotes: cached.qualityNotes ?? '',
           contentType: cached.contentType,
           junkRatio: cached.junkRatio,
@@ -367,15 +415,73 @@ export async function storeCleanedSources(
   const knex = strapi.db.connection;
   const now = new Date().toISOString();
 
-  // Track domains for quality updates
+  // Track ALL domains for quality updates (even sources we don't store)
+  // This ensures auto-exclusion works after 5 bad articles
   const domainsToUpdate = new Set<string>();
 
   for (const source of cleanedSources) {
-    // Skip low-quality content
-    if (source.qualityScore < CLEANER_CONFIG.MIN_QUALITY_FOR_CACHE) {
+    // ALWAYS track domain for quality updates (even if we don't store)
+    domainsToUpdate.add(source.domain);
+
+    // Check if source meets thresholds for storage
+    const lowQuality = source.qualityScore < CLEANER_CONFIG.MIN_QUALITY_FOR_RESULTS;
+    const lowRelevance = source.relevanceScore < CLEANER_CONFIG.MIN_RELEVANCE_FOR_RESULTS;
+
+    if (lowQuality) {
       strapi.log.debug(
-        `[SourceCache] Skipping low-quality source (${source.qualityScore}): ${source.url}`
+        `[SourceCache] Not storing low-quality source (Q:${source.qualityScore} < ${CLEANER_CONFIG.MIN_QUALITY_FOR_RESULTS}): ${source.url}`
       );
+    }
+
+    if (lowRelevance) {
+      strapi.log.debug(
+        `[SourceCache] Not storing low-relevance source (R:${source.relevanceScore} < ${CLEANER_CONFIG.MIN_RELEVANCE_FOR_RESULTS}): ${source.url}`
+      );
+    }
+
+    // Skip storage but we still store a minimal record to track domain quality
+    if (lowQuality || lowRelevance) {
+      // Store minimal record for domain quality tracking (no content, saves space)
+      try {
+        const normalizedUrl = normalizeUrl(source.url);
+        if (!normalizedUrl) continue;
+
+        // Check if already exists
+        const existing = await knex<SourceContentRow>('source_contents')
+          .where('url', normalizedUrl)
+          .first();
+
+        if (!existing) {
+          // Store minimal record without full content (for domain tracking)
+          const minimalData: Partial<SourceContentDocument> = {
+            url: normalizedUrl,
+            domain: source.domain,
+            title: source.title,
+            summary: source.summary ?? null,
+            cleanedContent: '[Content not stored - below quality/relevance threshold]',
+            originalContentLength: source.originalContentLength,
+            qualityScore: source.qualityScore,
+            relevanceScore: source.relevanceScore,
+            qualityNotes: source.qualityNotes,
+            contentType: source.contentType,
+            junkRatio: source.junkRatio,
+            accessCount: 1,
+            lastAccessedAt: now,
+            searchSource: source.searchSource,
+          };
+
+          await sourceContentService.create({
+            data: minimalData as Partial<SourceContentDocument>,
+          });
+
+          strapi.log.debug(
+            `[SourceCache] Stored minimal record for domain tracking (Q:${source.qualityScore}, R:${source.relevanceScore}): ${normalizedUrl}`
+          );
+        }
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        strapi.log.warn(`[SourceCache] Failed to store minimal record ${source.url}: ${message}`);
+      }
       continue;
     }
 
@@ -396,7 +502,7 @@ export async function storeCleanedSources(
         continue;
       }
 
-      // Create new source content entry
+      // Create new source content entry with full content
       const createData: Partial<SourceContentDocument> = {
         url: normalizedUrl,
         domain: source.domain,
@@ -405,6 +511,7 @@ export async function storeCleanedSources(
         cleanedContent: source.cleanedContent,
         originalContentLength: source.originalContentLength,
         qualityScore: source.qualityScore,
+        relevanceScore: source.relevanceScore,
         qualityNotes: source.qualityNotes,
         contentType: source.contentType,
         junkRatio: source.junkRatio,
@@ -437,17 +544,15 @@ export async function storeCleanedSources(
       }
 
       strapi.log.debug(
-        `[SourceCache] Stored source (score: ${source.qualityScore}): ${normalizedUrl}`
+        `[SourceCache] Stored source with content (Q:${source.qualityScore}, R:${source.relevanceScore}): ${normalizedUrl}`
       );
-
-      domainsToUpdate.add(source.domain);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       strapi.log.warn(`[SourceCache] Failed to store source ${source.url}: ${message}`);
     }
   }
 
-  // Update domain quality aggregates
+  // Update domain quality aggregates for ALL domains (including bad ones)
   for (const domain of domainsToUpdate) {
     await updateDomainQuality(strapi, domain);
   }
@@ -569,6 +674,7 @@ function inferDomainType(domain: string): string {
  */
 interface DomainStats {
   avg_score: string | null;
+  avg_relevance: string | null;
   total_sources: string;
 }
 
@@ -590,6 +696,7 @@ export async function updateDomainQuality(strapi: Core.Strapi, domain: string): 
       .andWhereNot('published_at', null)
       .select(
         knex.raw('AVG(quality_score) as avg_score'),
+        knex.raw('AVG(relevance_score) as avg_relevance'),
         knex.raw('COUNT(*) as total_sources')
       )
       .first();
@@ -597,6 +704,7 @@ export async function updateDomainQuality(strapi: Core.Strapi, domain: string): 
     // Raw SQL results need explicit typing
     const stats: DomainStats | undefined = statsResult ? {
       avg_score: (statsResult as Record<string, unknown>).avg_score as string | null,
+      avg_relevance: (statsResult as Record<string, unknown>).avg_relevance as string | null,
       total_sources: String((statsResult as Record<string, unknown>).total_sources ?? '0'),
     } : undefined;
 
@@ -605,14 +713,29 @@ export async function updateDomainQuality(strapi: Core.Strapi, domain: string): 
     }
 
     const avgScore = parseFloat(stats.avg_score ?? '0') || 0;
+    const avgRelevance = parseFloat(stats.avg_relevance ?? '0') || 0;
     const totalSources = parseInt(stats.total_sources, 10) || 0;
     const tier = calculateTier(avgScore);
     const domainType = inferDomainType(domain);
 
-    // Check for auto-exclusion
-    const shouldExclude =
-      avgScore < CLEANER_CONFIG.AUTO_EXCLUDE_THRESHOLD &&
-      totalSources >= CLEANER_CONFIG.AUTO_EXCLUDE_MIN_SAMPLES;
+    // Check for auto-exclusion (low quality OR low relevance)
+    const lowQuality = avgScore < CLEANER_CONFIG.AUTO_EXCLUDE_THRESHOLD;
+    const lowRelevance = avgRelevance < CLEANER_CONFIG.AUTO_EXCLUDE_RELEVANCE_THRESHOLD;
+    const hasSufficientSamples = totalSources >= CLEANER_CONFIG.AUTO_EXCLUDE_MIN_SAMPLES;
+    const shouldExclude = hasSufficientSamples && (lowQuality || lowRelevance);
+    
+    // Build exclude reason
+    let excludeReason: string | null = null;
+    if (shouldExclude) {
+      const reasons: string[] = [];
+      if (lowQuality) {
+        reasons.push(`quality ${avgScore.toFixed(1)} < ${CLEANER_CONFIG.AUTO_EXCLUDE_THRESHOLD}`);
+      }
+      if (lowRelevance) {
+        reasons.push(`relevance ${avgRelevance.toFixed(1)} < ${CLEANER_CONFIG.AUTO_EXCLUDE_RELEVANCE_THRESHOLD}`);
+      }
+      excludeReason = `Auto-excluded: ${reasons.join(', ')} (${totalSources} samples)`;
+    }
 
     // Check if domain quality record exists
     const existing = await knex<DomainQualityRow>('domain_qualities')
@@ -625,12 +748,11 @@ export async function updateDomainQuality(strapi: Core.Strapi, domain: string): 
         .where('id', existing.id)
         .update({
           avg_quality_score: avgScore,
+          avg_relevance_score: avgRelevance,
           total_sources: totalSources,
           tier,
           is_excluded: shouldExclude,
-          exclude_reason: shouldExclude
-            ? `Auto-excluded: avg score ${avgScore.toFixed(1)} below threshold (${CLEANER_CONFIG.AUTO_EXCLUDE_THRESHOLD}) with ${totalSources} samples`
-            : null,
+          exclude_reason: excludeReason,
           domain_type: domainType,
           updated_at: new Date().toISOString(),
         });
@@ -640,12 +762,11 @@ export async function updateDomainQuality(strapi: Core.Strapi, domain: string): 
         data: {
           domain,
           avgQualityScore: avgScore,
+          avgRelevanceScore: avgRelevance,
           totalSources,
           tier,
           isExcluded: shouldExclude,
-          excludeReason: shouldExclude
-            ? `Auto-excluded: avg score ${avgScore.toFixed(1)} below threshold (${CLEANER_CONFIG.AUTO_EXCLUDE_THRESHOLD}) with ${totalSources} samples`
-            : null,
+          excludeReason: excludeReason,
           domainType,
         } as Partial<DomainQualityDocument>,
       });
@@ -653,7 +774,7 @@ export async function updateDomainQuality(strapi: Core.Strapi, domain: string): 
 
     if (shouldExclude) {
       strapi.log.info(
-        `[SourceCache] Auto-excluded domain: ${domain} (avg: ${avgScore.toFixed(1)}, samples: ${totalSources})`
+        `[SourceCache] Auto-excluded domain: ${domain} (quality: ${avgScore.toFixed(1)}, relevance: ${avgRelevance.toFixed(1)}, samples: ${totalSources})`
       );
     }
   } catch (err) {
@@ -714,6 +835,7 @@ export async function getDomainQuality(
       documentId: row.document_id,
       domain: row.domain,
       avgQualityScore: parseFloat(row.avg_quality_score) || 0,
+      avgRelevanceScore: parseFloat(row.avg_relevance_score) || 0,
       totalSources: row.total_sources,
       tier: row.tier,
       isExcluded: row.is_excluded,

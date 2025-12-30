@@ -391,10 +391,43 @@ export interface CleaningDeps {
   readonly logger?: Logger;
   /** AbortSignal for cancellation */
   readonly signal?: AbortSignal;
+  /**
+   * Pre-fetched excluded domains (static + database).
+   * If not provided, only static exclusions are used at search time.
+   * Call getAllExcludedDomains(strapi) to populate this.
+   */
+  readonly excludedDomains?: readonly string[];
+  /**
+   * Override minimum relevance score for filtering.
+   * Default: CLEANER_CONFIG.MIN_RELEVANCE_FOR_RESULTS (70)
+   * Use lower values (e.g., 50) for searches that include tangential content
+   * like gaming gear, hardware reviews, esports, etc.
+   */
+  readonly minRelevanceOverride?: number;
+  /**
+   * Override minimum quality score for filtering.
+   * Default: CLEANER_CONFIG.MIN_QUALITY_FOR_RESULTS (35)
+   */
+  readonly minQualityOverride?: number;
   /** Game name for relevance scoring */
   readonly gameName?: string;
   /** Game document ID for linking sources */
   readonly gameDocumentId?: string | null;
+}
+
+/**
+ * A source that was filtered out due to low quality or relevance.
+ */
+export interface FilteredSource {
+  readonly url: string;
+  readonly domain: string;
+  readonly title: string;
+  readonly qualityScore: number;
+  readonly relevanceScore: number;
+  /** Reason for filtering */
+  readonly reason: 'low_relevance' | 'low_quality' | 'excluded_domain';
+  /** Human-readable details */
+  readonly details: string;
 }
 
 /**
@@ -411,6 +444,8 @@ export interface CleanedSearchProcessingResult {
   readonly cleaningFailures: number;
   /** Token usage from cleaning operations (LLM calls) */
   readonly cleaningTokenUsage: TokenUsage;
+  /** Sources filtered out due to low quality or relevance */
+  readonly filteredSources: readonly FilteredSource[];
 }
 
 /**
@@ -458,6 +493,7 @@ export async function processSearchResultsWithCleaning(
       cacheMisses: 0,
       cleaningFailures: 0,
       cleaningTokenUsage: createEmptyTokenUsage(),
+      filteredSources: [],
     };
   }
 
@@ -465,7 +501,11 @@ export async function processSearchResultsWithCleaning(
   const { cleanSourcesBatch } = await import('./agents/cleaner');
   const { checkSourceCache, storeCleanedSources } = await import('./source-cache');
 
-  const { strapi, generateObject, model, logger, signal, gameName, gameDocumentId } = cleaningDeps;
+  const { strapi, generateObject, model, logger, signal, gameName, gameDocumentId, minRelevanceOverride, minQualityOverride } = cleaningDeps;
+
+  // Use overrides if provided, otherwise fall back to config defaults
+  const minRelevance = minRelevanceOverride ?? CLEANER_CONFIG.MIN_RELEVANCE_FOR_RESULTS;
+  const minQuality = minQualityOverride ?? CLEANER_CONFIG.MIN_QUALITY_FOR_RESULTS;
 
   // Build raw source inputs
   const rawSources: RawSourceInput[] = rawResults.results
@@ -488,6 +528,7 @@ export async function processSearchResultsWithCleaning(
       cacheMisses: 0,
       cleaningFailures: 0,
       cleaningTokenUsage: createEmptyTokenUsage(),
+      filteredSources: [],
     };
   }
 
@@ -552,7 +593,11 @@ export async function processSearchResultsWithCleaning(
     cleanedByUrl.set(cleaned.url, cleaned);
   }
 
+  // Track filtered sources for logging and result tracking
+  const filteredSources: FilteredSource[] = [];
+
   // Build final result items, using cleaned content when available
+  // Filter out sources with low relevance OR low quality
   const processedResults: SearchResultItem[] = rawResults.results
     .map((r) => {
       const normalized = normalizeUrl(r.url);
@@ -564,6 +609,34 @@ export async function processSearchResultsWithCleaning(
       const cleanedSource = cached || cleaned;
 
       if (cleanedSource) {
+        // Check relevance score - filter out irrelevant content
+        if (cleanedSource.relevanceScore < minRelevance) {
+          filteredSources.push({
+            url: normalized,
+            domain: cleanedSource.domain,
+            title: r.title,
+            qualityScore: cleanedSource.qualityScore,
+            relevanceScore: cleanedSource.relevanceScore,
+            reason: 'low_relevance',
+            details: `Relevance ${cleanedSource.relevanceScore}/100 < min ${minRelevance}`,
+          });
+          return null;
+        }
+
+        // Check quality score - filter out low-quality content
+        if (cleanedSource.qualityScore < minQuality) {
+          filteredSources.push({
+            url: normalized,
+            domain: cleanedSource.domain,
+            title: r.title,
+            qualityScore: cleanedSource.qualityScore,
+            relevanceScore: cleanedSource.relevanceScore,
+            reason: 'low_quality',
+            details: `Quality ${cleanedSource.qualityScore}/100 < min ${minQuality}`,
+          });
+          return null;
+        }
+
         // Use cleaned content
         return {
           title: r.title,
@@ -574,7 +647,7 @@ export async function processSearchResultsWithCleaning(
         };
       }
 
-      // Fallback to raw content
+      // Fallback to raw content (no relevance/quality check - haven't cleaned it)
       return {
         title: r.title,
         url: normalized,
@@ -584,6 +657,27 @@ export async function processSearchResultsWithCleaning(
       };
     })
     .filter((r): r is SearchResultItem => r !== null);
+
+  // Log filtered sources if any
+  if (filteredSources.length > 0) {
+    const byReason = {
+      low_relevance: filteredSources.filter((s) => s.reason === 'low_relevance'),
+      low_quality: filteredSources.filter((s) => s.reason === 'low_quality'),
+    };
+    
+    const parts: string[] = [];
+    if (byReason.low_relevance.length > 0) {
+      parts.push(`${byReason.low_relevance.length} low-relevance`);
+    }
+    if (byReason.low_quality.length > 0) {
+      parts.push(`${byReason.low_quality.length} low-quality`);
+    }
+    
+    logger?.info?.(
+      `Filtered ${filteredSources.length} source(s) for "${query.slice(0, 40)}..." (${parts.join(', ')}): ` +
+      filteredSources.map((s) => `${s.domain} [Q:${s.qualityScore}/R:${s.relevanceScore}]`).join(', ')
+    );
+  }
 
   return {
     result: {
@@ -599,6 +693,7 @@ export async function processSearchResultsWithCleaning(
     cacheMisses: misses.length,
     cleaningFailures,
     cleaningTokenUsage,
+    filteredSources,
   };
 }
 

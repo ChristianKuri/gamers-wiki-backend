@@ -195,6 +195,11 @@ export interface ScoutOutput {
    * Exa costs are actual (from API), Tavily costs are estimated.
    */
   readonly searchApiCosts: SearchApiCosts;
+  /**
+   * Sources filtered out due to low quality or relevance.
+   * Tracked for transparency and debugging.
+   */
+  readonly filteredSources: readonly FilteredSourceSummary[];
 }
 
 // ============================================================================
@@ -597,6 +602,26 @@ export interface ArticleGenerationMetadata {
   readonly researchConfidence: ResearchConfidence;
   /** Recovery metadata (present when any retries or fixes were applied) */
   readonly recovery?: RecoveryMetadata;
+  /**
+   * Sources filtered out due to low quality or relevance.
+   * Tracked for transparency and debugging.
+   */
+  readonly filteredSources?: readonly FilteredSourceSummary[];
+}
+
+/**
+ * Summary of a filtered source for metadata tracking.
+ */
+export interface FilteredSourceSummary {
+  readonly url: string;
+  readonly domain: string;
+  readonly title: string;
+  readonly qualityScore: number;
+  readonly relevanceScore: number;
+  /** Reason for filtering */
+  readonly reason: 'low_relevance' | 'low_quality' | 'excluded_domain';
+  /** Human-readable details */
+  readonly details: string;
 }
 
 /**
@@ -972,7 +997,14 @@ export interface CleanedSource {
   readonly summary: string | null;
   readonly cleanedContent: string;
   readonly originalContentLength: number;
+  /** Content quality score (0-100): structure, depth, authority */
   readonly qualityScore: number;
+  /**
+   * Relevance to gaming score (0-100): Is this about games/gaming?
+   * Content can be high quality but low relevance (e.g., Python docs).
+   * Only content with high relevance should be used for game articles.
+   */
+  readonly relevanceScore: number;
   readonly qualityNotes: string;
   /** AI-determined content type (e.g., "wiki", "guide", "forum", "news article", etc.) */
   readonly contentType: string;
@@ -1004,6 +1036,8 @@ export interface StoredSourceContent {
   readonly cleanedContent: string;
   readonly originalContentLength: number;
   readonly qualityScore: number;
+  /** Relevance to gaming score (0-100) */
+  readonly relevanceScore: number;
   readonly qualityNotes: string | null;
   /** AI-determined content type */
   readonly contentType: string;
@@ -1021,6 +1055,8 @@ export interface StoredDomainQuality {
   readonly documentId: string;
   readonly domain: string;
   readonly avgQualityScore: number;
+  /** Average relevance to gaming (0-100) */
+  readonly avgRelevanceScore: number;
   readonly totalSources: number;
   readonly tier: DomainTier;
   readonly isExcluded: boolean;
@@ -1084,7 +1120,10 @@ export interface CleanerLLMOutput {
   readonly cleanedContent: string;
   /** Short 1-2 sentence summary for quick reference */
   readonly summary: string;
+  /** Content quality score (0-100): depth, structure, authority */
   readonly qualityScore: number;
+  /** Gaming relevance score (0-100): Is this about video games? */
+  readonly relevanceScore: number;
   readonly qualityNotes: string;
   /** AI-determined content type (free-form, e.g., "wiki article", "strategy guide", "forum discussion") */
   readonly contentType: string;

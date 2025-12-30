@@ -210,6 +210,8 @@ export interface SourceContentDocument extends StrapiDocument {
   cleanedContent: string;
   originalContentLength: number;
   qualityScore: number;
+  /** Relevance to gaming score (0-100) */
+  relevanceScore: number;
   qualityNotes: string | null;
   contentType: string;
   junkRatio: number;
@@ -224,6 +226,8 @@ export interface SourceContentDocument extends StrapiDocument {
 export interface DomainQualityDocument extends StrapiDocument {
   domain: string;
   avgQualityScore: number;
+  /** Average relevance to gaming score (0-100) */
+  avgRelevanceScore: number;
   totalSources: number;
   tier: 'excellent' | 'good' | 'average' | 'poor' | 'excluded';
   isExcluded: boolean;

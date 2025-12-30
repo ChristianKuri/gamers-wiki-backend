@@ -60,6 +60,7 @@ import {
 } from '../../utils/logger';
 import { runScout, runEditor, runSpecialist, runReviewer, type EditorOutput, type ReviewerOutput } from './agents';
 import type { CleaningDeps } from './research-pool';
+import { getAllExcludedDomains } from './source-cache';
 import type { SpecialistOutput } from './agents/specialist';
 import type { ArticlePlan, ArticleCategorySlug } from './article-plan';
 import { GENERATOR_CONFIG, WORD_COUNT_DEFAULTS, WORD_COUNT_CONSTRAINTS, REVIEWER_CONFIG, FIXER_CONFIG } from './config';
@@ -1004,20 +1005,22 @@ export async function generateGameArticleDraft(
 
   // Build cleaning deps only when Strapi is available
   // This enables content cleaning and caching for search results
-  const cleaningDeps: CleaningDeps | undefined = strapi
-    ? {
-        strapi,
-        generateObject: genObject,
-        model: openrouter(cleanerModel),
-        logger: createPrefixedLogger('[Cleaner]'),
-        signal,
-        gameName: context.gameName,
-        gameDocumentId: context.gameDocumentId,
-      }
-    : undefined;
-
-  if (cleaningDeps) {
+  // Also fetch excluded domains from DB to combine with static list
+  let cleaningDeps: CleaningDeps | undefined;
+  if (strapi) {
+    const excludedDomains = await getAllExcludedDomains(strapi);
+    cleaningDeps = {
+      strapi,
+      generateObject: genObject,
+      model: openrouter(cleanerModel),
+      logger: createPrefixedLogger('[Cleaner]'),
+      signal,
+      gameName: context.gameName,
+      gameDocumentId: context.gameDocumentId,
+      excludedDomains,
+    };
     log.info(`Content cleaning enabled (model: ${cleanerModel})`);
+    log.debug(`Excluded domains: ${excludedDomains.length} total (static + DB)`);
   }
 
   const phaseContext: PhaseContext = {
@@ -1494,6 +1497,10 @@ export async function generateGameArticleDraft(
     correlationId,
     researchConfidence: scoutOutput.confidence,
     ...(recovery ? { recovery } : {}),
+    // Include filtered sources if any were filtered out
+    ...(scoutOutput.filteredSources.length > 0
+      ? { filteredSources: scoutOutput.filteredSources }
+      : {}),
   };
 
   return {

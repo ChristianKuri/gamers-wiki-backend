@@ -134,6 +134,35 @@ export interface GenerationStats {
    * Shows which sources used full text vs summary.
    */
   readonly sourceContentUsage?: SourceContentUsageStats;
+  /**
+   * Filtered sources tracking.
+   * Shows sources that were filtered out due to low quality or relevance.
+   */
+  readonly filteredSources?: FilteredSourcesStats;
+}
+
+/** A source that was filtered out */
+export interface FilteredSourceItem {
+  readonly url: string;
+  readonly domain: string;
+  readonly title: string;
+  readonly qualityScore: number;
+  readonly relevanceScore: number;
+  readonly reason: 'low_relevance' | 'low_quality' | 'excluded_domain';
+  readonly details: string;
+}
+
+/** Filtered sources statistics */
+export interface FilteredSourcesStats {
+  /** Individual filtered sources */
+  readonly sources: readonly FilteredSourceItem[];
+  /** Summary counts */
+  readonly counts: {
+    readonly total: number;
+    readonly lowRelevance: number;
+    readonly lowQuality: number;
+    readonly excludedDomain: number;
+  };
 }
 
 /** Content type used for a source */

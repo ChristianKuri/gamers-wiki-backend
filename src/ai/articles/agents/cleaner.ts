@@ -50,10 +50,16 @@ const CleanerOutputSchema = z.object({
     .int()
     .min(0)
     .max(100)
-    .describe('Quality score 0-100 based on relevance, depth, authority, and junk ratio'),
+    .describe('Content quality score 0-100 based on depth, structure, authority, and junk ratio'),
+  relevanceScore: z
+    .number()
+    .int()
+    .min(0)
+    .max(100)
+    .describe('Gaming relevance score 0-100. Is this content about video games/gaming? Python docs, cooking recipes, etc. = 0. Game wikis, guides, reviews = 100.'),
   qualityNotes: z
     .string()
-    .describe('Brief explanation of the quality score (1-2 sentences)'),
+    .describe('Brief explanation of quality and relevance scores (1-2 sentences)'),
   contentType: z
     .string()
     .min(1)
@@ -92,7 +98,10 @@ export interface CleanSourcesBatchResult {
  * System prompt for the cleaner agent.
  */
 function getCleanerSystemPrompt(): string {
-  return `You are a content cleaning specialist. Your job is to extract valuable content from web pages while removing all junk.
+  return `You are a content cleaning specialist for a VIDEO GAME website. Your job is to:
+1. Extract valuable content from web pages while removing junk
+2. Rate content QUALITY (structure, depth, authority)
+3. Rate content RELEVANCE TO VIDEO GAMES (PC, console, mobile games)
 
 REMOVE (do not include in cleanedContent):
 - Navigation menus, headers, footers
@@ -127,13 +136,35 @@ CRITICAL RULES:
 5. Be generous - when in doubt, keep the content
 
 SUMMARY:
-Write a concise 1-2 sentence summary of what this content covers. This will be used for quick reference to understand what information this source provides.
+Write a concise 1-2 sentence summary of what this content covers.
 
-QUALITY SCORING (0-100):
-- Relevance to gaming (0-30 pts): Is this about games/gaming?
-- Content depth (0-30 pts): Detailed, comprehensive information?
-- Authority signals (0-20 pts): Wiki, official source, reputable site?
-- Junk ratio (0-20 pts): How much was junk vs valuable content?
+QUALITY SCORING (0-100) - Content quality regardless of topic:
+- Content depth (0-40 pts): Detailed, comprehensive information?
+- Structure (0-30 pts): Well-organized, clear headings, logical flow?
+- Authority signals (0-30 pts): Wiki, official source, reputable site?
+
+RELEVANCE SCORING (0-100) - Is this about VIDEO GAMES specifically?
+
+VIDEO GAMES = PC games, console games (PlayStation, Xbox, Nintendo), mobile games
+NOT VIDEO GAMES = board games, card games, tabletop RPGs, gambling, sports
+
+Score guide:
+- 90-100: Video game guides, wikis, reviews, walkthroughs, tips, builds
+- 70-89: Video game news, patch notes, game announcements
+- 50-69: Tangentially related (gaming hardware, esports, game streaming)
+- 20-49: Barely related (general tech with gaming mention)
+- 0-19: NOT VIDEO GAMES (board games, tabletop, programming, cooking, sports)
+
+CRITICAL: Board games, card games, tabletop games are NOT video games!
+- boardgamegeek.com content = relevance 0-10 (NOT video games)
+- D&D/tabletop RPG content = relevance 0-10 (NOT video games)
+- Magic: The Gathering (paper) = relevance 0-10 (NOT video games)
+- Poker/gambling = relevance 0 (NOT video games)
+
+IMPORTANT: A page can have HIGH QUALITY but LOW RELEVANCE.
+Example: Python documentation is high quality (90+) but 0 relevance to video games.
+Example: Board game guide is high quality but 0-10 relevance (not a video game).
+Example: A rambling Reddit post might be low quality (30) but high relevance (90) if it's about a video game.
 
 CONTENT TYPE:
 Describe what type of content this is. Be specific and descriptive. Examples:
@@ -153,9 +184,9 @@ Describe what type of content this is. Be specific and descriptive. Examples:
  * User prompt for cleaning a specific source.
  */
 function getCleanerUserPrompt(source: RawSourceInput, gameName?: string): string {
-  const gameContext = gameName ? `\nContext: This content is being evaluated for an article about "${gameName}".` : '';
+  const gameContext = gameName ? `\nContext: This content is being evaluated for an article about the VIDEO GAME "${gameName}".` : '';
 
-  return `Clean the following web content and rate its quality.
+  return `Clean the following web content and rate its quality AND relevance to VIDEO GAMES.
 ${gameContext}
 
 URL: ${source.url}
@@ -168,9 +199,16 @@ ${source.content.slice(0, CLEANER_CONFIG.MAX_INPUT_CHARS)}
 Extract and return:
 1. cleanedContent: The content with all junk removed (keep ALL valuable content)
 2. summary: A concise 1-2 sentence summary of what this content covers
-3. qualityScore: 0-100 rating
-4. qualityNotes: Brief explanation of score
-5. contentType: Describe what type of content this is (be specific)`;
+3. qualityScore: 0-100 content quality rating (depth, structure, authority)
+4. relevanceScore: 0-100 VIDEO GAME relevance (PC/console/mobile games ONLY)
+5. qualityNotes: Brief explanation of BOTH scores
+6. contentType: Describe what type of content this is (be specific)
+
+CRITICAL RELEVANCE RULES:
+- Video games (PC, PlayStation, Xbox, Nintendo, mobile) = HIGH relevance (70-100)
+- Board games, card games, tabletop RPGs = relevance 0-10 (NOT video games!)
+- Programming docs, recipes, sports, news = relevance 0-20
+- boardgamegeek.com, D&D content, Magic cards = relevance 0-10`;
 }
 
 // ============================================================================
@@ -254,6 +292,7 @@ export async function cleanSingleSource(
         cleanedContent: output.cleanedContent,
         originalContentLength: originalLength,
         qualityScore: output.qualityScore,
+        relevanceScore: output.relevanceScore,
         qualityNotes: output.qualityNotes,
         contentType: output.contentType,
         junkRatio: Math.max(0, Math.min(1, junkRatio)),
@@ -264,7 +303,29 @@ export async function cleanSingleSource(
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     log.warn(`Failed to clean source ${source.url}: ${message}`);
-    return { source: null, tokenUsage: createEmptyTokenUsage() };
+
+    // Fallback: return raw content with low quality score so it can still be used
+    // This prevents losing potentially valuable content due to LLM timeouts
+    const domain = extractDomain(source.url);
+    log.info(`[Cleaner] Falling back to raw content for ${source.url}`);
+
+    return {
+      source: {
+        url: source.url,
+        domain,
+        title: source.title,
+        summary: `[Cleaning failed: ${message}] ${source.title}`,
+        cleanedContent: source.content.slice(0, CLEANER_CONFIG.MAX_INPUT_CHARS),
+        originalContentLength: source.content.length,
+        qualityScore: 25, // Low score since uncleaned
+        relevanceScore: 50, // Neutral - we don't know without cleaning
+        qualityNotes: `Cleaning failed after retries: ${message}. Using raw content as fallback.`,
+        contentType: 'raw fallback',
+        junkRatio: 0, // Unknown junk ratio
+        searchSource: source.searchSource,
+      },
+      tokenUsage: createEmptyTokenUsage(),
+    };
   }
 }
 

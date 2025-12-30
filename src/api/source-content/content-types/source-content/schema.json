@@ -46,6 +46,12 @@
       "min": 0,
       "max": 100
     },
+    "relevanceScore": {
+      "type": "integer",
+      "required": true,
+      "min": 0,
+      "max": 100
+    },
     "qualityNotes": {
       "type": "text"
     },

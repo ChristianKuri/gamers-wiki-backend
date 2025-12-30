@@ -6,6 +6,92 @@
  */
 
 // ============================================================================
+// UNIFIED EXCLUDED DOMAINS LIST
+// ============================================================================
+
+/**
+ * SINGLE SOURCE OF TRUTH for domain exclusions.
+ * Used by both search APIs (Tavily/Exa) and the cleaner/cache system.
+ *
+ * Domains are excluded for one of these reasons:
+ * 1. NO_CONTENT: No useful text content (video platforms, audio)
+ * 2. LOW_AUTHORITY: User-generated content with low editorial standards
+ * 3. NOT_VIDEO_GAMES: Content not about video games
+ * 4. SPAM: Commercial or spam sites
+ * 5. OFF_TOPIC: Technical/programming content unrelated to gaming
+ */
+export const UNIFIED_EXCLUDED_DOMAINS = new Set([
+  // === NO_CONTENT: Video/audio platforms (no extractable text) ===
+  'youtube.com',
+  'youtu.be',
+  'tiktok.com',
+  'twitch.tv',
+
+  // === LOW_AUTHORITY: Social media ===
+  'facebook.com',
+  'twitter.com',
+  'x.com',
+  'instagram.com',
+
+  // === SPAM: Game marketplaces / key resellers ===
+  'g2a.com',
+  'cdkeys.com',
+  'eneba.com',
+  'kinguin.net',
+  'voidu.com',
+  'fanatical.com',
+
+  // === SPAM: Gold selling / RMT sites ===
+  'mtmmo.com',
+  'u4gm.com',
+
+  // === LOW_AUTHORITY: Q&A / forums ===
+  'quora.com',
+  'gamefaqs.gamespot.com', // Use official GameSpot guides instead
+  'steamcommunity.com', // Low-quality discussions
+
+  // === OFF_TOPIC: Generic tech (not gaming-focused) ===
+  'techradar.com',
+  'radiotimes.com',
+  'beebom.com',
+  'exitlag.com', // VPN SEO content
+
+  // === OFF_TOPIC: News aggregators ===
+  'news.google.com',
+
+  // === NOT_VIDEO_GAMES: Mod sites (mods ≠ game guides) ===
+  'nexusmods.com',
+  'www.nexusmods.com',
+  'moddb.com',
+  'www.moddb.com',
+  'ersc-docs.github.io', // Mod documentation
+
+  // === NOT_VIDEO_GAMES: Speedrunning (too niche for general guides) ===
+  'soulsspeedruns.com',
+  'speedrun.com',
+
+  // === NOT_VIDEO_GAMES: Board games / tabletop ===
+  'boardgamegeek.com',
+
+  // === OFF_TOPIC: Programming / development ===
+  'flask.palletsprojects.com',
+  'docs.python.org',
+  'stackoverflow.com',
+  'github.com',
+  'gitlab.com',
+  'bitbucket.org',
+  'openprocessing.org', // Art/coding platform
+
+  // === OFF_TOPIC: Document sharing ===
+  'scribd.com',
+
+  // === LOW_QUALITY: News/content farms ===
+  'timesofindia.indiatimes.com',
+  'oreateai.com', // AI-generated spam
+  'mandatory.gg',
+]);
+
+// ============================================================================
 // Configuration Validation
 // ============================================================================
 
@@ -202,37 +288,13 @@ export const SCOUT_CONFIG = {
    *
    * @see A/B test results Dec 2024 - basic-20 included mtmmo.com and u4gm.com gold sellers
    */
-  EXA_EXCLUDE_DOMAINS: [
-    // Video platforms (no text content)
-    'youtube.com',
-    'youtu.be',
-    'tiktok.com',
-    'twitch.tv',
-    // Social media (low authority)
-    'facebook.com',
-    'twitter.com',
-    'x.com',
-    'instagram.com',
-    // Game marketplaces (not content)
-    'g2a.com',
-    'cdkeys.com',
-    'eneba.com',
-    'kinguin.net',
-    'voidu.com',
-    // Gold selling / RMT sites (spam)
-    'mtmmo.com',
-    'u4gm.com',
-    // Q&A sites (low authority)
-    'quora.com',
-    // Generic tech (not gaming-focused)
-    'techradar.com',
-    'radiotimes.com',
-    'beebom.com',
-    // VPN/tool sites writing SEO content
-    'exitlag.com',
-    // News aggregators
-    'news.google.com',
-  ] as readonly string[],
+  /**
+   * Domains to exclude from Exa searches.
+   * Uses UNIFIED_EXCLUDED_DOMAINS - single source of truth.
+   */
+  get EXA_EXCLUDE_DOMAINS(): readonly string[] {
+    return [...UNIFIED_EXCLUDED_DOMAINS];
+  },
   /**
    * Number of top results to provide with FULL TEXT content.
    * These results get both summary AND full content for maximum detail.
@@ -378,42 +440,11 @@ export const SPECIALIST_CONFIG = {
   EXA_INCLUDE_SUMMARY: false,
   /**
    * Domains to exclude from ALL search results (Exa AND Tavily).
-   * Saves money and improves quality by filtering out low-value sources.
-   * Same list as SCOUT_CONFIG - keep in sync.
-   *
-   * @see SCOUT_CONFIG.EXA_EXCLUDE_DOMAINS for detailed categorization
+   * Uses UNIFIED_EXCLUDED_DOMAINS - single source of truth.
    */
-  EXA_EXCLUDE_DOMAINS: [
-    // Video platforms (no text content)
-    'youtube.com',
-    'youtu.be',
-    'tiktok.com',
-    'twitch.tv',
-    // Social media (low authority)
-    'facebook.com',
-    'twitter.com',
-    'x.com',
-    'instagram.com',
-    // Game marketplaces (not content)
-    'g2a.com',
-    'cdkeys.com',
-    'eneba.com',
-    'kinguin.net',
-    'voidu.com',
-    // Gold selling / RMT sites (spam)
-    'mtmmo.com',
-    'u4gm.com',
-    // Q&A sites (low authority)
-    'quora.com',
-    // Generic tech (not gaming-focused)
-    'techradar.com',
-    'radiotimes.com',
-    'beebom.com',
-    // VPN/tool sites writing SEO content
-    'exitlag.com',
-    // News aggregators
-    'news.google.com',
-  ] as readonly string[],
+  get EXA_EXCLUDE_DOMAINS(): readonly string[] {
+    return [...UNIFIED_EXCLUDED_DOMAINS];
+  },
   /**
    * Number of top results to provide with FULL TEXT content per section query.
    * The first N results get both summary AND full content for maximum detail.
@@ -558,7 +589,7 @@ function isCleanerEnabled(): boolean {
   if (envValue !== undefined) {
     return envValue.toLowerCase() !== 'false' && envValue !== '0';
   }
-  return false; // Default disabled
+  return true; // Default enabled
 }
 
 export const CLEANER_CONFIG = {
@@ -575,24 +606,50 @@ export const CLEANER_CONFIG = {
   MAX_OUTPUT_TOKENS: 16000,
   /**
    * Number of URLs to clean in parallel.
-   * Balance between speed and API rate limits.
+   * High value = faster but more concurrent API calls.
+   * Set to 100 to essentially run all cleaning in parallel.
    */
-  BATCH_SIZE: 5,
+  BATCH_SIZE: 100,
   /**
    * Timeout for cleaning a single URL (ms).
    * 30 seconds should be plenty for content extraction.
    */
   TIMEOUT_MS: 30000,
   /**
-   * Minimum quality score to cache content.
-   * Don't waste storage on garbage content.
+   * Minimum relevance score for BOTH caching AND filtering.
+   * Sources below this are considered off-topic for video games.
+   * 70 = strict, ensures content is directly about video games.
+   * 
+   * Content below this threshold:
+   * - NOT stored in cache (wastes storage)
+   * - NOT passed to AI agents
+   * 
+   * Use lower values (e.g., 50) via minRelevanceOverride for searches
+   * that include tangential content like gaming gear, hardware, etc.
    */
-  MIN_QUALITY_FOR_CACHE: 20,
+  MIN_RELEVANCE_FOR_RESULTS: 70,
+  /**
+   * Minimum quality score for BOTH caching AND filtering.
+   * Sources with poor quality are neither cached nor passed to AI agents.
+   * 
+   * Set to 35 to include truncated fragments from good sources (score ~45)
+   * while filtering truly low-quality content (score 15-25).
+   * 
+   * Use minQualityOverride in CleaningDeps to adjust per-request.
+   */
+  MIN_QUALITY_FOR_RESULTS: 35,
+  /**
+   * Domains with average relevance below this get auto-excluded.
+   * Stricter than individual filtering since consistently off-topic
+   * domains waste API calls on every search.
+   */
+  AUTO_EXCLUDE_RELEVANCE_THRESHOLD: 30,
   /**
    * Domain average score below this triggers auto-exclusion.
+   * Same as MIN_QUALITY_FOR_RESULTS for consistency.
    * Requires AUTO_EXCLUDE_MIN_SAMPLES to prevent premature exclusion.
    */
-  AUTO_EXCLUDE_THRESHOLD: 25,
+  AUTO_EXCLUDE_THRESHOLD: 35,
   /**
    * Minimum samples before auto-excluding a domain.
    * Prevents exclusion based on one bad page.
@@ -618,42 +675,10 @@ export const CLEANER_CONFIG = {
   },
   /**
    * Hardcoded list of domains to always exclude.
-   * These domains consistently return irrelevant content.
+   * Uses UNIFIED_EXCLUDED_DOMAINS - single source of truth.
    * DB exclusions are checked separately and combined with this list.
    */
-  EXCLUDED_DOMAINS: new Set([
-    // Mod sites - not relevant for game guides
-    'nexusmods.com',
-    'www.nexusmods.com',
-    'moddb.com',
-    'www.moddb.com',
-    
-    // Speedrunning/technical - too niche
-    'soulsspeedruns.com',
-    'speedrun.com',
-    
-    // Mod documentation
-    'ersc-docs.github.io',
-    
-    // Steam community (discussions are low quality)
-    'steamcommunity.com',
-    
-    // Completely irrelevant domains (search gone wrong)
-    'flask.palletsprojects.com',
-    'docs.python.org',
-    'stackoverflow.com',
-    'github.com',
-    'gitlab.com',
-    'bitbucket.org',
-    
-    // Social media (generally low signal)
-    'twitter.com',
-    'x.com',
-    'facebook.com',
-    
-    // Forums that are too noisy
-    'gamefaqs.gamespot.com', // Use specific game guides instead
-  ]),
+  EXCLUDED_DOMAINS: UNIFIED_EXCLUDED_DOMAINS,
   /**
    * Quality score thresholds for domain tiers.
    */
@@ -885,7 +910,8 @@ function validateConfiguration(): void {
   validatePositive(CLEANER_CONFIG.MAX_OUTPUT_TOKENS, 'CLEANER_CONFIG.MAX_OUTPUT_TOKENS');
   validatePositive(CLEANER_CONFIG.BATCH_SIZE, 'CLEANER_CONFIG.BATCH_SIZE');
   validatePositive(CLEANER_CONFIG.TIMEOUT_MS, 'CLEANER_CONFIG.TIMEOUT_MS');
-  validateNonNegative(CLEANER_CONFIG.MIN_QUALITY_FOR_CACHE, 'CLEANER_CONFIG.MIN_QUALITY_FOR_CACHE');
+  validateNonNegative(CLEANER_CONFIG.MIN_QUALITY_FOR_RESULTS, 'CLEANER_CONFIG.MIN_QUALITY_FOR_RESULTS');
+  validateNonNegative(CLEANER_CONFIG.MIN_RELEVANCE_FOR_RESULTS, 'CLEANER_CONFIG.MIN_RELEVANCE_FOR_RESULTS');
   validateNonNegative(CLEANER_CONFIG.AUTO_EXCLUDE_THRESHOLD, 'CLEANER_CONFIG.AUTO_EXCLUDE_THRESHOLD');
   validatePositive(CLEANER_CONFIG.AUTO_EXCLUDE_MIN_SAMPLES, 'CLEANER_CONFIG.AUTO_EXCLUDE_MIN_SAMPLES');
   validatePositive(CLEANER_CONFIG.MAX_INPUT_CHARS, 'CLEANER_CONFIG.MAX_INPUT_CHARS');

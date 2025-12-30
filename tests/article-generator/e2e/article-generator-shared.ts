@@ -213,6 +213,20 @@ export function extractGenerationStats(json: any): GenerationStats {
   const tokenUsage = metadata.tokenUsage ?? {};
   const searchApiCosts = metadata.searchApiCosts;
   const sourceContentUsage = metadata.sourceContentUsage;
+  const filteredSources = metadata.filteredSources;
+
+  // Build filtered sources stats if available
+  const filteredSourcesStats = filteredSources && filteredSources.length > 0
+    ? {
+        sources: filteredSources,
+        counts: {
+          total: filteredSources.length,
+          lowRelevance: filteredSources.filter((s: any) => s.reason === 'low_relevance').length,
+          lowQuality: filteredSources.filter((s: any) => s.reason === 'low_quality').length,
+          excludedDomain: filteredSources.filter((s: any) => s.reason === 'excluded_domain').length,
+        },
+      }
+    : undefined;
 
   return {
     success: json?.success ?? false,
@@ -253,6 +267,8 @@ export function extractGenerationStats(json: any): GenerationStats {
     ...(metadata.totalEstimatedCostUsd !== undefined ? { totalCostUsd: metadata.totalEstimatedCostUsd } : {}),
     // Include source content usage tracking if available
     ...(sourceContentUsage ? { sourceContentUsage } : {}),
+    // Include filtered sources tracking if available
+    ...(filteredSourcesStats ? { filteredSources: filteredSourcesStats } : {}),
   };
 }
 

@@ -162,6 +162,10 @@ async function executeSingleSearch(
   gracefulDegradation = false,
   cleaningDeps?: CleaningDeps
 ): Promise<SearchOperationResult> {
+  // Use excluded domains from cleaningDeps if available (includes DB exclusions),
+  // otherwise fall back to static config list
+  const excludeDomains = cleaningDeps?.excludedDomains ?? [...SPECIALIST_CONFIG.EXA_EXCLUDE_DOMAINS];
+
   try {
     const result = await withRetry(
       () =>
@@ -171,8 +175,7 @@ async function executeSingleSearch(
           includeAnswer: true,
           // Request raw content for cleaning (full page text)
           includeRawContent: Boolean(cleaningDeps),
-          // Exclude YouTube - video pages have no useful text content
-          excludeDomains: [...SPECIALIST_CONFIG.EXA_EXCLUDE_DOMAINS],
+          excludeDomains,
         }),
       { context: `Specialist search: "${query.slice(0, 50)}..."`, signal }
     );
@@ -241,6 +244,10 @@ async function executeSingleExaSearch(
   gracefulDegradation = false,
   cleaningDeps?: CleaningDeps
 ): Promise<SearchOperationResult> {
+  // Use excluded domains from cleaningDeps if available (includes DB exclusions),
+  // otherwise fall back to static config list
+  const excludeDomains = cleaningDeps?.excludedDomains ?? [...SPECIALIST_CONFIG.EXA_EXCLUDE_DOMAINS];
+
   try {
     const exaOptions: ExaSearchOptions = {
       numResults: SPECIALIST_CONFIG.EXA_SEARCH_RESULTS,
@@ -248,8 +255,7 @@ async function executeSingleExaSearch(
       useAutoprompt: true,
       // Summary disabled - adds 8-16s latency, use full content instead
       includeSummary: SPECIALIST_CONFIG.EXA_INCLUDE_SUMMARY,
-      // Exclude YouTube - video pages have no useful text content
-      excludeDomains: [...SPECIALIST_CONFIG.EXA_EXCLUDE_DOMAINS],
+      excludeDomains,
     };
 
     const result = await withRetry(
