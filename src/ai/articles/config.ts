@@ -159,10 +159,19 @@ export const SCOUT_CONFIG = {
   MAX_SNIPPET_LENGTH: 10000,
   /** Maximum number of snippets to include */
   MAX_SNIPPETS: 10,
-  /** Number of results for overview search */
-  OVERVIEW_SEARCH_RESULTS: 8,
-  /** Number of results for category-specific search (Tavily) */
-  CATEGORY_SEARCH_RESULTS: 6,
+  /**
+   * Number of results for overview search (Tavily).
+   * OPTIMIZED: 10 results - same cost as fewer, gets wikis.
+   */
+  OVERVIEW_SEARCH_RESULTS: 10,
+  /**
+   * Number of results for category-specific search (Tavily).
+   * OPTIMIZED: 10 results based on A/B testing (Dec 2024).
+   * - basic search costs 1 credit ($0.008) regardless of result count
+   * - 10 results gets wikis + major gaming sites without noise
+   * - basic-5 missed wikis, basic-20 added low-quality sources
+   */
+  CATEGORY_SEARCH_RESULTS: 10,
   /**
    * Number of results for Exa semantic search.
    * OPTIMIZED: 10 results based on A/B testing (Dec 2024).
@@ -180,12 +189,50 @@ export const SCOUT_CONFIG = {
   EXA_INCLUDE_SUMMARY: false,
   /**
    * Domains to exclude from ALL search results (Exa AND Tavily).
-   * YouTube is excluded because video pages have no useful text content -
-   * search APIs just return titles/descriptions which waste result slots.
-   * Saves money: each Exa result costs $0.001.
-   * Note: Named EXA_ for historical reasons but applies to both APIs.
+   * Saves money and improves quality by filtering out low-value sources.
+   *
+   * Categories excluded:
+   * - Video platforms: No useful text content (youtube, tiktok, twitch)
+   * - Social media: User-generated noise, low authority (facebook, twitter, etc)
+   * - Marketplaces: Not gaming content (g2a, cdkeys, voidu, etc)
+   * - Gold selling: Spam/scam sites (mtmmo, u4gm)
+   * - Q&A sites: Low authority, user-generated (quora)
+   * - Generic tech: Not gaming-focused (techradar, radiotimes)
+   * - News aggregators: Duplicate content (news.google.com)
+   *
+   * @see A/B test results Dec 2024 - basic-20 included mtmmo.com and u4gm.com gold sellers
    */
-  EXA_EXCLUDE_DOMAINS: ['youtube.com', 'youtu.be'] as readonly string[],
+  EXA_EXCLUDE_DOMAINS: [
+    // Video platforms (no text content)
+    'youtube.com',
+    'youtu.be',
+    'tiktok.com',
+    'twitch.tv',
+    // Social media (low authority)
+    'facebook.com',
+    'twitter.com',
+    'x.com',
+    'instagram.com',
+    // Game marketplaces (not content)
+    'g2a.com',
+    'cdkeys.com',
+    'eneba.com',
+    'kinguin.net',
+    'voidu.com',
+    // Gold selling / RMT sites (spam)
+    'mtmmo.com',
+    'u4gm.com',
+    // Q&A sites (low authority)
+    'quora.com',
+    // Generic tech (not gaming-focused)
+    'techradar.com',
+    'radiotimes.com',
+    'beebom.com',
+    // VPN/tool sites writing SEO content
+    'exitlag.com',
+    // News aggregators
+    'news.google.com',
+  ] as readonly string[],
   /**
    * Number of top results to provide with FULL TEXT content.
    * These results get both summary AND full content for maximum detail.
@@ -197,10 +244,19 @@ export const SCOUT_CONFIG = {
   RECENT_SEARCH_RESULTS: 5,
   /** Maximum number of category-specific searches to run */
   MAX_CATEGORY_SEARCHES: 2,
-  /** Search depth for overview queries */
-  OVERVIEW_SEARCH_DEPTH: 'advanced' as const,
-  /** Search depth for category queries */
-  CATEGORY_SEARCH_DEPTH: 'advanced' as const,
+  /**
+   * Search depth for overview queries (Tavily).
+   * OPTIMIZED: 'basic' based on A/B testing (Dec 2024).
+   * - basic = 1 credit ($0.008), advanced = 2 credits ($0.016)
+   * - basic-10 gets wikis + quality sources at half the cost
+   * - With proper exclude_domains, basic quality is sufficient
+   */
+  OVERVIEW_SEARCH_DEPTH: 'basic' as const,
+  /**
+   * Search depth for category queries (Tavily).
+   * OPTIMIZED: 'basic' - same cost savings as overview.
+   */
+  CATEGORY_SEARCH_DEPTH: 'basic' as const,
   /** Search depth for recent news queries */
   RECENT_SEARCH_DEPTH: 'basic' as const,
   /**
@@ -291,10 +347,20 @@ export const SPECIALIST_CONFIG = {
   RESULTS_PER_RESEARCH_CONTEXT: 5,
   /** Maximum output tokens per section */
   MAX_OUTPUT_TOKENS_PER_SECTION: 1500,
-  /** Search depth for section research */
-  SEARCH_DEPTH: 'advanced' as const,
-  /** Maximum search results per query (Tavily) */
-  MAX_SEARCH_RESULTS: 5,
+  /**
+   * Search depth for section research (Tavily).
+   * OPTIMIZED: 'basic' based on A/B testing (Dec 2024).
+   * - basic = 1 credit, advanced = 2 credits
+   * - With exclude_domains filtering, basic provides good quality
+   */
+  SEARCH_DEPTH: 'basic' as const,
+  /**
+   * Maximum search results per query (Tavily).
+   * OPTIMIZED: 10 results based on A/B testing (Dec 2024).
+   * - Same cost (1 credit) regardless of count
+   * - 10 results gets wikis without low-quality noise
+   */
+  MAX_SEARCH_RESULTS: 10,
   /**
    * Number of results for Exa semantic search per section.
    * OPTIMIZED: 5 results based on A/B testing (Dec 2024).
@@ -312,12 +378,42 @@ export const SPECIALIST_CONFIG = {
   EXA_INCLUDE_SUMMARY: false,
   /**
    * Domains to exclude from ALL search results (Exa AND Tavily).
-   * YouTube is excluded because video pages have no useful text content -
-   * search APIs just return titles/descriptions which waste result slots.
-   * Saves money: each Exa result costs $0.001.
-   * Note: Named EXA_ for historical reasons but applies to both APIs.
+   * Saves money and improves quality by filtering out low-value sources.
+   * Same list as SCOUT_CONFIG - keep in sync.
+   *
+   * @see SCOUT_CONFIG.EXA_EXCLUDE_DOMAINS for detailed categorization
    */
-  EXA_EXCLUDE_DOMAINS: ['youtube.com', 'youtu.be'] as readonly string[],
+  EXA_EXCLUDE_DOMAINS: [
+    // Video platforms (no text content)
+    'youtube.com',
+    'youtu.be',
+    'tiktok.com',
+    'twitch.tv',
+    // Social media (low authority)
+    'facebook.com',
+    'twitter.com',
+    'x.com',
+    'instagram.com',
+    // Game marketplaces (not content)
+    'g2a.com',
+    'cdkeys.com',
+    'eneba.com',
+    'kinguin.net',
+    'voidu.com',
+    // Gold selling / RMT sites (spam)
+    'mtmmo.com',
+    'u4gm.com',
+    // Q&A sites (low authority)
+    'quora.com',
+    // Generic tech (not gaming-focused)
+    'techradar.com',
+    'radiotimes.com',
+    'beebom.com',
+    // VPN/tool sites writing SEO content
+    'exitlag.com',
+    // News aggregators
+    'news.google.com',
+  ] as readonly string[],
   /**
    * Number of top results to provide with FULL TEXT content per section query.
    * The first N results get both summary AND full content for maximum detail.

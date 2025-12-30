@@ -1,4 +1,4 @@
-import type { CategorizedSearchResult, ContentType, SearchResultItem, SourceUsageItem } from '../../types';
+import type { CategorizedSearchResult, ContentType, SearchResultItem, SearchSource, SourceUsageItem } from '../../types';
 
 /**
  * Result of hybrid content selection.
@@ -87,7 +87,7 @@ export function buildResearchContext(
           const contentLabel = hybrid.contentType === 'full' ? '[FULL]' : 
                               (hybrid.contentType === 'summary' ? '[SUMMARY]' : '[CONTENT]');
           
-          // Track usage
+          // Track usage - include search source if known
           allSourceUsage.push({
             url: result.url,
             title: result.title,
@@ -96,6 +96,8 @@ export function buildResearchContext(
             section: sectionHeadline,
             query: r.query,
             hasSummary: !!result.summary,
+            // Only include searchSource if explicitly set (don't guess)
+            ...(r.searchSource ? { searchSource: r.searchSource } : {}),
           });
 
           return `  - ${result.title} (${result.url}) ${contentLabel}\n    ${hybrid.content}`;

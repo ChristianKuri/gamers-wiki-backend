@@ -416,6 +416,8 @@ export interface SourceUsageItem {
   readonly query: string;
   /** Whether this source had a summary available */
   readonly hasSummary: boolean;
+  /** Which search API returned this source (exa or tavily) */
+  readonly searchSource?: SearchSource;
 }
 
 /**
