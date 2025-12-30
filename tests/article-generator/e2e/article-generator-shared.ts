@@ -224,6 +224,18 @@ export function extractGenerationStats(json: any): GenerationStats {
           lowRelevance: filteredSources.filter((s: any) => s.reason === 'low_relevance').length,
           lowQuality: filteredSources.filter((s: any) => s.reason === 'low_quality').length,
           excludedDomain: filteredSources.filter((s: any) => s.reason === 'excluded_domain').length,
+          preFiltered: filteredSources.filter((s: any) => s.reason === 'pre_filtered').length,
+          scrapeFailure: filteredSources.filter((s: any) => s.reason === 'scrape_failure').length,
+        },
+        byProvider: {
+          tavily: filteredSources.filter((s: any) => s.searchSource === 'tavily').length,
+          exa: filteredSources.filter((s: any) => s.searchSource === 'exa').length,
+        },
+        byStage: {
+          programmatic: filteredSources.filter((s: any) => s.filterStage === 'programmatic').length,
+          preFilter: filteredSources.filter((s: any) => s.filterStage === 'pre_filter').length,
+          fullClean: filteredSources.filter((s: any) => s.filterStage === 'full_clean').length,
+          postClean: filteredSources.filter((s: any) => s.filterStage === 'post_clean').length,
         },
       }
     : undefined;

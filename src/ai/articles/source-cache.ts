@@ -483,6 +483,97 @@ export async function storeScrapeFailures(
 }
 
 /**
+ * Pre-filter result for storage.
+ */
+export interface PreFilterResultForStorage {
+  readonly url: string;
+  readonly domain: string;
+  readonly title: string;
+  readonly relevanceToGaming: number;
+  readonly relevanceToArticle: number;
+  readonly reason: string;
+  readonly contentType: string;
+  readonly searchSource: 'tavily' | 'exa';
+  readonly originalContentLength: number;
+}
+
+/**
+ * Store pre-filter results in the database.
+ * Stores minimal records with relevance scores for domain quality tracking.
+ * Only stores sources that were FILTERED OUT (low relevance).
+ *
+ * @param strapi - Strapi instance
+ * @param results - Pre-filter results to store (only irrelevant ones)
+ */
+export async function storePreFilterResults(
+  strapi: Core.Strapi,
+  results: readonly PreFilterResultForStorage[]
+): Promise<void> {
+  if (results.length === 0) {
+    return;
+  }
+
+  const sourceContentService = getSourceContentService(strapi);
+  const knex = strapi.db.connection;
+  const now = new Date().toISOString();
+  const domainsToUpdate = new Set<string>();
+
+  for (const result of results) {
+    const normalizedUrl = normalizeUrl(result.url);
+    if (!normalizedUrl) continue;
+
+    domainsToUpdate.add(result.domain);
+
+    try {
+      // Check if already exists (don't count same URL twice)
+      const existing = await knex<SourceContentRow>('source_contents')
+        .where('url', normalizedUrl)
+        .first();
+
+      if (existing) {
+        strapi.log.debug(`[SourceCache] Pre-filter result already recorded: ${normalizedUrl}`);
+        continue;
+      }
+
+      // Store minimal record with pre-filter relevance scores
+      // qualityScore is unknown (not cleaned), use null indicator
+      const preFilterData: Partial<SourceContentDocument> = {
+        url: normalizedUrl,
+        domain: result.domain,
+        title: result.title,
+        summary: null,
+        cleanedContent: `[Pre-filtered - Gaming: ${result.relevanceToGaming}/100, Article: ${result.relevanceToArticle}/100] ${result.reason}`,
+        originalContentLength: result.originalContentLength,
+        qualityScore: 0, // Unknown - not cleaned
+        relevanceScore: result.relevanceToGaming, // Use gaming relevance for domain tracking
+        qualityNotes: `Pre-filtered: ${result.reason}. Type: ${result.contentType}`,
+        contentType: result.contentType,
+        junkRatio: 1, // Not cleaned, so all is "junk" from our perspective
+        accessCount: 1,
+        lastAccessedAt: now,
+        searchSource: result.searchSource,
+      };
+
+      await sourceContentService.create({
+        data: preFilterData as Partial<SourceContentDocument>,
+      });
+
+      strapi.log.debug(
+        `[SourceCache] Stored pre-filter result (Gaming: ${result.relevanceToGaming}, Article: ${result.relevanceToArticle}): ${normalizedUrl}`
+      );
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      strapi.log.warn(`[SourceCache] Failed to store pre-filter result ${result.url}: ${message}`);
+    }
+  }
+
+  // Update domain quality for all affected domains
+  for (const domain of domainsToUpdate) {
+    await updateDomainQuality(strapi, domain);
+  }
+}
+
+/**
  * Store cleaned sources in the database.
  * Also updates domain quality aggregates.
  *

@@ -148,8 +148,14 @@ export interface FilteredSourceItem {
   readonly title: string;
   readonly qualityScore: number;
   readonly relevanceScore: number;
-  readonly reason: 'low_relevance' | 'low_quality' | 'excluded_domain';
+  readonly reason: 'low_relevance' | 'low_quality' | 'excluded_domain' | 'pre_filtered' | 'scrape_failure';
   readonly details: string;
+  /** Search query that returned this source */
+  readonly query?: string;
+  /** Search provider (tavily/exa) */
+  readonly searchSource?: 'tavily' | 'exa';
+  /** Stage where filtering happened */
+  readonly filterStage?: 'programmatic' | 'pre_filter' | 'full_clean' | 'post_clean';
 }
 
 /** Filtered sources statistics */
@@ -162,6 +168,20 @@ export interface FilteredSourcesStats {
     readonly lowRelevance: number;
     readonly lowQuality: number;
     readonly excludedDomain: number;
+    readonly preFiltered: number;
+    readonly scrapeFailure: number;
+  };
+  /** Breakdown by search provider */
+  readonly byProvider?: {
+    readonly tavily: number;
+    readonly exa: number;
+  };
+  /** Breakdown by filter stage */
+  readonly byStage?: {
+    readonly programmatic: number;
+    readonly preFilter: number;
+    readonly fullClean: number;
+    readonly postClean: number;
   };
 }
 

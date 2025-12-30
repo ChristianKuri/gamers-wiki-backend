@@ -261,7 +261,8 @@ export async function cleanSingleSource(
         });
       },
       {
-        context: `Cleaner: ${source.url.slice(0, 50)}...`,
+        // Full URL + content length for debugging timeouts
+        context: `Cleaner [${originalLength} chars]: ${source.url}`,
         signal: deps.signal,
       }
     );
@@ -396,7 +397,300 @@ export async function cleanSourcesBatch(
 }
 
 // ============================================================================
+// Pre-Filter: Quick Relevance Check (Cheap LLM call)
+// ============================================================================
+
+/**
+ * Schema for pre-filter LLM output.
+ * Uses two relevance scores for nuanced filtering.
+ */
+const PreFilterOutputSchema = z.object({
+  relevanceToGaming: z
+    .number()
+    .int()
+    .min(0)
+    .max(100)
+    .describe('Is this content about VIDEO GAMES in general? 0 = not at all (cooking, programming, adult), 100 = definitely about video games (game guides, reviews, wikis)'),
+  relevanceToArticle: z
+    .number()
+    .int()
+    .min(0)
+    .max(100)
+    .describe('Is this content relevant to the SPECIFIC article we are writing? 0 = unrelated to article topic, 100 = directly useful for this article'),
+  reason: z
+    .string()
+    .max(150)
+    .describe('Brief reason for the scores (max 150 chars)'),
+  contentType: z
+    .string()
+    .max(50)
+    .describe('Type of content detected (e.g., "game guide", "wiki", "news", "adult content", "programming tutorial")'),
+});
+
+type PreFilterOutput = z.infer<typeof PreFilterOutputSchema>;
+
+/**
+ * Pre-filter result for a single source.
+ */
+export interface PreFilterSingleResult {
+  readonly url: string;
+  readonly domain: string;
+  readonly title: string;
+  readonly relevanceToGaming: number;
+  readonly relevanceToArticle: number;
+  readonly reason: string;
+  readonly contentType: string;
+  readonly tokenUsage: TokenUsage;
+}
+
+/**
+ * Pre-filter batch result.
+ */
+export interface PreFilterBatchResult {
+  readonly relevant: RawSourceInput[];
+  readonly irrelevant: Array<{
+    source: RawSourceInput;
+    relevanceToGaming: number;
+    relevanceToArticle: number;
+    reason: string;
+  }>;
+  readonly results: PreFilterSingleResult[];
+  readonly tokenUsage: TokenUsage;
+}
+
+/**
+ * Get pre-filter system prompt.
+ */
+function getPreFilterSystemPrompt(): string {
+  return `You are a content relevance filter for Gamers.Wiki, a VIDEO GAME blog.
+
+Your job is to score web content on TWO dimensions:
+
+1. relevanceToGaming (0-100): Is this content about VIDEO GAMES?
+   - 0-20: Not gaming (adult content, cooking, programming tutorials, general tech)
+   - 21-50: Tangentially related (tech hardware, general entertainment)
+   - 51-80: Gaming-adjacent (gaming hardware, esports, gaming culture)
+   - 81-100: Directly about video games (guides, wikis, reviews, game news)
+
+2. relevanceToArticle (0-100): Is this useful for the SPECIFIC article topic?
+   - 0-20: Unrelated to article topic
+   - 21-50: Same game/genre but different topic
+   - 51-80: Related topic, might be useful
+   - 81-100: Directly relevant to what we're writing about
+
+EXAMPLES:
+- Python documentation → relevanceToGaming: 0, relevanceToArticle: 0
+- Elden Ring guide (for Elden Ring article) → relevanceToGaming: 100, relevanceToArticle: 100
+- Elden Ring boss guide (for beginner guide article) → relevanceToGaming: 100, relevanceToArticle: 70
+- Dark Souls guide (for Elden Ring article) → relevanceToGaming: 100, relevanceToArticle: 30
+- Gaming keyboard review (for Elden Ring article) → relevanceToGaming: 60, relevanceToArticle: 10
+- Adult content → relevanceToGaming: 0, relevanceToArticle: 0
+
+Be STRICT. When in doubt, score lower. We'd rather skip questionable content.`;
+}
+
+/**
+ * Get pre-filter user prompt.
+ */
+function getPreFilterUserPrompt(
+  domain: string,
+  title: string,
+  snippet: string,
+  gameName?: string,
+  articleTopic?: string
+): string {
+  const articleContext = articleTopic
+    ? `ARTICLE TOPIC: ${articleTopic}`
+    : gameName
+      ? `ARTICLE TOPIC: Article about the video game "${gameName}"`
+      : 'ARTICLE TOPIC: General gaming content';
+
+  return `Score this web content for relevance.
+
+${articleContext}
+
+DOMAIN: ${domain}
+PAGE TITLE: ${title}
+CONTENT SNIPPET (first 500 chars):
+${snippet}
+
+Provide:
+1. relevanceToGaming (0-100): Is this about video games?
+2. relevanceToArticle (0-100): Is this useful for our specific article?
+3. reason: Brief explanation
+4. contentType: What type of content is this?`;
+}
+
+/**
+ * Extended dependencies for pre-filter with article context.
+ */
+export interface PreFilterDeps extends CleanerDeps {
+  /** Topic/title of the article being written (for relevanceToArticle scoring) */
+  readonly articleTopic?: string;
+  /** Minimum relevanceToGaming score to pass (default: 50) */
+  readonly minGamingRelevance?: number;
+  /** Minimum relevanceToArticle score to pass (default: 30) */
+  readonly minArticleRelevance?: number;
+}
+
+/**
+ * Pre-filter a single source using a cheap LLM call.
+ * Uses only domain, title, and first 500 chars of content.
+ * Returns two relevance scores for nuanced filtering.
+ * 
+ * @param source - Raw source to check
+ * @param deps - Pre-filter dependencies
+ * @returns Pre-filter result with relevance scores
+ */
+export async function preFilterSingleSource(
+  source: RawSourceInput,
+  deps: PreFilterDeps
+): Promise<PreFilterSingleResult> {
+  const log = deps.logger ?? createPrefixedLogger('[PreFilter]');
+  const domain = extractDomain(source.url);
+  const snippet = source.content.slice(0, 500);
+
+  try {
+    const result = await withRetry(
+      async () => {
+        // Short timeout for pre-filter (it's a simple check)
+        const timeoutSignal = AbortSignal.timeout(CLEANER_CONFIG.PREFILTER_TIMEOUT_MS);
+        const signal = deps.signal
+          ? AbortSignal.any([deps.signal, timeoutSignal])
+          : timeoutSignal;
+
+        return deps.generateObject({
+          model: deps.model,
+          schema: PreFilterOutputSchema,
+          temperature: 0, // Deterministic for consistency
+          abortSignal: signal,
+          system: getPreFilterSystemPrompt(),
+          prompt: getPreFilterUserPrompt(domain, source.title, snippet, deps.gameName, deps.articleTopic),
+        });
+      },
+      {
+        context: `PreFilter: ${source.url}`,
+        maxRetries: 1, // Only 1 retry for pre-filter (speed > reliability)
+        signal: deps.signal,
+      }
+    );
+
+    const tokenUsage = createTokenUsageFromResult(result);
+    const output = result.object as PreFilterOutput;
+
+    return {
+      url: source.url,
+      domain,
+      title: source.title,
+      relevanceToGaming: output.relevanceToGaming,
+      relevanceToArticle: output.relevanceToArticle,
+      reason: output.reason,
+      contentType: output.contentType,
+      tokenUsage,
+    };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    log.warn(`Pre-filter failed for ${source.url}: ${message}`);
+
+    // On failure, assume relevant (don't filter out potentially good content)
+    // Use neutral scores so it goes to full cleaning
+    return {
+      url: source.url,
+      domain,
+      title: source.title,
+      relevanceToGaming: 50, // Neutral - let full cleaner decide
+      relevanceToArticle: 50,
+      reason: `Pre-filter failed: ${message.slice(0, 50)}`,
+      contentType: 'unknown',
+      tokenUsage: createEmptyTokenUsage(),
+    };
+  }
+}
+
+/**
+ * Pre-filter multiple sources in parallel.
+ * Separates relevant from irrelevant sources before full cleaning.
+ * Logs full URLs of filtered sources for debugging.
+ * 
+ * @param sources - Raw sources to check
+ * @param deps - Pre-filter dependencies  
+ * @returns Relevant sources, filtered sources, and all results for DB storage
+ */
+export async function preFilterSourcesBatch(
+  sources: readonly RawSourceInput[],
+  deps: PreFilterDeps
+): Promise<PreFilterBatchResult> {
+  const log = deps.logger ?? createPrefixedLogger('[PreFilter]');
+
+  if (sources.length === 0) {
+    return { relevant: [], irrelevant: [], results: [], tokenUsage: createEmptyTokenUsage() };
+  }
+
+  log.info(`Pre-filtering ${sources.length} sources for relevance...`);
+
+  // Run all pre-filters in parallel (they're cheap)
+  const results = await Promise.all(
+    sources.map((source) => preFilterSingleSource(source, deps))
+  );
+
+  // Use thresholds from deps or defaults
+  const minGaming = deps.minGamingRelevance ?? CLEANER_CONFIG.PREFILTER_MIN_GAMING_RELEVANCE;
+  const minArticle = deps.minArticleRelevance ?? CLEANER_CONFIG.PREFILTER_MIN_ARTICLE_RELEVANCE;
+
+  const relevant: RawSourceInput[] = [];
+  const irrelevant: Array<{
+    source: RawSourceInput;
+    relevanceToGaming: number;
+    relevanceToArticle: number;
+    reason: string;
+  }> = [];
+  let totalTokenUsage = createEmptyTokenUsage();
+
+  for (let i = 0; i < sources.length; i++) {
+    const source = sources[i];
+    const result = results[i];
+    totalTokenUsage = addTokenUsage(totalTokenUsage, result.tokenUsage);
+
+    // Pass if BOTH scores meet minimum thresholds
+    const passesGaming = result.relevanceToGaming >= minGaming;
+    const passesArticle = result.relevanceToArticle >= minArticle;
+
+    if (passesGaming && passesArticle) {
+      relevant.push(source);
+    } else {
+      irrelevant.push({
+        source,
+        relevanceToGaming: result.relevanceToGaming,
+        relevanceToArticle: result.relevanceToArticle,
+        reason: result.reason,
+      });
+    }
+  }
+
+  // Log results with FULL URLs
+  const costStr = totalTokenUsage.actualCostUsd
+    ? ` ($${totalTokenUsage.actualCostUsd.toFixed(4)})`
+    : '';
+  log.info(
+    `Pre-filter: ${relevant.length} relevant, ${irrelevant.length} irrelevant${costStr}`
+  );
+
+  // Log each filtered source with FULL URL for debugging
+  if (irrelevant.length > 0) {
+    for (const { source, relevanceToGaming, relevanceToArticle, reason } of irrelevant) {
+      log.info(
+        `  ✗ FILTERED: ${source.url}\n` +
+        `    Gaming: ${relevanceToGaming}/100, Article: ${relevanceToArticle}/100\n` +
+        `    Reason: ${reason}`
+      );
+    }
+  }
+
+  return { relevant, irrelevant, results, tokenUsage: totalTokenUsage };
+}
+
+// ============================================================================
 // Exports
 // ============================================================================
 
-export { CleanerOutputSchema };
+export { CleanerOutputSchema, PreFilterOutputSchema };

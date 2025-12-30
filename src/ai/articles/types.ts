@@ -619,9 +619,15 @@ export interface FilteredSourceSummary {
   readonly qualityScore: number;
   readonly relevanceScore: number;
   /** Reason for filtering */
-  readonly reason: 'low_relevance' | 'low_quality' | 'excluded_domain';
+  readonly reason: 'low_relevance' | 'low_quality' | 'excluded_domain' | 'pre_filtered' | 'scrape_failure';
   /** Human-readable details */
   readonly details: string;
+  /** Search query that returned this source */
+  readonly query?: string;
+  /** Search provider that returned this source */
+  readonly searchSource?: 'tavily' | 'exa';
+  /** Stage where filtering happened */
+  readonly filterStage?: 'programmatic' | 'pre_filter' | 'full_clean' | 'post_clean';
 }
 
 /**

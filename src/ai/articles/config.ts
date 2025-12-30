@@ -21,6 +21,13 @@
  * 5. OFF_TOPIC: Technical/programming content unrelated to gaming
  */
 export const UNIFIED_EXCLUDED_DOMAINS = new Set([
+  // === ADULT: Adult content sites (never relevant) ===
+  'xhamster.com',
+  'pornhub.com',
+  'xvideos.com',
+  'xnxx.com',
+  'redtube.com',
+
   // === NO_CONTENT: Video/audio platforms (no extractable text) ===
   'youtube.com',
   'youtu.be',
@@ -45,10 +52,14 @@ export const UNIFIED_EXCLUDED_DOMAINS = new Set([
   'mtmmo.com',
   'u4gm.com',
 
-  // === LOW_AUTHORITY: Q&A / forums ===
+  // === LOW_AUTHORITY: Q&A / forums / social ===
   'quora.com',
+  'reddit.com', // User-generated, inconsistent quality
+  'www.reddit.com',
+  'old.reddit.com',
   'gamefaqs.gamespot.com', // Use official GameSpot guides instead
   'steamcommunity.com', // Low-quality discussions
+  'fextralife.com', // Forums at fextralife.com/forums (wikis like eldenring.wiki.fextralife.com are fine)
 
   // === OFF_TOPIC: Generic tech (not gaming-focused) ===
   'techradar.com',
@@ -695,6 +706,36 @@ export const CLEANER_CONFIG = {
   get ENABLED(): boolean {
     return isCleanerEnabled();
   },
+  /**
+   * Whether to use LLM pre-filter before full cleaning.
+   * Pre-filter uses title + 500 char snippet to check relevance.
+   * Costs ~$0.0001-0.0005 per source, can save full cleaning cost on irrelevant content.
+   * Override with env var ARTICLE_PREFILTER_ENABLED=false
+   */
+  get PREFILTER_ENABLED(): boolean {
+    const envValue = process.env.ARTICLE_PREFILTER_ENABLED;
+    if (envValue !== undefined) {
+      return envValue.toLowerCase() !== 'false';
+    }
+    return true; // Enabled by default
+  },
+  /**
+   * Timeout for pre-filter LLM call (ms).
+   * Short timeout since it's a simple relevance check.
+   */
+  PREFILTER_TIMEOUT_MS: 10000,
+  /**
+   * Minimum relevanceToGaming score (0-100) to pass pre-filter.
+   * Content below this is definitely not about video games.
+   * 50 = moderate threshold, allows gaming-adjacent content.
+   */
+  PREFILTER_MIN_GAMING_RELEVANCE: 50,
+  /**
+   * Minimum relevanceToArticle score (0-100) to pass pre-filter.
+   * Content below this is not useful for the specific article.
+   * 30 = lenient, allows tangentially related content through to full cleaning.
+   */
+  PREFILTER_MIN_ARTICLE_RELEVANCE: 30,
   /**
    * Hardcoded list of domains to always exclude.
    * Uses UNIFIED_EXCLUDED_DOMAINS - single source of truth.

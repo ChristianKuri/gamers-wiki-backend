@@ -24,6 +24,13 @@ describe('source-cache', () => {
       expect(UNIFIED_EXCLUDED_DOMAINS.has('twitter.com')).toBe(true);
       expect(UNIFIED_EXCLUDED_DOMAINS.has('x.com')).toBe(true);
       expect(UNIFIED_EXCLUDED_DOMAINS.has('instagram.com')).toBe(true);
+      expect(UNIFIED_EXCLUDED_DOMAINS.has('reddit.com')).toBe(true);
+    });
+
+    it('should contain expected low-quality forum domains', () => {
+      expect(UNIFIED_EXCLUDED_DOMAINS.has('quora.com')).toBe(true);
+      expect(UNIFIED_EXCLUDED_DOMAINS.has('steamcommunity.com')).toBe(true);
+      expect(UNIFIED_EXCLUDED_DOMAINS.has('fextralife.com')).toBe(true); // Forums at fextralife.com/forums
     });
 
     it('should contain expected game marketplace domains', () => {
