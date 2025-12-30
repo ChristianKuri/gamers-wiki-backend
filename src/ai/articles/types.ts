@@ -857,6 +857,8 @@ export type SearchFunction = (
     maxResults?: number;
     includeAnswer?: boolean;
     includeRawContent?: boolean;
+    /** Domains to exclude (e.g., YouTube for no text content) */
+    excludeDomains?: readonly string[];
   }
 ) => Promise<SearchFunctionResult>;
 

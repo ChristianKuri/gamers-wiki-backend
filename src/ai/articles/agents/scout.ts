@@ -102,7 +102,7 @@ export interface ExecuteSearchOptions {
  */
 export interface ExecuteExaSearchOptions {
   readonly numResults?: number;
-  /** Search type: 'deep' (recommended), 'auto', 'neural', 'keyword', or 'fast' */
+  /** Search type override. Default: 'neural' (from exa.ts) - 4x faster than 'deep', same cost */
   readonly type?: 'deep' | 'auto' | 'neural' | 'keyword' | 'fast';
   /** Additional query variations for better coverage (deep search feature) */
   readonly additionalQueries?: readonly string[];
@@ -133,6 +133,8 @@ export async function executeSearch(
         maxResults: options.maxResults,
         includeAnswer: true,
         includeRawContent: false,
+        // Exclude YouTube - video pages have no useful text content
+        excludeDomains: [...SCOUT_CONFIG.EXA_EXCLUDE_DOMAINS],
       }),
     { context: `Scout search (${category}): "${query.slice(0, 40)}..."`, signal: options.signal }
   );
@@ -158,11 +160,14 @@ export async function executeExaSearch(
 ): Promise<CategorizedSearchResult> {
   const exaOptions: ExaSearchOptions = {
     numResults: options.numResults ?? SCOUT_CONFIG.CATEGORY_SEARCH_RESULTS,
-    // Use 'deep' for comprehensive results with query expansion
-    type: options.type ?? 'deep',
+    // Use default from exa.ts (neural) - 4x faster, same cost
+    // Only override if explicitly specified in options
+    ...(options.type ? { type: options.type } : {}),
     useAutoprompt: true,
-    // Request AI-generated summaries (Gemini Flash) - query-aware and more useful than truncated text
-    includeSummary: true,
+    // Summary disabled - adds 8-16s latency, use full content instead
+    includeSummary: SCOUT_CONFIG.EXA_INCLUDE_SUMMARY,
+    // Exclude YouTube - video pages have no useful text content
+    excludeDomains: [...SCOUT_CONFIG.EXA_EXCLUDE_DOMAINS],
     // Additional query variations for better coverage (deep search feature)
     ...(options.additionalQueries && options.additionalQueries.length > 0
       ? { additionalQueries: options.additionalQueries }
@@ -598,8 +603,7 @@ export async function runScout(
         trackSearchProgress(
           executeExaSearch(query, 'category-specific', {
             numResults: SCOUT_CONFIG.EXA_SEARCH_RESULTS,
-            type: 'deep',
-            // Note: includeDomains is optional - Exa's deep search finds comprehensive results without it
+            // Uses default from exa.ts (neural) - 4x faster, same cost
             signal,
           })
         )

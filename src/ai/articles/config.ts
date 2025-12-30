@@ -151,8 +151,12 @@ export const WORD_COUNT_CONSTRAINTS = {
 // ============================================================================
 
 export const SCOUT_CONFIG = {
-  /** Maximum length of a single snippet in search context */
-  MAX_SNIPPET_LENGTH: 800,
+  /**
+   * Maximum length of a single snippet in search context.
+   * INCREASED: Now that Exa returns 20,000c per result, use more of it.
+   * 10,000c × 5 results = 50,000c max in Scout context (reasonable for 1M token LLM).
+   */
+  MAX_SNIPPET_LENGTH: 10000,
   /** Maximum number of snippets to include */
   MAX_SNIPPETS: 10,
   /** Number of results for overview search */
@@ -161,17 +165,27 @@ export const SCOUT_CONFIG = {
   CATEGORY_SEARCH_RESULTS: 6,
   /**
    * Number of results for Exa semantic search.
-   * Exa pricing: 1-25 results cost the same ($5/1k searches)
-   * Always request 25 to maximize value.
+   * OPTIMIZED: 10 results based on A/B testing (Dec 2024).
+   * - 10 results = $0.015 (neural $0.005 + 10 × $0.001/page)
+   * - 70% more content for 50% more cost vs 5 results
    */
-  EXA_SEARCH_RESULTS: 25,
+  EXA_SEARCH_RESULTS: 10,
   /**
    * Whether to request AI-generated summaries from Exa.
-   * Summaries are query-aware and created by Gemini Flash.
-   * Much more useful than truncating raw text to 600 chars.
+   * DISABLED: A/B testing showed summaries add 8-16 SECONDS latency per search.
+   * Cost is only +$0.001/page but latency is unacceptable.
+   * Full text at 20,000c provides better value without the wait.
    * @see https://docs.exa.ai/reference/contents-retrieval#summary-summary-true
    */
-  EXA_INCLUDE_SUMMARY: true,
+  EXA_INCLUDE_SUMMARY: false,
+  /**
+   * Domains to exclude from ALL search results (Exa AND Tavily).
+   * YouTube is excluded because video pages have no useful text content -
+   * search APIs just return titles/descriptions which waste result slots.
+   * Saves money: each Exa result costs $0.001.
+   * Note: Named EXA_ for historical reasons but applies to both APIs.
+   */
+  EXA_EXCLUDE_DOMAINS: ['youtube.com', 'youtu.be'] as readonly string[],
   /**
    * Number of top results to provide with FULL TEXT content.
    * These results get both summary AND full content for maximum detail.
@@ -253,10 +267,17 @@ export const SPECIALIST_CONFIG = {
   MAX_PARAGRAPHS: 5,
   /** Maximum length of Scout overview to include */
   MAX_SCOUT_OVERVIEW_LENGTH: 2500,
-  /** Characters of research context per result */
-  RESEARCH_CONTEXT_PER_RESULT: 600,
-  /** Threshold for "thin research" warning */
-  THIN_RESEARCH_THRESHOLD: 500,
+  /**
+   * Characters of research context per result.
+   * INCREASED: Now that Exa returns 20,000c per result, use more of it.
+   * 10,000c × 5 results = 50,000c max per section (reasonable for 1M token LLM).
+   */
+  RESEARCH_CONTEXT_PER_RESULT: 10000,
+  /**
+   * Threshold for "thin research" warning.
+   * INCREASED: With larger content per result, threshold should be higher.
+   */
+  THIN_RESEARCH_THRESHOLD: 2000,
   /**
    * Temperature for Specialist LLM calls.
    *
@@ -275,18 +296,28 @@ export const SPECIALIST_CONFIG = {
   /** Maximum search results per query (Tavily) */
   MAX_SEARCH_RESULTS: 5,
   /**
-   * Number of results for Exa semantic search.
-   * Exa pricing: 1-25 results cost the same ($5/1k searches)
-   * Always request 25 to maximize value.
+   * Number of results for Exa semantic search per section.
+   * OPTIMIZED: 5 results based on A/B testing (Dec 2024).
+   * - 5 results = $0.010 (neural $0.005 + 5 × $0.001/page)
+   * - Section-specific queries are focused - fewer results needed
    */
-  EXA_SEARCH_RESULTS: 25,
+  EXA_SEARCH_RESULTS: 5,
   /**
    * Whether to request AI-generated summaries from Exa.
-   * Summaries are query-aware and created by Gemini Flash.
-   * Much more useful than truncating raw text to 600 chars.
+   * DISABLED: A/B testing showed summaries add 8-16 SECONDS latency per search.
+   * Cost is only +$0.001/page but latency is unacceptable.
+   * Full text at 20,000c provides better value without the wait.
    * @see https://docs.exa.ai/reference/contents-retrieval#summary-summary-true
    */
-  EXA_INCLUDE_SUMMARY: true,
+  EXA_INCLUDE_SUMMARY: false,
+  /**
+   * Domains to exclude from ALL search results (Exa AND Tavily).
+   * YouTube is excluded because video pages have no useful text content -
+   * search APIs just return titles/descriptions which waste result slots.
+   * Saves money: each Exa result costs $0.001.
+   * Note: Named EXA_ for historical reasons but applies to both APIs.
+   */
+  EXA_EXCLUDE_DOMAINS: ['youtube.com', 'youtu.be'] as readonly string[],
   /**
    * Number of top results to provide with FULL TEXT content per section query.
    * The first N results get both summary AND full content for maximum detail.

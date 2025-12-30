@@ -28,6 +28,11 @@ export interface TavilySearchOptions {
   readonly includeAnswer?: boolean;
   readonly includeRawContent?: boolean;
   readonly timeoutMs?: number;
+  /**
+   * Domains to exclude from search results.
+   * YouTube is recommended: video pages have no useful text content.
+   */
+  readonly excludeDomains?: readonly string[];
 }
 
 export interface TavilySearchResult {
@@ -168,6 +173,10 @@ export async function tavilySearch(
         include_answer: options.includeAnswer ?? true,
         include_raw_content: options.includeRawContent ?? false,
         include_usage: true, // Track actual credit usage for cost calculation
+        // Exclude domains like YouTube that have no useful text content
+        ...(options.excludeDomains && options.excludeDomains.length > 0
+          ? { exclude_domains: [...options.excludeDomains] }
+          : {}),
       }),
       signal: controller.signal,
     });

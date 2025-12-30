@@ -155,6 +155,8 @@ async function executeSingleSearch(
           searchDepth: SPECIALIST_CONFIG.SEARCH_DEPTH,
           maxResults: SPECIALIST_CONFIG.MAX_SEARCH_RESULTS,
           includeAnswer: true,
+          // Exclude YouTube - video pages have no useful text content
+          excludeDomains: [...SPECIALIST_CONFIG.EXA_EXCLUDE_DOMAINS],
         }),
       { context: `Specialist search: "${query.slice(0, 50)}..."`, signal }
     );
@@ -206,11 +208,12 @@ async function executeSingleExaSearch(
   try {
     const exaOptions: ExaSearchOptions = {
       numResults: SPECIALIST_CONFIG.EXA_SEARCH_RESULTS,
-      // Use 'deep' for comprehensive results with query expansion
-      type: 'deep',
+      // Uses default from exa.ts (neural) - 4x faster, same cost
       useAutoprompt: true,
-      // Request AI-generated summaries (Gemini Flash) - query-aware and more useful than truncated text
-      includeSummary: true,
+      // Summary disabled - adds 8-16s latency, use full content instead
+      includeSummary: SPECIALIST_CONFIG.EXA_INCLUDE_SUMMARY,
+      // Exclude YouTube - video pages have no useful text content
+      excludeDomains: [...SPECIALIST_CONFIG.EXA_EXCLUDE_DOMAINS],
     };
 
     const result = await withRetry(
