@@ -309,13 +309,6 @@ export const SCOUT_CONFIG = {
   get EXA_EXCLUDE_DOMAINS(): readonly string[] {
     return [...UNIFIED_EXCLUDED_DOMAINS];
   },
-  /**
-   * Number of top results to provide with FULL TEXT content.
-   * These results get both summary AND full content for maximum detail.
-   * Remaining results get summary only (more efficient).
-   * Set to 0 to use summaries for all results.
-   */
-  FULL_TEXT_RESULTS_COUNT: 2,
   /** Number of results for recent news search */
   RECENT_SEARCH_RESULTS: 5,
   /** Maximum number of category-specific searches to run */
@@ -459,13 +452,6 @@ export const SPECIALIST_CONFIG = {
   get EXA_EXCLUDE_DOMAINS(): readonly string[] {
     return [...UNIFIED_EXCLUDED_DOMAINS];
   },
-  /**
-   * Number of top results to provide with FULL TEXT content per section query.
-   * The first N results get both summary AND full content for maximum detail.
-   * Remaining results get summary only (more efficient).
-   * Set to 0 to use summaries for all results.
-   */
-  FULL_TEXT_RESULTS_COUNT: 1,
   /** Maximum sources to include in article */
   MAX_SOURCES: 25,
   /**

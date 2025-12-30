@@ -417,8 +417,9 @@ export function addTavilySearch(
 
 /**
  * Content type used for a source in the LLM context.
+ * Always 'full' - we always use full content from sources.
  */
-export type ContentType = 'full' | 'summary' | 'content';
+export type ContentType = 'full';
 
 /**
  * Tracking of which content type was used for a single source.
@@ -426,7 +427,7 @@ export type ContentType = 'full' | 'summary' | 'content';
 export interface SourceUsageItem {
   readonly url: string;
   readonly title: string;
-  /** Which content type was used in the LLM context */
+  /** Which content type was used in the LLM context (always 'full') */
   readonly contentType: ContentType;
   /** Phase where this source was used */
   readonly phase: 'scout' | 'specialist';
@@ -434,8 +435,6 @@ export interface SourceUsageItem {
   readonly section?: string;
   /** Search query that returned this source */
   readonly query: string;
-  /** Whether this source had a summary available */
-  readonly hasSummary: boolean;
   /** Which search API returned this source (exa or tavily) */
   readonly searchSource?: SearchSource;
 }
@@ -449,9 +448,6 @@ export interface SourceContentUsage {
   /** Summary counts */
   readonly counts: {
     readonly total: number;
-    readonly fullText: number;
-    readonly summary: number;
-    readonly contentFallback: number;
   };
 }
 
@@ -463,9 +459,6 @@ export function createEmptySourceContentUsage(): SourceContentUsage {
     sources: [],
     counts: {
       total: 0,
-      fullText: 0,
-      summary: 0,
-      contentFallback: 0,
     },
   };
 }
@@ -477,20 +470,11 @@ export function addSourceUsage(
   usage: SourceContentUsage,
   items: readonly SourceUsageItem[]
 ): SourceContentUsage {
-  const newCounts = { ...usage.counts };
-  for (const item of items) {
-    newCounts.total++;
-    if (item.contentType === 'full') {
-      newCounts.fullText++;
-    } else if (item.contentType === 'summary') {
-      newCounts.summary++;
-    } else {
-      newCounts.contentFallback++;
-    }
-  }
   return {
     sources: [...usage.sources, ...items],
-    counts: newCounts,
+    counts: {
+      total: usage.counts.total + items.length,
+    },
   };
 }
 

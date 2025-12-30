@@ -285,36 +285,23 @@ export async function executeExaSearch(
 }
 
 /**
- * Gets the display content for a search result using hybrid approach.
- * Top N results get full content, remaining get summary (if available).
+ * Gets the display content for a search result.
+ * Always uses full content.
  *
  * @param result - The search result item
- * @param index - Position in results (0-based)
- * @param fullTextCount - Number of top results to show full text
  * @param maxSnippetLength - Maximum length for content snippets
  * @returns Content string to display
  */
-function getHybridContent(
-  result: { content: string; summary?: string },
-  index: number,
-  fullTextCount: number,
+function getSourceContent(
+  result: { content: string },
   maxSnippetLength: number
 ): string {
-  // Top N results: use full content (for maximum detail)
-  if (index < fullTextCount) {
-    return result.content.slice(0, maxSnippetLength);
-  }
-  // Remaining results: prefer summary (more efficient, query-aware)
-  if (result.summary) {
-    return result.summary.slice(0, maxSnippetLength);
-  }
-  // Fallback to content if no summary
   return result.content.slice(0, maxSnippetLength);
 }
 
 /**
  * Builds search context string from search results.
- * Uses hybrid approach: top N results get full text, rest get summaries.
+ * Always uses full content for all results.
  * Exported for unit testing.
  *
  * @param results - Array of categorized search results
@@ -326,21 +313,18 @@ export function buildSearchContext(
   config: {
     resultsPerContext?: number;
     maxSnippetLength?: number;
-    fullTextCount?: number;
   } = {}
 ): string {
   const resultsPerContext = config.resultsPerContext ?? SCOUT_CONFIG.RESULTS_PER_SEARCH_CONTEXT;
   const maxSnippetLength = config.maxSnippetLength ?? SCOUT_CONFIG.MAX_SNIPPET_LENGTH;
-  const fullTextCount = config.fullTextCount ?? SCOUT_CONFIG.FULL_TEXT_RESULTS_COUNT;
 
   return results
     .map((search) => {
       const snippets = search.results
         .slice(0, resultsPerContext)
-        .map((r, index) => {
-          const displayContent = getHybridContent(r, index, fullTextCount, maxSnippetLength);
-          const contentLabel = index < fullTextCount ? '[FULL]' : (r.summary ? '[SUMMARY]' : '[CONTENT]');
-          return `  - ${r.title} (${r.url}) ${contentLabel}\n    ${displayContent}`;
+        .map((r) => {
+          const displayContent = getSourceContent(r, maxSnippetLength);
+          return `  - ${r.title} (${r.url})\n    ${displayContent}`;
         })
         .join('\n');
 

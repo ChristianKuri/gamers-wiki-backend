@@ -185,8 +185,8 @@ export interface FilteredSourcesStats {
   };
 }
 
-/** Content type used for a source */
-export type ContentType = 'full' | 'summary' | 'content';
+/** Content type used for a source (always 'full') */
+export type ContentType = 'full';
 
 /** Individual source usage tracking */
 export interface SourceUsageItem {
@@ -196,7 +196,6 @@ export interface SourceUsageItem {
   readonly phase: 'scout' | 'specialist';
   readonly section?: string;
   readonly query: string;
-  readonly hasSummary: boolean;
 }
 
 /** Source content usage statistics */
@@ -206,9 +205,6 @@ export interface SourceContentUsageStats {
   /** Summary counts */
   readonly counts: {
     readonly total: number;
-    readonly fullText: number;
-    readonly summary: number;
-    readonly contentFallback: number;
   };
 }
 

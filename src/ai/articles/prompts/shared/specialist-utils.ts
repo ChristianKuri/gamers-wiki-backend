@@ -1,47 +1,28 @@
 import type { CategorizedSearchResult, ContentType, SearchResultItem, SearchSource, SourceUsageItem } from '../../types';
 
 /**
- * Result of hybrid content selection.
+ * Result of content selection.
  */
-interface HybridContentResult {
+interface ContentResult {
   readonly content: string;
   readonly contentType: ContentType;
 }
 
 /**
- * Gets the display content for a search result using hybrid approach.
- * Top N results get full content, remaining get summary (if available).
+ * Gets the display content for a search result.
+ * Always uses full content (summary support removed as we don't use it).
  *
  * @param result - The search result item
- * @param index - Position in results (0-based)
- * @param fullTextCount - Number of top results to show full text
  * @param contentPerResult - Maximum length for content
- * @returns Content and which type was used
+ * @returns Content and content type (always 'full')
  */
-function getHybridContent(
+function getSourceContent(
   result: SearchResultItem,
-  index: number,
-  fullTextCount: number,
   contentPerResult: number
-): HybridContentResult {
-  // Top N results: use full content (for maximum detail)
-  if (index < fullTextCount) {
-    return {
-      content: result.content.slice(0, contentPerResult),
-      contentType: 'full',
-    };
-  }
-  // Remaining results: prefer summary (more efficient, query-aware)
-  if (result.summary) {
-    return {
-      content: result.summary.slice(0, contentPerResult),
-      contentType: 'summary',
-    };
-  }
-  // Fallback to content if no summary
+): ContentResult {
   return {
     content: result.content.slice(0, contentPerResult),
-    contentType: 'content',
+    contentType: 'full',
   };
 }
 
@@ -57,19 +38,17 @@ export interface ResearchContextResult {
 
 /**
  * Builds research context for a section.
- * Uses hybrid approach: top N results get full text, rest get summaries.
+ * Always uses full content for all results.
  *
  * @param research - Array of categorized search results
  * @param resultsPerResearch - Number of results to include per research query
  * @param contentPerResult - Maximum characters of content per result
- * @param fullTextCount - Number of top results to show full text (default: 1)
  * @param sectionHeadline - Section headline for tracking (optional)
  */
 export function buildResearchContext(
   research: readonly CategorizedSearchResult[],
   resultsPerResearch: number,
   contentPerResult: number,
-  fullTextCount: number = 1,
   sectionHeadline?: string
 ): ResearchContextResult {
   if (research.length === 0) {
@@ -82,25 +61,22 @@ export function buildResearchContext(
     .map((r, idx) => {
       const topResults = r.results
         .slice(0, resultsPerResearch)
-        .map((result, resultIndex) => {
-          const hybrid = getHybridContent(result, resultIndex, fullTextCount, contentPerResult);
-          const contentLabel = hybrid.contentType === 'full' ? '[FULL]' : 
-                              (hybrid.contentType === 'summary' ? '[SUMMARY]' : '[CONTENT]');
+        .map((result) => {
+          const source = getSourceContent(result, contentPerResult);
           
           // Track usage - include search source if known
           allSourceUsage.push({
             url: result.url,
             title: result.title,
-            contentType: hybrid.contentType,
+            contentType: source.contentType,
             phase: 'specialist',
             section: sectionHeadline,
             query: r.query,
-            hasSummary: !!result.summary,
             // Only include searchSource if explicitly set (don't guess)
             ...(r.searchSource ? { searchSource: r.searchSource } : {}),
           });
 
-          return `  - ${result.title} (${result.url}) ${contentLabel}\n    ${hybrid.content}`;
+          return `  - ${result.title} (${result.url})\n    ${source.content}`;
         })
         .join('\n');
 

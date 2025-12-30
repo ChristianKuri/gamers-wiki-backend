@@ -734,13 +734,12 @@ async function writeSection(
     );
   }
 
-  // Build research context with hybrid approach (top N get full text)
-  // Now returns both context string and source usage tracking
+  // Build research context (always uses full content)
+  // Returns both context string and source usage tracking
   const researchResult = buildResearchContext(
     sectionResearch,
     SPECIALIST_CONFIG.RESULTS_PER_RESEARCH_CONTEXT,
     SPECIALIST_CONFIG.RESEARCH_CONTEXT_PER_RESULT,
-    SPECIALIST_CONFIG.FULL_TEXT_RESULTS_COUNT,
     section.headline
   );
 
@@ -982,10 +981,7 @@ export async function runSpecialist(
   markdown += formatSources(finalUrls);
 
   // Log source usage summary
-  const fullTextCount = allSourceUsage.filter((s) => s.contentType === 'full').length;
-  const summaryCount = allSourceUsage.filter((s) => s.contentType === 'summary').length;
-  const contentCount = allSourceUsage.filter((s) => s.contentType === 'content').length;
-  log.info(`Source content usage: ${fullTextCount} full text, ${summaryCount} summary, ${contentCount} content fallback`);
+  log.info(`Source content usage: ${allSourceUsage.length} sources`);
 
   return {
     markdown: markdown.trim() + '\n',
