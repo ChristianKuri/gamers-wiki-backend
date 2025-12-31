@@ -64,10 +64,12 @@ General Overview:
 ${truncatedOverview}
 
 === WRITING INSTRUCTIONS ===
-- Write ${minParagraphs}-${maxParagraphs} paragraphs.
-- Stick to the facts found in research.
+- Write as many paragraphs as needed to cover the news completely.
+- COMPLETENESS > WORD COUNT: Cover all key facts without padding.
+- Stick to the facts found in research—don't invent details.
 - Use direct quotes if available in the research snippets.
 - Maintain a professional, journalistic tone.
+- Be concise: if you can cover everything in 2 paragraphs, that's better than stretching to 4.
 
 Write the section now (markdown only):`;
   }

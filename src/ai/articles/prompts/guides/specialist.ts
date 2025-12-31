@@ -230,9 +230,15 @@ WRITING GUIDELINES:
 Format:
 • Do NOT include the section headline (##)—it's added automatically
 • Start with content or a subheading (###)
-• Write ${minParagraphs}-${maxParagraphs} focused paragraphs
+• Write as many paragraphs as needed to fully cover ALL mustCover elements
 • Use **bold** for item/ability/location names on FIRST mention only
 • End with an actionable takeaway
+
+COMPLETENESS > WORD COUNT:
+• Every mustCover element MUST be thoroughly explained
+• Don't pad with filler—be concise but complete
+• If an element needs 2 paragraphs to explain properly, use 2 paragraphs
+• If you can cover everything in 3 paragraphs, that's fine—don't stretch to fill space
 
 Precision checklist (verify before submitting):
 ✓ Every named element leads with its proper name

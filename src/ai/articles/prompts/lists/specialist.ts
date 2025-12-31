@@ -64,10 +64,12 @@ General Overview:
 ${truncatedOverview}
 
 === WRITING INSTRUCTIONS ===
-- Write ${minParagraphs}-${maxParagraphs} paragraphs.
+- Write as many paragraphs as needed to fully cover each list item.
+- COMPLETENESS > WORD COUNT: Every item deserves proper justification, but don't pad.
 - If this section covers a list item, make sure to highlight its key stats/features.
-- Explain *why* it belongs in this list/rank.
+- Explain *why* it belongs in this list/rank with specific reasoning.
 - Use comparison points from other list items if possible.
+- Be thorough but concise—quality explanations, not filler text.
 
 Write the section now (markdown only):`;
   }

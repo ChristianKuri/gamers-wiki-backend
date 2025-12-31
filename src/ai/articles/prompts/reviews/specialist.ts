@@ -64,10 +64,12 @@ General Overview:
 ${truncatedOverview}
 
 === WRITING INSTRUCTIONS ===
-- Write ${minParagraphs}-${maxParagraphs} paragraphs.
+- Write as many paragraphs as needed to provide thorough analysis.
+- COMPLETENESS > WORD COUNT: Deep analysis matters, but don't pad with repetition.
 - Be analytical. Don't just describe the feature, evaluate it.
-- Is it fun? Is it broken? Is it new?
+- Is it fun? Is it broken? Is it new? Support claims with evidence.
 - Compare with genre standards if applicable.
+- Quality critique > length—a concise, insightful paragraph beats three vague ones.
 
 Write the section now (markdown only):`;
   }
