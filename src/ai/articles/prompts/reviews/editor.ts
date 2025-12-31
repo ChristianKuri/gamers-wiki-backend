@@ -28,7 +28,7 @@ ${validationFeedbackSection}
 ${ctx.scoutBriefing.fullContext}
 
 === ${ctx.existingResearchSummary}
-
+${ctx.topSourcesSummary ? `\n${ctx.topSourcesSummary}\n` : ''}
 === REVIEW STRUCTURE ===
 The article MUST be a 'reviews' category.
 Standard review structure:

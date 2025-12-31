@@ -70,6 +70,7 @@ import {
   type SearchQueryStats,
   type SearchSource,
   type TokenUsage,
+  type TopSourceForQuery,
 } from '../types';
 
 // Re-export config for backwards compatibility
@@ -606,6 +607,59 @@ export function calculateResearchConfidence(
 }
 
 /**
+ * Extracts the best source (highest quality + relevance) from each search query.
+ * Used to give the Editor detailed context for planning.
+ *
+ * @param allResults - All categorized search results from the Scout phase
+ * @returns Array of top sources, one per query
+ */
+export function extractTopSourcesPerQuery(
+  allResults: readonly CategorizedSearchResult[]
+): TopSourceForQuery[] {
+  const topSources: TopSourceForQuery[] = [];
+
+  for (const result of allResults) {
+    // Find the best source in this query's results
+    let bestSource: TopSourceForQuery | null = null;
+    let bestScore = -1;
+
+    for (const item of result.results) {
+      // Skip sources without quality/relevance scores (not cleaned)
+      if (item.qualityScore === undefined || item.relevanceScore === undefined) {
+        continue;
+      }
+
+      // Skip sources with no/minimal content
+      if (!item.content || item.content.length < 100) {
+        continue;
+      }
+
+      const combinedScore = item.qualityScore + item.relevanceScore;
+      if (combinedScore > bestScore) {
+        bestScore = combinedScore;
+        bestSource = {
+          query: result.query,
+          searchSource: result.searchSource ?? 'tavily',
+          title: item.title,
+          url: item.url,
+          content: item.content,
+          qualityScore: item.qualityScore,
+          relevanceScore: item.relevanceScore,
+          combinedScore,
+        };
+      }
+    }
+
+    // Only include if we found a valid source
+    if (bestSource) {
+      topSources.push(bestSource);
+    }
+  }
+
+  return topSources;
+}
+
+/**
  * Options for assembling ScoutOutput.
  */
 export interface AssembleScoutOutputOptions {
@@ -613,6 +667,7 @@ export interface AssembleScoutOutputOptions {
   readonly filteredSources?: readonly FilteredSourceSummary[];
   readonly duplicatedUrls?: readonly DuplicateUrlInfo[];
   readonly queryStats?: readonly SearchQueryStats[];
+  readonly topSourcesPerQuery?: readonly TopSourceForQuery[];
 }
 
 /**
@@ -641,7 +696,7 @@ export function assembleScoutOutput(
   searchApiCosts: SearchApiCosts,
   options: AssembleScoutOutputOptions = {}
 ): ScoutOutput {
-  const { cleaningTokenUsage, filteredSources = [], duplicatedUrls, queryStats } = options;
+  const { cleaningTokenUsage, filteredSources = [], duplicatedUrls, queryStats, topSourcesPerQuery } = options;
 
   const output: ScoutOutput = {
     briefing: {
@@ -662,6 +717,8 @@ export function assembleScoutOutput(
     ...(duplicatedUrls && duplicatedUrls.length > 0 ? { duplicatedUrls } : {}),
     // Include query stats if available
     ...(queryStats && queryStats.length > 0 ? { queryStats } : {}),
+    // Include top sources per query for Editor context
+    ...(topSourcesPerQuery && topSourcesPerQuery.length > 0 ? { topSourcesPerQuery } : {}),
   };
 
   // Only include cleaningTokenUsage if there was actual cleaning
@@ -1094,6 +1151,13 @@ export async function runScout(
     );
   }
 
+  // Extract top source from each query for Editor context
+  const combinedSearchResults = [...tavilyResults, ...exaResults].map((r) => r.result);
+  const topSourcesPerQuery = extractTopSourcesPerQuery(combinedSearchResults);
+  if (topSourcesPerQuery.length > 0) {
+    log.debug(`Extracted ${topSourcesPerQuery.length} top sources for Editor context`);
+  }
+
   return assembleScoutOutput(
     overviewBriefing,
     categoryBriefing,
@@ -1108,6 +1172,7 @@ export async function runScout(
       filteredSources: allFilteredSources,
       duplicatedUrls,
       queryStats,
+      topSourcesPerQuery,
     }
   );
 }

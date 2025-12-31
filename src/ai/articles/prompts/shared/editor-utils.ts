@@ -144,3 +144,45 @@ export function buildExistingResearchSummary(
 
   return `EXISTING RESEARCH COVERAGE:\nOverview searches: ${overviewSearches}\nCategory searches: ${categorySearches}\nRecent searches: ${recentSearches}\nTotal sources: ${totalSources}\n\nThe research pool already contains comprehensive information on:\n${overviewPreview}\n...\n\nWhen creating research queries, focus on SPECIFIC details not yet fully covered.`;
 }
+
+/**
+ * Builds the top sources content for Editor context.
+ * Shows the FULL cleaned content from the best source (highest quality + relevance) 
+ * from each search query so the Editor can see actual content when planning.
+ *
+ * Note: Gemini Flash 3 has 1M token context, so we can include full articles
+ * from all 6 queries (~6 full web pages) without truncation.
+ *
+ * @param scoutOutput - The Scout output containing topSourcesPerQuery
+ * @returns Formatted string with top sources, or empty string if none available
+ */
+export function buildTopSourcesSummary(scoutOutput: ScoutOutput): string {
+  const topSources = scoutOutput.topSourcesPerQuery;
+  if (!topSources || topSources.length === 0) {
+    return '';
+  }
+
+  const sections: string[] = [
+    '=== TOP SOURCES FROM RESEARCH (Full content from best source per query) ===',
+    'These are the FULL cleaned articles from the highest-quality, most relevant source for each search.',
+    'Use this actual content to extract items, locations, NPCs, mechanics, and plan comprehensive sections.',
+    '',
+  ];
+
+  for (let i = 0; i < topSources.length; i++) {
+    const source = topSources[i];
+
+    sections.push(`--- SOURCE ${i + 1}: "${source.query}" (${source.searchSource}) ---`);
+    sections.push(`Title: ${source.title}`);
+    sections.push(`URL: ${source.url}`);
+    sections.push(`Quality: ${source.qualityScore}/100, Relevance: ${source.relevanceScore}/100`);
+    sections.push(`Character count: ${source.content.length.toLocaleString()}`);
+    sections.push('');
+    sections.push(source.content);
+    sections.push('');
+    sections.push('--- END OF SOURCE ---');
+    sections.push('');
+  }
+
+  return sections.join('\n');
+}

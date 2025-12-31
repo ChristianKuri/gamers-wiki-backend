@@ -73,7 +73,7 @@ ${ctx.instruction?.trim() || 'Create a comprehensive guide'}
 ${ctx.scoutBriefing.fullContext}
 
 ${ctx.existingResearchSummary}
-
+${ctx.topSourcesSummary ? `\n${ctx.topSourcesSummary}\n` : ''}
 ██████████████████████████████████████████████████████████████████████████████
 ██  PHASE 1: EXHAUSTIVE EXTRACTION (Do this mentally BEFORE planning)       ██
 ██████████████████████████████████████████████████████████████████████████████

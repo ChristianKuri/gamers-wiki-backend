@@ -216,6 +216,38 @@ export interface ScoutOutput {
    * Helps understand where results were lost to deduplication or filtering.
    */
   readonly queryStats?: readonly SearchQueryStats[];
+  /**
+   * The best source (highest quality + relevance) from each search query.
+   * Used by the Editor to see actual content when planning the article.
+   */
+  readonly topSourcesPerQuery?: readonly TopSourceForQuery[];
+}
+
+// ============================================================================
+// Top Sources Per Query (for Editor context)
+// ============================================================================
+
+/**
+ * The best source from a single search query, selected by quality + relevance.
+ * Used to give the Editor agent detailed context for planning.
+ */
+export interface TopSourceForQuery {
+  /** The search query this source came from */
+  readonly query: string;
+  /** The search engine used (tavily or exa) */
+  readonly searchSource: SearchSource;
+  /** Title of the source page */
+  readonly title: string;
+  /** URL of the source */
+  readonly url: string;
+  /** The cleaned content from this source */
+  readonly content: string;
+  /** Quality score (0-100) */
+  readonly qualityScore: number;
+  /** Relevance score (0-100) */
+  readonly relevanceScore: number;
+  /** Combined score used for selection (quality + relevance) */
+  readonly combinedScore: number;
 }
 
 // ============================================================================

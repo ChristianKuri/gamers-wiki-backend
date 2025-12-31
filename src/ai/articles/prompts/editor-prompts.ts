@@ -2,7 +2,7 @@
  * Editor Agent Prompts - Facade
  */
 
-import { buildRequiredElementHints, buildCategoryHintsSection, buildExistingResearchSummary } from './shared/editor-utils';
+import { buildRequiredElementHints, buildCategoryHintsSection, buildExistingResearchSummary, buildTopSourcesSummary } from './shared/editor-utils';
 import type { EditorPromptContext, EditorPrompts } from './shared/editor';
 import { ArticleCategorySlug } from '../article-plan';
 
@@ -14,7 +14,7 @@ import { editorPrompts as listsPrompts } from './lists/editor';
 import { genericEditorPrompts } from './shared/generic-editor';
 
 // Re-export utils
-export { buildRequiredElementHints, buildCategoryHintsSection, buildExistingResearchSummary };
+export { buildRequiredElementHints, buildCategoryHintsSection, buildExistingResearchSummary, buildTopSourcesSummary };
 export type { EditorPromptContext };
 
 const strategies: Record<ArticleCategorySlug, EditorPrompts> = {

@@ -16,6 +16,11 @@ export interface EditorPromptContext {
   readonly targetWordCount?: number;
   readonly validationFeedback?: readonly string[];
   readonly categorySlug?: ArticleCategorySlug;
+  /**
+   * Formatted summary of the best sources from each search query.
+   * Contains actual cleaned content to help the Editor plan better.
+   */
+  readonly topSourcesSummary?: string;
 }
 
 export interface EditorPrompts {
