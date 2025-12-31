@@ -81,6 +81,7 @@ import {
   type Clock,
   type FixApplied,
   type FixerOutcomeMetrics,
+  extractScoutSourceUsage,
   type GameArticleContext,
   type GameArticleDraft,
   type RecoveryMetadata,
@@ -1476,12 +1477,18 @@ export async function generateGameArticleDraft(
   const llmCostUsd = tokenUsage?.actualCostUsd ?? 0;
   const totalEstimatedCostUsd = llmCostUsd + searchApiCosts.totalUsd;
 
-  // Build source content usage tracking (Specialist phase only for now)
-  // TODO: Add Scout phase source tracking in future
+  // Build source content usage tracking (Scout + Specialist phases)
+  const scoutSourceUsage = extractScoutSourceUsage(scoutOutput.researchPool);
   const sourceContentUsage: SourceContentUsage = addSourceUsage(
-    createEmptySourceContentUsage(),
+    addSourceUsage(createEmptySourceContentUsage(), scoutSourceUsage),
     specialistSourceUsage
   );
+
+  // Merge filtered sources from Scout and Specialist phases
+  const allFilteredSources = [
+    ...scoutOutput.filteredSources,
+    ...specialistResult.output.filteredSources,
+  ];
 
   // Build immutable metadata for debugging and analytics
   const metadata: ArticleGenerationMetadata = {
@@ -1497,9 +1504,9 @@ export async function generateGameArticleDraft(
     correlationId,
     researchConfidence: scoutOutput.confidence,
     ...(recovery ? { recovery } : {}),
-    // Include filtered sources if any were filtered out
-    ...(scoutOutput.filteredSources.length > 0
-      ? { filteredSources: scoutOutput.filteredSources }
+    // Include filtered sources from both Scout and Specialist phases
+    ...(allFilteredSources.length > 0
+      ? { filteredSources: allFilteredSources }
       : {}),
   };
 

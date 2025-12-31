@@ -47,6 +47,7 @@ import {
   createEmptyTokenUsage,
   createTokenUsageFromResult,
   type CategorizedSearchResult,
+  type FilteredSourceSummary,
   type GameArticleContext,
   type ResearchPool,
   type ResearchProgressCallback,
@@ -115,6 +116,11 @@ export interface SpecialistOutput {
    * Useful for debugging and quality analysis.
    */
   readonly sourceUsage: readonly SourceUsageItem[];
+  /**
+   * Sources filtered out due to low quality or relevance during Specialist research.
+   * Tracked for transparency and debugging.
+   */
+  readonly filteredSources: readonly FilteredSourceSummary[];
 }
 
 // ============================================================================
@@ -128,6 +134,8 @@ interface SingleSearchResult {
   readonly query: string;
   readonly result: ReturnType<typeof processSearchResults>;
   readonly success: true;
+  /** Sources filtered out during cleaning (if cleaning was enabled) */
+  readonly filteredSources?: readonly FilteredSourceSummary[];
 }
 
 /**
@@ -194,6 +202,7 @@ async function executeSingleSearch(
         query,
         result: cleaningResult.result,
         success: true,
+        filteredSources: cleaningResult.filteredSources,
       };
     }
 
@@ -202,6 +211,7 @@ async function executeSingleSearch(
       query,
       result: processSearchResults(query, 'section-specific', result, 'tavily', result.costUsd),
       success: true,
+      filteredSources: [],
     };
   } catch (error) {
     // Re-throw if cancelled - we don't want to gracefully degrade cancellation
@@ -293,6 +303,7 @@ async function executeSingleExaSearch(
         query,
         result: cleaningResult.result,
         success: true,
+        filteredSources: cleaningResult.filteredSources,
       };
     }
 
@@ -300,6 +311,7 @@ async function executeSingleExaSearch(
       query,
       result: processSearchResults(query, 'section-specific', rawResults, 'exa' as SearchSource, costUsd),
       success: true,
+      filteredSources: [],
     };
   } catch (error) {
     // Re-throw if cancelled
@@ -365,6 +377,8 @@ interface BatchResearchResult {
   readonly failedQueries: readonly string[];
   /** Aggregated search API costs from batch research */
   readonly searchApiCosts: SearchApiCosts;
+  /** Sources filtered out due to low quality or relevance during batch research */
+  readonly filteredSources: readonly FilteredSourceSummary[];
 }
 
 /**
@@ -417,6 +431,7 @@ async function batchResearchForSections(
       failureCount: 0,
       failedQueries: [],
       searchApiCosts: createEmptySearchApiCosts(),
+      filteredSources: [],
     };
   }
 
@@ -468,6 +483,7 @@ async function batchResearchForSections(
 
   let successCount = 0;
   const failedQueries: string[] = [];
+  const allFilteredSources: FilteredSourceSummary[] = [];
   let completedQueries = 0;
   const totalQueries = tavilyQueries.length + exaQueries.length;
   let searchApiCosts = createEmptySearchApiCosts();
@@ -487,6 +503,11 @@ async function batchResearchForSections(
       if (searchResult.success) {
         poolBuilder.add(searchResult.result);
         successCount++;
+        
+        // Collect filtered sources from this search
+        if (searchResult.filteredSources && searchResult.filteredSources.length > 0) {
+          allFilteredSources.push(...searchResult.filteredSources);
+        }
 
         // Track search costs
         if (isExa) {
@@ -596,6 +617,7 @@ async function batchResearchForSections(
     failureCount: failedQueries.length,
     failedQueries,
     searchApiCosts,
+    filteredSources: allFilteredSources,
   };
 }
 
@@ -827,7 +849,7 @@ export async function runSpecialist(
   }
 
   log.info('Starting batch research for all sections...');
-  const { pool: enrichedPool, successCount, failureCount, searchApiCosts } = await batchResearchForSections(
+  const { pool: enrichedPool, successCount, failureCount, searchApiCosts, filteredSources } = await batchResearchForSections(
     plan,
     scoutOutput.researchPool,
     deps.search,
@@ -990,6 +1012,7 @@ export async function runSpecialist(
     tokenUsage: totalTokenUsage,
     searchApiCosts,
     sourceUsage: allSourceUsage,
+    filteredSources,
   };
 }
 

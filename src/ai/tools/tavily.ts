@@ -43,6 +43,11 @@ export interface TavilySearchOptions {
    * YouTube is recommended: video pages have no useful text content.
    */
   readonly excludeDomains?: readonly string[];
+  /**
+   * Domains to specifically include in search results.
+   * When set, only results from these domains will be returned.
+   */
+  readonly includeDomains?: readonly string[];
 }
 
 export interface TavilySearchResult {
@@ -188,6 +193,10 @@ export async function tavilySearch(
         // Exclude domains like YouTube that have no useful text content
         ...(options.excludeDomains && options.excludeDomains.length > 0
           ? { exclude_domains: [...options.excludeDomains] }
+          : {}),
+        // Include only specific domains (when set)
+        ...(options.includeDomains && options.includeDomains.length > 0
+          ? { include_domains: [...options.includeDomains] }
           : {}),
       }),
       signal: controller.signal,

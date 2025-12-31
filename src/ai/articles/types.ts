@@ -479,6 +479,42 @@ export function addSourceUsage(
 }
 
 /**
+ * Extracts source usage items from Scout's research pool.
+ * Converts the research pool's CategorizedSearchResults into SourceUsageItems.
+ */
+export function extractScoutSourceUsage(researchPool: ResearchPool): readonly SourceUsageItem[] {
+  const sources: SourceUsageItem[] = [];
+  const seenUrls = new Set<string>();
+
+  // Helper to process a list of categorized results
+  const processResults = (results: readonly CategorizedSearchResult[]) => {
+    for (const categorized of results) {
+      for (const result of categorized.results) {
+        // Deduplicate by URL
+        if (seenUrls.has(result.url)) continue;
+        seenUrls.add(result.url);
+
+        sources.push({
+          url: result.url,
+          title: result.title,
+          contentType: 'full',
+          phase: 'scout',
+          query: categorized.query,
+          searchSource: categorized.searchSource ?? 'tavily',
+        });
+      }
+    }
+  };
+
+  // Process all Scout findings
+  processResults(researchPool.scoutFindings.overview);
+  processResults(researchPool.scoutFindings.categorySpecific);
+  processResults(researchPool.scoutFindings.recent);
+
+  return sources;
+}
+
+/**
  * Creates an empty token usage object.
  */
 export function createEmptyTokenUsage(): TokenUsage {

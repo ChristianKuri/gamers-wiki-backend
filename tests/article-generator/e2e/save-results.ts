@@ -197,6 +197,8 @@ export interface SourceUsageItem {
   readonly phase: 'scout' | 'specialist';
   readonly section?: string;
   readonly query: string;
+  /** Search source that provided this result */
+  readonly searchSource?: 'tavily' | 'exa';
 }
 
 /** Source content usage statistics */
