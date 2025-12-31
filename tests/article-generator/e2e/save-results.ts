@@ -152,6 +152,8 @@ export interface SourceItem {
   readonly relevanceScore?: number;
   /** Length of cleaned content in characters */
   readonly cleanedCharCount?: number;
+  /** Whether this content was retrieved from cache (true) or newly cleaned (false) */
+  readonly wasCached?: boolean;
 }
 
 /** Sources grouped by query */

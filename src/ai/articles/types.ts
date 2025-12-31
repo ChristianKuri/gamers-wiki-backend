@@ -106,6 +106,8 @@ export interface SearchResultItem {
   readonly qualityScore?: number;
   /** Relevance score (0-100) from cleaner, if cleaned */
   readonly relevanceScore?: number;
+  /** Whether this content was retrieved from cache (true) or newly cleaned (false) */
+  readonly wasCached?: boolean;
 }
 
 /**
@@ -447,6 +449,8 @@ export interface SourceUsageItem {
   readonly relevanceScore?: number;
   /** Length of cleaned content in characters */
   readonly cleanedCharCount?: number;
+  /** Whether this content was retrieved from cache (true) or newly cleaned (false) */
+  readonly wasCached?: boolean;
 }
 
 /**
@@ -516,6 +520,8 @@ export function extractScoutSourceUsage(researchPool: ResearchPool): readonly So
           ...(result.relevanceScore !== undefined ? { relevanceScore: result.relevanceScore } : {}),
           // Include cleaned content length
           cleanedCharCount: result.content.length,
+          // Include cache status if available
+          ...(result.wasCached !== undefined ? { wasCached: result.wasCached } : {}),
         });
       }
     }

@@ -238,6 +238,7 @@ function groupSourcesByQuery(sources: any[]): any[] {
       ...(source.qualityScore !== undefined ? { qualityScore: source.qualityScore } : {}),
       ...(source.relevanceScore !== undefined ? { relevanceScore: source.relevanceScore } : {}),
       ...(cleanedCharCount !== undefined ? { cleanedCharCount } : {}),
+      ...(source.wasCached !== undefined ? { wasCached: source.wasCached } : {}),
     });
   }
   

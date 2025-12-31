@@ -1062,6 +1062,8 @@ export async function processSearchResultsWithCleaning(
       const cached = cachedByUrl.get(normalized);
       const cleaned = cleanedByUrl.get(normalized);
       const cleanedSource = cached || cleaned;
+      // Track whether content was from cache or newly cleaned
+      const wasCached = cached !== undefined;
 
       if (cleanedSource) {
         // Skip scrape failures - they have no useful content
@@ -1119,6 +1121,7 @@ export async function processSearchResultsWithCleaning(
           ...(typeof r.score === 'number' ? { score: r.score } : {}),
           qualityScore: cleanedSource.qualityScore,
           relevanceScore: cleanedSource.relevanceScore,
+          wasCached,
         };
       }
 

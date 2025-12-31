@@ -79,6 +79,8 @@ export function buildResearchContext(
             ...(result.relevanceScore !== undefined ? { relevanceScore: result.relevanceScore } : {}),
             // Include cleaned content length
             cleanedCharCount: result.content.length,
+            // Include cache status if available
+            ...(result.wasCached !== undefined ? { wasCached: result.wasCached } : {}),
           });
 
           return `  - ${result.title} (${result.url})\n    ${source.content}`;
