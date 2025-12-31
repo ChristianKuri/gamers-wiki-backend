@@ -189,6 +189,7 @@ export interface FilteredSourceItem {
 /** Filtered sources grouped by query */
 export interface FilteredSourcesByQuery {
   readonly query: string;
+  readonly phase?: 'scout' | 'specialist';
   readonly searchSource?: 'tavily' | 'exa';
   readonly sources: readonly FilteredSourceItem[];
 }

@@ -1492,10 +1492,10 @@ export async function generateGameArticleDraft(
     specialistSourceUsage
   );
 
-  // Merge filtered sources from Scout and Specialist phases
+  // Merge filtered sources from Scout and Specialist phases, adding phase info
   const allFilteredSources = [
-    ...scoutOutput.filteredSources,
-    ...specialistResult.output.filteredSources,
+    ...scoutOutput.filteredSources.map(s => ({ ...s, phase: 'scout' as const })),
+    ...specialistResult.output.filteredSources.map(s => ({ ...s, phase: 'specialist' as const })),
   ];
 
   // Build immutable metadata for debugging and analytics

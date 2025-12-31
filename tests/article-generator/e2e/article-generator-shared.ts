@@ -252,11 +252,12 @@ function groupFilteredSourcesByQuery(sources: any[]): any[] {
   const groups = new Map<string, any>();
   
   for (const source of sources) {
-    const key = `${source.query ?? 'unknown'}|${source.searchSource ?? 'unknown'}`;
+    const key = `${source.query ?? 'unknown'}|${source.phase ?? 'unknown'}|${source.searchSource ?? 'unknown'}`;
     
     if (!groups.has(key)) {
       groups.set(key, {
         query: source.query ?? 'unknown',
+        ...(source.phase ? { phase: source.phase } : {}),
         searchSource: source.searchSource,
         sources: [],
       });

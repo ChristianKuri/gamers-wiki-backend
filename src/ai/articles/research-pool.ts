@@ -609,6 +609,8 @@ export interface FilteredSource {
   readonly details: string;
   /** Search query that returned this source */
   readonly query?: string;
+  /** Phase where this source was filtered (scout or specialist) */
+  readonly phase?: 'scout' | 'specialist';
   /** Search provider that returned this source */
   readonly searchSource?: 'tavily' | 'exa';
   /** Stage where filtering happened */
