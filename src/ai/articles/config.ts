@@ -51,6 +51,9 @@ export const UNIFIED_EXCLUDED_DOMAINS = new Set([
   // === SPAM: Gold selling / RMT sites ===
   'mtmmo.com',
   'u4gm.com',
+  'mmogah.com', // Gold/item selling
+  'aoeah.com', // Game currency selling
+  'mmopixel.com', // Game currency selling
 
   // === LOW_AUTHORITY: Q&A / forums / social ===
   'quora.com',
@@ -60,6 +63,10 @@ export const UNIFIED_EXCLUDED_DOMAINS = new Set([
   'gamefaqs.gamespot.com', // Use official GameSpot guides instead
   'steamcommunity.com', // Low-quality discussions
   'fextralife.com', // Forums at fextralife.com/forums (wikis like eldenring.wiki.fextralife.com are fine)
+  '4chan.org', // Anonymous forum, often toxic
+  'boards.4chan.org',
+  'resetera.com', // Gaming forum, low quality (25 avg score in DB)
+  'forum.psnprofiles.com', // Trophy hunting forum
 
   // === OFF_TOPIC: Generic tech (not gaming-focused) ===
   'techradar.com',
@@ -69,6 +76,7 @@ export const UNIFIED_EXCLUDED_DOMAINS = new Set([
 
   // === OFF_TOPIC: News aggregators ===
   'news.google.com',
+  'msn.com', // Aggregates content from other sites
 
   // === NOT_VIDEO_GAMES: Mod sites (mods ≠ game guides) ===
   'nexusmods.com',
@@ -103,6 +111,11 @@ export const UNIFIED_EXCLUDED_DOMAINS = new Set([
   'timesofindia.indiatimes.com',
   'oreateai.com', // AI-generated spam
   'mandatory.gg',
+
+  // === OFF_TOPIC: Non-gaming sites found in searches ===
+  'plarium.com', // Mobile game publisher, aggressive monetization spam
+  'arsturn.com', // AI chatbot company
+  'freewp.co.il', // WordPress site, not gaming
 ]);
 
 // ============================================================================
@@ -614,9 +627,9 @@ export const CLEANER_CONFIG = {
   BATCH_SIZE: 100,
   /**
    * Timeout for cleaning a single URL (ms).
-   * 30 seconds should be plenty for content extraction.
+   * 90 seconds to handle large content (up to 100K chars).
    */
-  TIMEOUT_MS: 30000,
+  TIMEOUT_MS: 90000,
   /**
    * Minimum content length (chars) to attempt cleaning.
    * Content below this is likely a scrape failure (JS-heavy site, paywall, etc.)
@@ -661,26 +674,44 @@ export const CLEANER_CONFIG = {
   MIN_QUALITY_FOR_RESULTS: 35,
   /**
    * Domains with average relevance below this get auto-excluded.
-   * Stricter than individual filtering since consistently off-topic
-   * domains waste API calls on every search.
+   * Set below MIN_RELEVANCE_FOR_RESULTS (70) but high enough to catch
+   * domains that rarely produce usable content.
+   * At 50 avg, most articles will be <70 and get filtered anyway.
    */
-  AUTO_EXCLUDE_RELEVANCE_THRESHOLD: 30,
+  AUTO_EXCLUDE_RELEVANCE_THRESHOLD: 50,
   /**
-   * Domain average score below this triggers auto-exclusion.
+   * Domain average quality score below this triggers auto-exclusion.
    * Same as MIN_QUALITY_FOR_RESULTS for consistency.
-   * Requires AUTO_EXCLUDE_MIN_SAMPLES to prevent premature exclusion.
    */
-  AUTO_EXCLUDE_THRESHOLD: 35,
+  AUTO_EXCLUDE_QUALITY_THRESHOLD: 35,
   /**
-   * Minimum samples before auto-excluding a domain.
-   * Prevents exclusion based on one bad page.
+   * Minimum samples before auto-excluding for LOW QUALITY.
+   * Quality varies per page, so we need more samples for a fair average.
    */
-  AUTO_EXCLUDE_MIN_SAMPLES: 5,
+  AUTO_EXCLUDE_QUALITY_MIN_SAMPLES: 5,
+  /**
+   * Minimum samples before auto-excluding for LOW RELEVANCE.
+   * Relevance is domain-wide: if it's not about games, it never will be.
+   */
+  AUTO_EXCLUDE_RELEVANCE_MIN_SAMPLES: 3,
+  /**
+   * Minimum scrape attempts before evaluating per-engine exclusion.
+   * A domain must be tried at least this many times with a specific engine
+   * before we consider excluding it for that engine.
+   */
+  SCRAPE_FAILURE_MIN_ATTEMPTS: 10,
+  /**
+   * Scrape failure rate threshold for per-engine exclusion.
+   * If a domain has >= MIN_ATTEMPTS and > this failure rate,
+   * it gets excluded for that specific engine.
+   * 0.70 = exclude if >70% of attempts fail.
+   */
+  SCRAPE_FAILURE_RATE_THRESHOLD: 0.70,
   /**
    * Maximum input characters to process.
    * Skip processing huge pages to save costs.
    */
-  MAX_INPUT_CHARS: 50000,
+  MAX_INPUT_CHARS: 100000,
   /**
    * Minimum cleaned content length to consider valid.
    * If cleaning results in less than this, content is likely garbage.
@@ -971,8 +1002,15 @@ function validateConfiguration(): void {
       `MIN_QUALITY_FOR_STORAGE (${CLEANER_CONFIG.MIN_QUALITY_FOR_STORAGE}) cannot be higher than MIN_QUALITY_FOR_RESULTS (${CLEANER_CONFIG.MIN_QUALITY_FOR_RESULTS})`
     );
   }
-  validateNonNegative(CLEANER_CONFIG.AUTO_EXCLUDE_THRESHOLD, 'CLEANER_CONFIG.AUTO_EXCLUDE_THRESHOLD');
-  validatePositive(CLEANER_CONFIG.AUTO_EXCLUDE_MIN_SAMPLES, 'CLEANER_CONFIG.AUTO_EXCLUDE_MIN_SAMPLES');
+  validateNonNegative(CLEANER_CONFIG.AUTO_EXCLUDE_QUALITY_THRESHOLD, 'CLEANER_CONFIG.AUTO_EXCLUDE_QUALITY_THRESHOLD');
+  validatePositive(CLEANER_CONFIG.AUTO_EXCLUDE_QUALITY_MIN_SAMPLES, 'CLEANER_CONFIG.AUTO_EXCLUDE_QUALITY_MIN_SAMPLES');
+  validatePositive(CLEANER_CONFIG.AUTO_EXCLUDE_RELEVANCE_MIN_SAMPLES, 'CLEANER_CONFIG.AUTO_EXCLUDE_RELEVANCE_MIN_SAMPLES');
+  validatePositive(CLEANER_CONFIG.SCRAPE_FAILURE_MIN_ATTEMPTS, 'CLEANER_CONFIG.SCRAPE_FAILURE_MIN_ATTEMPTS');
+  if (CLEANER_CONFIG.SCRAPE_FAILURE_RATE_THRESHOLD < 0 || CLEANER_CONFIG.SCRAPE_FAILURE_RATE_THRESHOLD > 1) {
+    throw new ConfigValidationError(
+      `SCRAPE_FAILURE_RATE_THRESHOLD must be between 0 and 1 (got ${CLEANER_CONFIG.SCRAPE_FAILURE_RATE_THRESHOLD})`
+    );
+  }
   validatePositive(CLEANER_CONFIG.MAX_INPUT_CHARS, 'CLEANER_CONFIG.MAX_INPUT_CHARS');
   validatePositive(CLEANER_CONFIG.MIN_CLEANED_CHARS, 'CLEANER_CONFIG.MIN_CLEANED_CHARS');
 

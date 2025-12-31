@@ -170,9 +170,11 @@ async function executeSingleSearch(
   gracefulDegradation = false,
   cleaningDeps?: CleaningDeps
 ): Promise<SearchOperationResult> {
-  // Use excluded domains from cleaningDeps if available (includes DB exclusions),
-  // otherwise fall back to static config list
-  const excludeDomains = cleaningDeps?.excludedDomains ?? [...SPECIALIST_CONFIG.EXA_EXCLUDE_DOMAINS];
+  // Use Tavily-specific exclusions if available (includes engine-specific scrape failures),
+  // fallback to generic excludedDomains, then to static config list
+  const excludeDomains = cleaningDeps?.tavilyExcludedDomains 
+    ?? cleaningDeps?.excludedDomains 
+    ?? [...SPECIALIST_CONFIG.EXA_EXCLUDE_DOMAINS];
 
   try {
     const result = await withRetry(
@@ -254,9 +256,11 @@ async function executeSingleExaSearch(
   gracefulDegradation = false,
   cleaningDeps?: CleaningDeps
 ): Promise<SearchOperationResult> {
-  // Use excluded domains from cleaningDeps if available (includes DB exclusions),
-  // otherwise fall back to static config list
-  const excludeDomains = cleaningDeps?.excludedDomains ?? [...SPECIALIST_CONFIG.EXA_EXCLUDE_DOMAINS];
+  // Use Exa-specific exclusions if available (includes engine-specific scrape failures),
+  // fallback to generic excludedDomains, then to static config list
+  const excludeDomains = cleaningDeps?.exaExcludedDomains 
+    ?? cleaningDeps?.excludedDomains 
+    ?? [...SPECIALIST_CONFIG.EXA_EXCLUDE_DOMAINS];
 
   try {
     const exaOptions: ExaSearchOptions = {

@@ -141,7 +141,32 @@ export interface GenerationStats {
   readonly filteredSources?: FilteredSourcesStats;
 }
 
-/** A source that was filtered out */
+/** Content type used for a source (always 'full') */
+export type ContentType = 'full';
+
+/** Individual source within a query group */
+export interface SourceItem {
+  readonly url: string;
+  readonly title: string;
+  readonly qualityScore?: number;
+  readonly relevanceScore?: number;
+}
+
+/** Sources grouped by query */
+export interface SourcesByQuery {
+  readonly query: string;
+  readonly phase: 'scout' | 'specialist';
+  readonly searchSource?: 'tavily' | 'exa';
+  readonly contentType: ContentType;
+  /** Section name (only for specialist phase) */
+  readonly section?: string;
+  readonly sources: readonly SourceItem[];
+}
+
+/** Source content usage - array of query groups */
+export type SourceContentUsageStats = readonly SourcesByQuery[];
+
+/** Individual filtered source within a query group */
 export interface FilteredSourceItem {
   readonly url: string;
   readonly domain: string;
@@ -151,45 +176,25 @@ export interface FilteredSourceItem {
   readonly relevanceScore: number | null;
   readonly reason: 'low_relevance' | 'low_quality' | 'excluded_domain' | 'pre_filtered' | 'scrape_failure';
   readonly details: string;
-  /** Search query that returned this source */
-  readonly query?: string;
-  /** Search provider (tavily/exa) */
-  readonly searchSource?: 'tavily' | 'exa';
   /** Stage where filtering happened */
   readonly filterStage?: 'programmatic' | 'pre_filter' | 'full_clean' | 'post_clean';
 }
 
-/** Filtered sources statistics */
-export interface FilteredSourcesStats {
-  /** Individual filtered sources */
+/** Filtered sources grouped by query */
+export interface FilteredSourcesByQuery {
+  readonly query: string;
+  readonly searchSource?: 'tavily' | 'exa';
   readonly sources: readonly FilteredSourceItem[];
-  /** Summary counts */
-  readonly counts: {
-    readonly total: number;
-    readonly lowRelevance: number;
-    readonly lowQuality: number;
-    readonly excludedDomain: number;
-    readonly preFiltered: number;
-    readonly scrapeFailure: number;
-  };
-  /** Breakdown by search provider */
-  readonly byProvider?: {
-    readonly tavily: number;
-    readonly exa: number;
-  };
-  /** Breakdown by filter stage */
-  readonly byStage?: {
-    readonly programmatic: number;
-    readonly preFilter: number;
-    readonly fullClean: number;
-    readonly postClean: number;
-  };
 }
 
-/** Content type used for a source (always 'full') */
-export type ContentType = 'full';
+/** Filtered sources - array of query groups */
+export type FilteredSourcesStats = readonly FilteredSourcesByQuery[];
 
-/** Individual source usage tracking */
+// ============================================================================
+// Legacy interfaces (for backward compatibility)
+// ============================================================================
+
+/** @deprecated Use SourceItem instead */
 export interface SourceUsageItem {
   readonly url: string;
   readonly title: string;
@@ -197,18 +202,7 @@ export interface SourceUsageItem {
   readonly phase: 'scout' | 'specialist';
   readonly section?: string;
   readonly query: string;
-  /** Search source that provided this result */
   readonly searchSource?: 'tavily' | 'exa';
-}
-
-/** Source content usage statistics */
-export interface SourceContentUsageStats {
-  /** Per-source tracking */
-  readonly sources: readonly SourceUsageItem[];
-  /** Summary counts */
-  readonly counts: {
-    readonly total: number;
-  };
 }
 
 /** Section statistics from markdown */

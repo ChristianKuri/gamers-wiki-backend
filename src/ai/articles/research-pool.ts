@@ -558,8 +558,21 @@ export interface CleaningDeps {
    * Pre-fetched excluded domains (static + database).
    * If not provided, only static exclusions are used at search time.
    * Call getAllExcludedDomains(strapi) to populate this.
+   * @deprecated Use tavilyExcludedDomains and exaExcludedDomains for per-engine exclusions
    */
   readonly excludedDomains?: readonly string[];
+  /**
+   * Pre-fetched excluded domains for Tavily searches.
+   * Includes global exclusions + Tavily-specific scrape failure exclusions.
+   * Call getAllExcludedDomainsForEngine(strapi, 'tavily') to populate this.
+   */
+  readonly tavilyExcludedDomains?: readonly string[];
+  /**
+   * Pre-fetched excluded domains for Exa searches.
+   * Includes global exclusions + Exa-specific scrape failure exclusions.
+   * Call getAllExcludedDomainsForEngine(strapi, 'exa') to populate this.
+   */
+  readonly exaExcludedDomains?: readonly string[];
   /**
    * Override minimum relevance score for filtering.
    * Default: CLEANER_CONFIG.MIN_RELEVANCE_FOR_RESULTS (70)
@@ -713,10 +726,30 @@ export async function processSearchResultsWithCleaning(
   // Track filtered sources for logging and result tracking (declare early for exclusion filter)
   const filteredSources: FilteredSource[] = [];
 
+  // Track URLs that are scrape failure retries (need special handling after cleaning)
+  const scrapeFailureRetryUrls = new Set<string>();
+
   // Filter out cache hits from now-excluded domains (domains may have been added to exclusion list after caching)
+  // Also handle scrape failure "natural retries" - if cached as failure but raw content now sufficient
   const validHits = cacheResults.filter((r) => {
     if (!r.hit) return false;
     const domain = extractDomainFromUrl(r.url);
+    
+    // Check if this is a scrape failure that might now succeed
+    // The cached record has scrapeSucceeded field indicating previous failure
+    if (r.cached && !r.cached.scrapeSucceeded) {
+      // Find the corresponding raw source to check if content is now sufficient
+      const rawSource = rawSources.find(s => normalizeUrl(s.url) === normalizeUrl(r.url));
+      if (rawSource && rawSource.content.length > CLEANER_CONFIG.MIN_CONTENT_LENGTH) {
+        // Content is now sufficient - treat as a miss to retry cleaning
+        logger?.info?.(`Natural retry: ${domain} previously failed but now has ${rawSource.content.length} chars`);
+        scrapeFailureRetryUrls.add(r.url);
+        return false; // Remove from hits, will be added to misses
+      }
+      // Content still insufficient - keep as "hit" (a known failure)
+      return true;
+    }
+    
     if (excludedDomainsSet.has(domain)) {
       // Log and track excluded cached sources
       filteredSources.push({
@@ -737,8 +770,23 @@ export async function processSearchResultsWithCleaning(
   });
 
   // Separate valid cache hits and misses
+  // Include scrape failure retries as misses (they need to be re-cleaned)
   const hits = validHits;
-  const misses = cacheResults.filter((r) => !r.hit && r.raw);
+  const misses = cacheResults.filter((r) => {
+    // Standard miss (not in cache)
+    if (!r.hit && r.raw) return true;
+    // Scrape failure retry (was in cache as failure, now has content)
+    if (scrapeFailureRetryUrls.has(r.url)) {
+      // Find and attach the raw source
+      const rawSource = rawSources.find(s => normalizeUrl(s.url) === normalizeUrl(r.url));
+      if (rawSource) {
+        // Mutate to add raw (safe since we're building new results)
+        (r as { raw?: RawSourceInput }).raw = rawSource;
+        return true;
+      }
+    }
+    return false;
+  });
 
   // Log cache status (include excluded count if any)
   const cleanerEnabled = CLEANER_CONFIG.ENABLED;
@@ -907,10 +955,29 @@ export async function processSearchResultsWithCleaning(
 
     // Store cleaned sources in DB (fire-and-forget is OK here)
     if (cleanedSources.length > 0) {
-      storeCleanedSources(strapi, cleanedSources, gameDocumentId).catch((err) => {
-        const message = err instanceof Error ? err.message : String(err);
-        logger?.warn?.(`Failed to store cleaned sources: ${message}`);
-      });
+      // Separate retry sources from new sources
+      const retrySources = cleanedSources.filter(s => scrapeFailureRetryUrls.has(s.url));
+      const newSources = cleanedSources.filter(s => !scrapeFailureRetryUrls.has(s.url));
+      
+      // Update retry sources (previously failed, now succeeded)
+      if (retrySources.length > 0) {
+        const { updateScrapeFailureToSuccess } = await import('./source-cache');
+        for (const source of retrySources) {
+          updateScrapeFailureToSuccess(strapi, source.url, source).catch((err) => {
+            const message = err instanceof Error ? err.message : String(err);
+            logger?.warn?.(`Failed to update scrape failure to success ${source.url}: ${message}`);
+          });
+        }
+        logger?.info?.(`Updated ${retrySources.length} scrape failure(s) to success`);
+      }
+      
+      // Store new sources normally
+      if (newSources.length > 0) {
+        storeCleanedSources(strapi, newSources, gameDocumentId).catch((err) => {
+          const message = err instanceof Error ? err.message : String(err);
+          logger?.warn?.(`Failed to store cleaned sources: ${message}`);
+        });
+      }
     }
   } else if (misses.length > 0 && !cleanerEnabled) {
     // Log that we're skipping cleaning
@@ -918,16 +985,25 @@ export async function processSearchResultsWithCleaning(
   }
 
   // Build lookup maps for merging
-  const cachedByUrl = new Map<string, CleanedSource>();
+  // Extend CleanedSource with scrapeSucceeded for cache hits
+  type CleanedSourceWithScrapeStatus = CleanedSource & { scrapeSucceeded?: boolean };
+  const cachedByUrl = new Map<string, CleanedSourceWithScrapeStatus>();
   for (const hit of hits) {
     if (hit.cached) {
-      cachedByUrl.set(hit.url, hit.cached);
+      // Include scrapeSucceeded from cache result for filtering
+      cachedByUrl.set(hit.url, {
+        ...hit.cached,
+        scrapeSucceeded: hit.cached.scrapeSucceeded,
+      });
     }
   }
 
-  const cleanedByUrl = new Map<string, CleanedSource>();
+  const cleanedByUrl = new Map<string, CleanedSourceWithScrapeStatus>();
   for (const cleaned of cleanedSources) {
-    cleanedByUrl.set(cleaned.url, cleaned);
+    cleanedByUrl.set(cleaned.url, {
+      ...cleaned,
+      scrapeSucceeded: true, // Newly cleaned sources always succeeded
+    });
   }
 
   // Build final result items, using cleaned content when available
@@ -943,16 +1019,24 @@ export async function processSearchResultsWithCleaning(
       const cleanedSource = cached || cleaned;
 
       if (cleanedSource) {
+        // Skip scrape failures - they have no useful content
+        if (!cleanedSource.scrapeSucceeded) {
+          // Already tracked in filtered sources during cache processing
+          return null;
+        }
+        
         // Check relevance score - filter out irrelevant content
-        if (cleanedSource.relevanceScore < minRelevance) {
+        // Handle null relevanceScore (legacy data) - default to passing
+        const relevanceScore = cleanedSource.relevanceScore ?? 100;
+        if (relevanceScore < minRelevance) {
           filteredSources.push({
             url: normalized,
             domain: cleanedSource.domain,
             title: r.title,
-            qualityScore: cleanedSource.qualityScore,
+            qualityScore: cleanedSource.qualityScore ?? 0,
             relevanceScore: cleanedSource.relevanceScore,
             reason: 'low_relevance',
-            details: `Relevance ${cleanedSource.relevanceScore}/100 < min ${minRelevance}`,
+            details: `Relevance ${relevanceScore}/100 < min ${minRelevance}`,
             query,
             searchSource: cleanedSource.searchSource,
             filterStage: 'post_clean',
@@ -961,15 +1045,17 @@ export async function processSearchResultsWithCleaning(
         }
 
         // Check quality score - filter out low-quality content
-        if (cleanedSource.qualityScore < minQuality) {
+        // Handle null qualityScore (legacy data) - default to passing
+        const qualityScore = cleanedSource.qualityScore ?? 100;
+        if (qualityScore < minQuality) {
           filteredSources.push({
             url: normalized,
             domain: cleanedSource.domain,
             title: r.title,
-            qualityScore: cleanedSource.qualityScore,
+            qualityScore: cleanedSource.qualityScore ?? 0,
             relevanceScore: cleanedSource.relevanceScore,
             reason: 'low_quality',
-            details: `Quality ${cleanedSource.qualityScore}/100 < min ${minQuality}`,
+            details: `Quality ${qualityScore}/100 < min ${minQuality}`,
             query,
             searchSource: cleanedSource.searchSource,
             filterStage: 'post_clean',

@@ -244,6 +244,7 @@ export async function cleanSingleSource(
   const originalLength = source.content.length;
 
   try {
+    const startTime = Date.now();
     const result = await withRetry(
       async () => {
         const timeoutSignal = AbortSignal.timeout(CLEANER_CONFIG.TIMEOUT_MS);
@@ -266,6 +267,12 @@ export async function cleanSingleSource(
         signal: deps.signal,
       }
     );
+    
+    const elapsed = Date.now() - startTime;
+    if (elapsed > 30000) {
+      // Log slow cleans for monitoring (>30s is notable with 90s timeout)
+      log.info(`[Cleaner] Slow clean: ${domain} took ${(elapsed / 1000).toFixed(1)}s for ${originalLength} chars`);
+    }
 
     // Use createTokenUsageFromResult to capture both tokens and actual cost from OpenRouter
     const tokenUsage = createTokenUsageFromResult(result);

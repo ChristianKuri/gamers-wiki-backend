@@ -13,6 +13,7 @@ import type {
 } from '../../types/strapi';
 import { normalizeUrl } from './research-pool';
 import type {
+  CachedSourceContent,
   CacheCheckResult,
   CleanedSource,
   DomainTier,
@@ -40,7 +41,7 @@ interface SourceContentRow {
   summary: string | null;
   cleaned_content: string;
   original_content_length: number;
-  quality_score: number;
+  quality_score: number | null; // null for scrape failures
   relevance_score: number | null; // null for scrape failures (unknown relevance)
   quality_notes: string | null;
   content_type: string;
@@ -48,6 +49,7 @@ interface SourceContentRow {
   access_count: number;
   last_accessed_at: string | null;
   search_source: 'tavily' | 'exa';
+  scrape_succeeded: boolean;
   published_at: string | null;
 }
 
@@ -76,6 +78,15 @@ interface DomainQualityRow {
   is_excluded: boolean;
   exclude_reason: string | null;
   domain_type: string;
+  // Per-engine scrape tracking
+  tavily_attempts: number;
+  tavily_scrape_failures: number;
+  exa_attempts: number;
+  exa_scrape_failures: number;
+  is_excluded_tavily: boolean;
+  is_excluded_exa: boolean;
+  tavily_exclude_reason: string | null;
+  exa_exclude_reason: string | null;
   published_at: string | null;
 }
 
@@ -149,6 +160,46 @@ export async function getAllExcludedDomains(strapi: Core.Strapi): Promise<readon
   const dbExcluded = await getAllExcludedDomainsFromDb(strapi);
   for (const domain of dbExcluded) {
     allExcluded.add(domain);
+  }
+  
+  return [...allExcluded];
+}
+
+/**
+ * Get ALL excluded domains for a specific search engine.
+ * Combines:
+ * 1. Static hardcoded exclusions (global)
+ * 2. DB global exclusions (low quality/relevance)
+ * 3. DB per-engine exclusions (scrape failure rate exceeded)
+ * 
+ * @param strapi - Strapi instance for DB access
+ * @param engine - Search engine ('tavily' | 'exa')
+ * @returns Array of domain strings to exclude from searches for this engine
+ */
+export async function getAllExcludedDomainsForEngine(
+  strapi: Core.Strapi,
+  engine: 'tavily' | 'exa'
+): Promise<readonly string[]> {
+  const knex = strapi.db.connection;
+  
+  // Start with static hardcoded list (always excluded)
+  const allExcluded = new Set<string>(CLEANER_CONFIG.EXCLUDED_DOMAINS);
+  
+  try {
+    // Query: global exclusions OR per-engine exclusions
+    const engineExcludedColumn = engine === 'tavily' ? 'is_excluded_tavily' : 'is_excluded_exa';
+    
+    const rows = await knex<{ domain: string }>('domain_qualities')
+      .where('is_excluded', true)
+      .orWhere(engineExcludedColumn, true)
+      .select('domain');
+    
+    for (const row of rows) {
+      allExcluded.add(row.domain);
+    }
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    strapi.log.warn(`[SourceCache] Failed to fetch excluded domains for ${engine}: ${message}`);
   }
   
   return [...allExcluded];
@@ -337,13 +388,15 @@ export async function checkSourceCache(
       cleanedContent: row.cleaned_content,
       originalContentLength: row.original_content_length,
       qualityScore: row.quality_score,
-      relevanceScore: row.relevance_score ?? 100, // Default to 100 for legacy data
+      relevanceScore: row.relevance_score,
       qualityNotes: row.quality_notes,
       contentType: row.content_type,
       junkRatio: parseFloat(row.junk_ratio),
       accessCount: row.access_count,
       lastAccessedAt: row.last_accessed_at,
       searchSource: row.search_source,
+      // Default to true for legacy data without this field
+      scrapeSucceeded: row.scrape_succeeded ?? true,
     });
   }
 
@@ -391,12 +444,13 @@ export async function checkSourceCache(
           summary: cached.summary ?? '',
           cleanedContent: cached.cleanedContent,
           originalContentLength: cached.originalContentLength,
-          qualityScore: cached.qualityScore,
-          relevanceScore: cached.relevanceScore,
+          qualityScore: cached.qualityScore ?? 0,
+          relevanceScore: cached.relevanceScore ?? 0,
           qualityNotes: cached.qualityNotes ?? '',
           contentType: cached.contentType,
           junkRatio: cached.junkRatio,
           searchSource: cached.searchSource,
+          scrapeSucceeded: cached.scrapeSucceeded,
         },
       };
     }
@@ -446,6 +500,7 @@ export async function storeScrapeFailures(
       }
 
       // Store minimal record for scrape failure
+      // qualityScore and relevanceScore are null since we couldn't evaluate them
       const failureData: Partial<SourceContentDocument> = {
         url: normalizedUrl,
         domain,
@@ -453,14 +508,15 @@ export async function storeScrapeFailures(
         summary: null,
         cleanedContent: `[Scrape failed - content too short: ${failure.originalContentLength} chars]`,
         originalContentLength: failure.originalContentLength,
-        qualityScore: 0, // Known: scrape failed
-        // relevanceScore: null - omitted, we don't know relevance
+        // qualityScore: null - omitted, unknown for scrape failures
+        // relevanceScore: null - omitted, unknown for scrape failures
         qualityNotes: `Scrape failure: only ${failure.originalContentLength} chars extracted (min: ${CLEANER_CONFIG.MIN_CONTENT_LENGTH})`,
         contentType: 'scrape_failure',
         junkRatio: 1, // 100% junk since nothing useful was extracted
         accessCount: 1,
         lastAccessedAt: now,
         searchSource: failure.searchSource,
+        scrapeSucceeded: false, // Explicitly mark as failed scrape
       };
 
       await sourceContentService.create({
@@ -479,6 +535,66 @@ export async function storeScrapeFailures(
   // Update domain quality for all affected domains
   for (const domain of domainsToUpdate) {
     await updateDomainQuality(strapi, domain);
+  }
+}
+
+/**
+ * Update a previously failed scrape to success.
+ * Called when a natural retry succeeds (content now > MIN_CONTENT_LENGTH).
+ * 
+ * @param strapi - Strapi instance
+ * @param url - URL that was successfully scraped
+ * @param cleanedSource - The cleaned source content
+ */
+export async function updateScrapeFailureToSuccess(
+  strapi: Core.Strapi,
+  url: string,
+  cleanedSource: CleanedSource
+): Promise<void> {
+  const knex = strapi.db.connection;
+  const normalizedUrl = normalizeUrl(url);
+  if (!normalizedUrl) return;
+
+  try {
+    // Find the existing scrape failure record
+    const existing = await knex<SourceContentRow>('source_contents')
+      .where('url', normalizedUrl)
+      .andWhere('scrape_succeeded', false)
+      .first();
+
+    if (!existing) {
+      strapi.log.debug(`[SourceCache] No scrape failure found for retry update: ${normalizedUrl}`);
+      return;
+    }
+
+    // Update the record with successful scrape data
+    await knex('source_contents')
+      .where('id', existing.id)
+      .update({
+        title: cleanedSource.title,
+        summary: cleanedSource.summary ?? null,
+        cleaned_content: cleanedSource.cleanedContent,
+        original_content_length: cleanedSource.originalContentLength,
+        quality_score: cleanedSource.qualityScore,
+        relevance_score: cleanedSource.relevanceScore,
+        quality_notes: cleanedSource.qualityNotes,
+        content_type: cleanedSource.contentType,
+        junk_ratio: cleanedSource.junkRatio,
+        scrape_succeeded: true,
+        access_count: knex.raw('access_count + 1'),
+        last_accessed_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      });
+
+    strapi.log.info(
+      `[SourceCache] Updated scrape failure to success (Q:${cleanedSource.qualityScore}, R:${cleanedSource.relevanceScore}): ${normalizedUrl}`
+    );
+
+    // Update domain quality to reflect the new success
+    await updateDomainQuality(strapi, cleanedSource.domain);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    strapi.log.warn(`[SourceCache] Failed to update scrape failure to success ${url}: ${message}`);
   }
 }
 
@@ -860,7 +976,41 @@ interface DomainStats {
 }
 
 /**
+ * Per-engine scrape stats from database query.
+ */
+interface PerEngineScrapeStats {
+  attempts: number;
+  failures: number;
+}
+
+/**
+ * Calculate per-engine scrape stats for a domain.
+ */
+async function getPerEngineScrapeStats(
+  knex: Core.Strapi['db']['connection'],
+  domain: string,
+  engine: 'tavily' | 'exa'
+): Promise<PerEngineScrapeStats> {
+  const result = await knex('source_contents')
+    .where('domain', domain)
+    .andWhere('search_source', engine)
+    .andWhereNot('published_at', null)
+    .select(
+      knex.raw('COUNT(*) as attempts'),
+      knex.raw('SUM(CASE WHEN scrape_succeeded = false THEN 1 ELSE 0 END) as failures')
+    )
+    .first();
+
+  const raw = result as Record<string, unknown> | undefined;
+  return {
+    attempts: parseInt(String(raw?.attempts ?? '0'), 10),
+    failures: parseInt(String(raw?.failures ?? '0'), 10),
+  };
+}
+
+/**
  * Update domain quality aggregate based on all sources from that domain.
+ * Also calculates per-engine scrape failure stats for engine-specific exclusion.
  *
  * @param strapi - Strapi instance
  * @param domain - Domain to update
@@ -899,24 +1049,48 @@ export async function updateDomainQuality(strapi: Core.Strapi, domain: string): 
     const tier = calculateTier(avgScore);
     const domainType = inferDomainType(domain);
 
-    // Check for auto-exclusion (low quality OR low relevance)
-    const lowQuality = avgScore < CLEANER_CONFIG.AUTO_EXCLUDE_THRESHOLD;
+    // Check for global auto-exclusion (low quality OR low relevance)
+    // Different sample thresholds: relevance is domain-wide (3), quality varies per page (5)
+    const lowQuality = avgScore < CLEANER_CONFIG.AUTO_EXCLUDE_QUALITY_THRESHOLD;
     const lowRelevance = avgRelevance < CLEANER_CONFIG.AUTO_EXCLUDE_RELEVANCE_THRESHOLD;
-    const hasSufficientSamples = totalSources >= CLEANER_CONFIG.AUTO_EXCLUDE_MIN_SAMPLES;
-    const shouldExclude = hasSufficientSamples && (lowQuality || lowRelevance);
+    const enoughForQuality = totalSources >= CLEANER_CONFIG.AUTO_EXCLUDE_QUALITY_MIN_SAMPLES;
+    const enoughForRelevance = totalSources >= CLEANER_CONFIG.AUTO_EXCLUDE_RELEVANCE_MIN_SAMPLES;
+    const shouldExcludeQuality = enoughForQuality && lowQuality;
+    const shouldExcludeRelevance = enoughForRelevance && lowRelevance;
+    const shouldExclude = shouldExcludeQuality || shouldExcludeRelevance;
     
-    // Build exclude reason
+    // Build global exclude reason
     let excludeReason: string | null = null;
     if (shouldExclude) {
       const reasons: string[] = [];
-      if (lowQuality) {
-        reasons.push(`quality ${avgScore.toFixed(1)} < ${CLEANER_CONFIG.AUTO_EXCLUDE_THRESHOLD}`);
+      if (shouldExcludeQuality) {
+        reasons.push(`quality ${avgScore.toFixed(1)} < ${CLEANER_CONFIG.AUTO_EXCLUDE_QUALITY_THRESHOLD}`);
       }
-      if (lowRelevance) {
+      if (shouldExcludeRelevance) {
         reasons.push(`relevance ${avgRelevance.toFixed(1)} < ${CLEANER_CONFIG.AUTO_EXCLUDE_RELEVANCE_THRESHOLD}`);
       }
       excludeReason = `Auto-excluded: ${reasons.join(', ')} (${totalSources} samples)`;
     }
+
+    // Calculate per-engine scrape stats
+    const tavilyStats = await getPerEngineScrapeStats(knex, domain, 'tavily');
+    const exaStats = await getPerEngineScrapeStats(knex, domain, 'exa');
+
+    // Check for per-engine exclusion based on scrape failure rate
+    const minAttempts = CLEANER_CONFIG.SCRAPE_FAILURE_MIN_ATTEMPTS;
+    const rateThreshold = CLEANER_CONFIG.SCRAPE_FAILURE_RATE_THRESHOLD;
+
+    const tavilyFailureRate = tavilyStats.attempts > 0 ? tavilyStats.failures / tavilyStats.attempts : 0;
+    const shouldExcludeTavily = tavilyStats.attempts >= minAttempts && tavilyFailureRate > rateThreshold;
+    const tavilyExcludeReason = shouldExcludeTavily
+      ? `Scrape failure rate: ${(tavilyFailureRate * 100).toFixed(0)}% (${tavilyStats.failures}/${tavilyStats.attempts} failed)`
+      : null;
+
+    const exaFailureRate = exaStats.attempts > 0 ? exaStats.failures / exaStats.attempts : 0;
+    const shouldExcludeExa = exaStats.attempts >= minAttempts && exaFailureRate > rateThreshold;
+    const exaExcludeReason = shouldExcludeExa
+      ? `Scrape failure rate: ${(exaFailureRate * 100).toFixed(0)}% (${exaStats.failures}/${exaStats.attempts} failed)`
+      : null;
 
     // Check if domain quality record exists
     const existing = await knex<DomainQualityRow>('domain_qualities')
@@ -935,10 +1109,19 @@ export async function updateDomainQuality(strapi: Core.Strapi, domain: string): 
           is_excluded: shouldExclude,
           exclude_reason: excludeReason,
           domain_type: domainType,
+          // Per-engine stats
+          tavily_attempts: tavilyStats.attempts,
+          tavily_scrape_failures: tavilyStats.failures,
+          exa_attempts: exaStats.attempts,
+          exa_scrape_failures: exaStats.failures,
+          is_excluded_tavily: shouldExcludeTavily,
+          is_excluded_exa: shouldExcludeExa,
+          tavily_exclude_reason: tavilyExcludeReason,
+          exa_exclude_reason: exaExcludeReason,
           updated_at: new Date().toISOString(),
         });
     } else {
-      // Create new record
+      // Create new record via document service
       await domainQualityService.create({
         data: {
           domain,
@@ -949,13 +1132,33 @@ export async function updateDomainQuality(strapi: Core.Strapi, domain: string): 
           isExcluded: shouldExclude,
           excludeReason: excludeReason,
           domainType,
+          // Per-engine stats
+          tavilyAttempts: tavilyStats.attempts,
+          tavilyScrapeFailures: tavilyStats.failures,
+          exaAttempts: exaStats.attempts,
+          exaScrapeFailures: exaStats.failures,
+          isExcludedTavily: shouldExcludeTavily,
+          isExcludedExa: shouldExcludeExa,
+          tavilyExcludeReason: tavilyExcludeReason,
+          exaExcludeReason: exaExcludeReason,
         } as Partial<DomainQualityDocument>,
       });
     }
 
+    // Log exclusions
     if (shouldExclude) {
       strapi.log.info(
-        `[SourceCache] Auto-excluded domain: ${domain} (quality: ${avgScore.toFixed(1)}, relevance: ${avgRelevance.toFixed(1)}, samples: ${totalSources})`
+        `[SourceCache] Auto-excluded domain (global): ${domain} (quality: ${avgScore.toFixed(1)}, relevance: ${avgRelevance.toFixed(1)}, samples: ${totalSources})`
+      );
+    }
+    if (shouldExcludeTavily) {
+      strapi.log.info(
+        `[SourceCache] Auto-excluded domain for Tavily: ${domain} (${(tavilyFailureRate * 100).toFixed(0)}% failure rate, ${tavilyStats.attempts} attempts)`
+      );
+    }
+    if (shouldExcludeExa) {
+      strapi.log.info(
+        `[SourceCache] Auto-excluded domain for Exa: ${domain} (${(exaFailureRate * 100).toFixed(0)}% failure rate, ${exaStats.attempts} attempts)`
       );
     }
   } catch (err) {
@@ -1022,6 +1225,15 @@ export async function getDomainQuality(
       isExcluded: row.is_excluded,
       excludeReason: row.exclude_reason,
       domainType: row.domain_type,
+      // Per-engine stats (default to 0/false for legacy records)
+      tavilyAttempts: row.tavily_attempts ?? 0,
+      tavilyScrapeFailures: row.tavily_scrape_failures ?? 0,
+      exaAttempts: row.exa_attempts ?? 0,
+      exaScrapeFailures: row.exa_scrape_failures ?? 0,
+      isExcludedTavily: row.is_excluded_tavily ?? false,
+      isExcludedExa: row.is_excluded_exa ?? false,
+      tavilyExcludeReason: row.tavily_exclude_reason ?? null,
+      exaExcludeReason: row.exa_exclude_reason ?? null,
     };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);

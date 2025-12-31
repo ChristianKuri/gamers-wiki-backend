@@ -156,9 +156,11 @@ export async function executeSearch(
   category: CategorizedSearchResult['category'],
   options: ExecuteSearchOptions
 ): Promise<ScoutSearchResult> {
-  // Use excluded domains from cleaningDeps if available (includes DB exclusions),
-  // otherwise fall back to static config list
-  const excludeDomains = options.cleaningDeps?.excludedDomains ?? [...SCOUT_CONFIG.EXA_EXCLUDE_DOMAINS];
+  // Use Tavily-specific exclusions if available (includes engine-specific scrape failures),
+  // fallback to generic excludedDomains, then to static config list
+  const excludeDomains = options.cleaningDeps?.tavilyExcludedDomains 
+    ?? options.cleaningDeps?.excludedDomains 
+    ?? [...SCOUT_CONFIG.EXA_EXCLUDE_DOMAINS];
 
   const result = await withRetry(
     () =>
@@ -214,9 +216,11 @@ export async function executeExaSearch(
   category: CategorizedSearchResult['category'],
   options: ExecuteExaSearchOptions = {}
 ): Promise<ScoutSearchResult> {
-  // Use excluded domains from cleaningDeps if available (includes DB exclusions),
-  // otherwise fall back to static config list
-  const excludeDomains = options.cleaningDeps?.excludedDomains ?? [...SCOUT_CONFIG.EXA_EXCLUDE_DOMAINS];
+  // Use Exa-specific exclusions if available (includes engine-specific scrape failures),
+  // fallback to generic excludedDomains, then to static config list
+  const excludeDomains = options.cleaningDeps?.exaExcludedDomains 
+    ?? options.cleaningDeps?.excludedDomains 
+    ?? [...SCOUT_CONFIG.EXA_EXCLUDE_DOMAINS];
 
   const exaOptions: ExaSearchOptions = {
     numResults: options.numResults ?? SCOUT_CONFIG.CATEGORY_SEARCH_RESULTS,

@@ -60,7 +60,7 @@ import {
 } from '../../utils/logger';
 import { runScout, runEditor, runSpecialist, runReviewer, type EditorOutput, type ReviewerOutput } from './agents';
 import type { CleaningDeps } from './research-pool';
-import { getAllExcludedDomains } from './source-cache';
+import { getAllExcludedDomains, getAllExcludedDomainsForEngine } from './source-cache';
 import type { SpecialistOutput } from './agents/specialist';
 import type { ArticlePlan, ArticleCategorySlug } from './article-plan';
 import { GENERATOR_CONFIG, WORD_COUNT_DEFAULTS, WORD_COUNT_CONSTRAINTS, REVIEWER_CONFIG, FIXER_CONFIG } from './config';
@@ -1007,9 +1007,15 @@ export async function generateGameArticleDraft(
   // Build cleaning deps only when Strapi is available
   // This enables content cleaning and caching for search results
   // Also fetch excluded domains from DB to combine with static list
+  // Per-engine exclusions include scrape failure exclusions specific to each search engine
   let cleaningDeps: CleaningDeps | undefined;
   if (strapi) {
-    const excludedDomains = await getAllExcludedDomains(strapi);
+    // Fetch exclusions in parallel for efficiency
+    const [excludedDomains, tavilyExcludedDomains, exaExcludedDomains] = await Promise.all([
+      getAllExcludedDomains(strapi),
+      getAllExcludedDomainsForEngine(strapi, 'tavily'),
+      getAllExcludedDomainsForEngine(strapi, 'exa'),
+    ]);
     cleaningDeps = {
       strapi,
       generateObject: genObject,
@@ -1019,9 +1025,11 @@ export async function generateGameArticleDraft(
       gameName: context.gameName,
       gameDocumentId: context.gameDocumentId,
       excludedDomains,
+      tavilyExcludedDomains,
+      exaExcludedDomains,
     };
     log.info(`Content cleaning enabled (model: ${cleanerModel})`);
-    log.debug(`Excluded domains: ${excludedDomains.length} total (static + DB)`);
+    log.debug(`Excluded domains: ${excludedDomains.length} global, Tavily: ${tavilyExcludedDomains.length}, Exa: ${exaExcludedDomains.length}`);
   }
 
   const phaseContext: PhaseContext = {

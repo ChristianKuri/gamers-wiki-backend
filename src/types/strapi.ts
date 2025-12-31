@@ -209,15 +209,18 @@ export interface SourceContentDocument extends StrapiDocument {
   summary: string | null;
   cleanedContent: string;
   originalContentLength: number;
-  qualityScore: number;
-  /** Relevance to gaming score (0-100) */
-  relevanceScore: number;
+  /** Quality score (0-100), null for scrape failures */
+  qualityScore: number | null;
+  /** Relevance to gaming score (0-100), null for scrape failures */
+  relevanceScore: number | null;
   qualityNotes: string | null;
   contentType: string;
   junkRatio: number;
   accessCount: number;
   lastAccessedAt: string | null;
   searchSource: 'tavily' | 'exa';
+  /** Whether scraping succeeded (content > MIN_CONTENT_LENGTH chars) */
+  scrapeSucceeded: boolean;
 }
 
 /**
@@ -230,9 +233,26 @@ export interface DomainQualityDocument extends StrapiDocument {
   avgRelevanceScore: number;
   totalSources: number;
   tier: 'excellent' | 'good' | 'average' | 'poor' | 'excluded';
+  /** Global exclusion (low quality or low relevance) */
   isExcluded: boolean;
   excludeReason: string | null;
   domainType: string;
+  /** Total scrape attempts via Tavily */
+  tavilyAttempts: number;
+  /** Scrape failures via Tavily */
+  tavilyScrapeFailures: number;
+  /** Total scrape attempts via Exa */
+  exaAttempts: number;
+  /** Scrape failures via Exa */
+  exaScrapeFailures: number;
+  /** Per-engine exclusion for Tavily (scrape failure rate exceeded) */
+  isExcludedTavily: boolean;
+  /** Per-engine exclusion for Exa (scrape failure rate exceeded) */
+  isExcludedExa: boolean;
+  /** Reason for Tavily exclusion */
+  tavilyExcludeReason: string | null;
+  /** Reason for Exa exclusion */
+  exaExcludeReason: string | null;
 }
 
 /**

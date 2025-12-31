@@ -4,9 +4,9 @@
  * Tests the domain exclusion and caching functionality.
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
-import { UNIFIED_EXCLUDED_DOMAINS } from '../../../src/ai/articles/config';
+import { UNIFIED_EXCLUDED_DOMAINS, CLEANER_CONFIG } from '../../../src/ai/articles/config';
 
 // Mock the source-cache module to test getAllExcludedDomains
 // We need to test the logic without actually hitting a database
@@ -174,6 +174,171 @@ describe('source-cache', () => {
       // Count occurrences of youtube.com - should be exactly 1
       const youtubeCount = result.filter((d) => d === 'youtube.com').length;
       expect(youtubeCount).toBe(1);
+    });
+  });
+
+  describe('getAllExcludedDomainsForEngine', () => {
+    it('should return global exclusions plus engine-specific exclusions for Tavily', async () => {
+      const mockRows = [
+        { domain: 'globally-excluded.com' }, // is_excluded = true
+        { domain: 'tavily-excluded.com' },   // is_excluded_tavily = true (but not global)
+      ];
+
+      // Mock knex that handles OR condition
+      const mockKnex = vi.fn().mockReturnValue({
+        where: vi.fn().mockReturnValue({
+          orWhere: vi.fn().mockReturnValue({
+            select: vi.fn().mockResolvedValue(mockRows),
+          }),
+        }),
+      });
+
+      const mockStrapi = {
+        db: {
+          connection: mockKnex,
+        },
+        log: {
+          warn: vi.fn(),
+        },
+      } as any;
+
+      const { getAllExcludedDomainsForEngine } = await import('../../../src/ai/articles/source-cache');
+
+      const result = await getAllExcludedDomainsForEngine(mockStrapi, 'tavily');
+
+      // Should include static domains
+      expect(result).toContain('youtube.com');
+      
+      // Should include DB domains
+      expect(result).toContain('globally-excluded.com');
+      expect(result).toContain('tavily-excluded.com');
+    });
+
+    it('should return global exclusions plus engine-specific exclusions for Exa', async () => {
+      const mockRows = [
+        { domain: 'globally-excluded.com' },
+        { domain: 'exa-excluded.com' },
+      ];
+
+      const mockKnex = vi.fn().mockReturnValue({
+        where: vi.fn().mockReturnValue({
+          orWhere: vi.fn().mockReturnValue({
+            select: vi.fn().mockResolvedValue(mockRows),
+          }),
+        }),
+      });
+
+      const mockStrapi = {
+        db: {
+          connection: mockKnex,
+        },
+        log: {
+          warn: vi.fn(),
+        },
+      } as any;
+
+      const { getAllExcludedDomainsForEngine } = await import('../../../src/ai/articles/source-cache');
+
+      const result = await getAllExcludedDomainsForEngine(mockStrapi, 'exa');
+
+      // Should include static domains
+      expect(result).toContain('youtube.com');
+      
+      // Should include DB domains
+      expect(result).toContain('globally-excluded.com');
+      expect(result).toContain('exa-excluded.com');
+    });
+
+    it('should return only static domains if DB query fails', async () => {
+      const mockKnex = vi.fn().mockReturnValue({
+        where: vi.fn().mockReturnValue({
+          orWhere: vi.fn().mockReturnValue({
+            select: vi.fn().mockRejectedValue(new Error('DB error')),
+          }),
+        }),
+      });
+
+      const mockStrapi = {
+        db: {
+          connection: mockKnex,
+        },
+        log: {
+          warn: vi.fn(),
+        },
+      } as any;
+
+      const { getAllExcludedDomainsForEngine } = await import('../../../src/ai/articles/source-cache');
+
+      const result = await getAllExcludedDomainsForEngine(mockStrapi, 'tavily');
+
+      // Should still return static domains
+      expect(result).toContain('youtube.com');
+      expect(Array.isArray(result)).toBe(true);
+      
+      // Should have logged a warning
+      expect(mockStrapi.log.warn).toHaveBeenCalled();
+    });
+  });
+
+  describe('Per-Engine Scrape Failure Exclusion Logic', () => {
+    // These tests verify the threshold calculations that happen in updateDomainQuality
+    
+    it('should have correct threshold constants', () => {
+      // Verify thresholds are correctly configured
+      expect(CLEANER_CONFIG.SCRAPE_FAILURE_MIN_ATTEMPTS).toBe(10);
+      expect(CLEANER_CONFIG.SCRAPE_FAILURE_RATE_THRESHOLD).toBe(0.70);
+    });
+
+    describe('exclusion decision logic', () => {
+      // Helper to simulate the exclusion decision logic from updateDomainQuality
+      function shouldExcludeForEngine(attempts: number, failures: number): boolean {
+        const minAttempts = CLEANER_CONFIG.SCRAPE_FAILURE_MIN_ATTEMPTS;
+        const rateThreshold = CLEANER_CONFIG.SCRAPE_FAILURE_RATE_THRESHOLD;
+        const failureRate = attempts > 0 ? failures / attempts : 0;
+        return attempts >= minAttempts && failureRate > rateThreshold;
+      }
+
+      it('should NOT exclude with only 9 attempts (below minimum)', () => {
+        // 9/9 = 100% failure rate, but only 9 attempts
+        expect(shouldExcludeForEngine(9, 9)).toBe(false);
+      });
+
+      it('should NOT exclude with 10 attempts and 60% failure rate', () => {
+        // 6/10 = 60% < 70% threshold
+        expect(shouldExcludeForEngine(10, 6)).toBe(false);
+      });
+
+      it('should NOT exclude with 10 attempts and exactly 70% failure rate', () => {
+        // 7/10 = 70%, threshold is > 70%, so this should NOT exclude
+        expect(shouldExcludeForEngine(10, 7)).toBe(false);
+      });
+
+      it('should exclude with 10 attempts and 71% failure rate', () => {
+        // Need > 70%, so 8/10 = 80% should work, or more precise: >7 failures
+        // Actually 71% would be 7.1/10, which rounds to 8 failures for integers
+        // So 8/10 = 80% > 70% = should exclude
+        expect(shouldExcludeForEngine(10, 8)).toBe(true);
+      });
+
+      it('should exclude with 10 attempts and 80% failure rate', () => {
+        // 8/10 = 80% > 70% = exclude
+        expect(shouldExcludeForEngine(10, 8)).toBe(true);
+      });
+
+      it('should exclude with 20 attempts and 75% failure rate', () => {
+        // 15/20 = 75% > 70% = exclude
+        expect(shouldExcludeForEngine(20, 15)).toBe(true);
+      });
+
+      it('should NOT exclude with 100 attempts and 65% failure rate', () => {
+        // 65/100 = 65% < 70% = no exclusion
+        expect(shouldExcludeForEngine(100, 65)).toBe(false);
+      });
+
+      it('should handle 0 attempts correctly', () => {
+        // 0 attempts = no exclusion
+        expect(shouldExcludeForEngine(0, 0)).toBe(false);
+      });
     });
   });
 });

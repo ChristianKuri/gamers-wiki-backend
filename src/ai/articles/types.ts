@@ -1040,12 +1040,22 @@ export interface CleanedSource {
 }
 
 /**
+ * Cached source content from checkSourceCache.
+ * Extends CleanedSource with scrapeSucceeded for detecting scrape failures.
+ */
+export interface CachedSourceContent extends CleanedSource {
+  /** Whether scraping succeeded (content > MIN_CONTENT_LENGTH chars) */
+  readonly scrapeSucceeded: boolean;
+}
+
+/**
  * Cache check result for a single URL.
  */
 export interface CacheCheckResult {
   readonly url: string;
   readonly hit: boolean;
-  readonly cached?: CleanedSource;
+  /** Cached content (may be a scrape failure if scrapeSucceeded is false) */
+  readonly cached?: CachedSourceContent;
   readonly raw?: RawSourceInput;
 }
 
@@ -1062,9 +1072,10 @@ export interface StoredSourceContent {
   readonly summary: string | null;
   readonly cleanedContent: string;
   readonly originalContentLength: number;
-  readonly qualityScore: number;
-  /** Relevance to gaming score (0-100) */
-  readonly relevanceScore: number;
+  /** Quality score (0-100), null for scrape failures */
+  readonly qualityScore: number | null;
+  /** Relevance to gaming score (0-100), null for scrape failures */
+  readonly relevanceScore: number | null;
   readonly qualityNotes: string | null;
   /** AI-determined content type */
   readonly contentType: string;
@@ -1072,6 +1083,8 @@ export interface StoredSourceContent {
   readonly accessCount: number;
   readonly lastAccessedAt: string | null;
   readonly searchSource: SearchSource;
+  /** Whether scraping succeeded (content > MIN_CONTENT_LENGTH chars) */
+  readonly scrapeSucceeded: boolean;
 }
 
 /**
@@ -1086,10 +1099,27 @@ export interface StoredDomainQuality {
   readonly avgRelevanceScore: number;
   readonly totalSources: number;
   readonly tier: DomainTier;
+  /** Global exclusion (low quality or low relevance) */
   readonly isExcluded: boolean;
   readonly excludeReason: string | null;
   /** AI-inferred domain type */
   readonly domainType: string;
+  /** Total scrape attempts via Tavily */
+  readonly tavilyAttempts: number;
+  /** Scrape failures via Tavily */
+  readonly tavilyScrapeFailures: number;
+  /** Total scrape attempts via Exa */
+  readonly exaAttempts: number;
+  /** Scrape failures via Exa */
+  readonly exaScrapeFailures: number;
+  /** Per-engine exclusion for Tavily (scrape failure rate exceeded) */
+  readonly isExcludedTavily: boolean;
+  /** Per-engine exclusion for Exa (scrape failure rate exceeded) */
+  readonly isExcludedExa: boolean;
+  /** Reason for Tavily exclusion */
+  readonly tavilyExcludeReason: string | null;
+  /** Reason for Exa exclusion */
+  readonly exaExcludeReason: string | null;
 }
 
 /**
