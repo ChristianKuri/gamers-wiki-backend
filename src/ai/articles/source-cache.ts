@@ -434,6 +434,14 @@ export async function checkSourceCache(
 
     const cached = cachedMap.get(normalized);
     if (cached) {
+      // Detect legacy data that needs reprocessing:
+      // - Has valid quality score (was cleaned) but NULL relevance score
+      // - Scrape was successful (not a failure that intentionally has NULL scores)
+      const wasCleanedButMissingRelevance = 
+        cached.qualityScore !== null && 
+        cached.relevanceScore === null &&
+        cached.scrapeSucceeded !== false;
+      
       return {
         url: raw.url,
         hit: true,
@@ -445,12 +453,16 @@ export async function checkSourceCache(
           cleanedContent: cached.cleanedContent,
           originalContentLength: cached.originalContentLength,
           qualityScore: cached.qualityScore ?? 0,
-          relevanceScore: cached.relevanceScore ?? 0,
+          // For legacy data (NULL relevance), default to 100 since it's likely relevant
+          // (gaming sites scraped for gaming wiki). needsReprocessing flag indicates
+          // this should be re-cleaned if raw content is available.
+          relevanceScore: cached.relevanceScore ?? 100,
           qualityNotes: cached.qualityNotes ?? '',
           contentType: cached.contentType,
           junkRatio: cached.junkRatio,
           searchSource: cached.searchSource,
           scrapeSucceeded: cached.scrapeSucceeded,
+          needsReprocessing: wasCleanedButMissingRelevance,
         },
       };
     }
@@ -595,6 +607,65 @@ export async function updateScrapeFailureToSuccess(
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     strapi.log.warn(`[SourceCache] Failed to update scrape failure to success ${url}: ${message}`);
+  }
+}
+
+/**
+ * Update a legacy source with NULL relevance after reprocessing.
+ * Called when we re-clean a source that had NULL relevance score.
+ * 
+ * @param strapi - Strapi instance
+ * @param url - URL that was reprocessed
+ * @param cleanedSource - The newly cleaned source content with relevance
+ */
+export async function updateLegacySourceRelevance(
+  strapi: Core.Strapi,
+  url: string,
+  cleanedSource: CleanedSource
+): Promise<void> {
+  const knex = strapi.db.connection;
+  const normalizedUrl = normalizeUrl(url);
+  if (!normalizedUrl) return;
+
+  try {
+    // Find the existing record with NULL relevance
+    const existing = await knex<SourceContentRow>('source_contents')
+      .where('url', normalizedUrl)
+      .whereNull('relevance_score')
+      .first();
+
+    if (!existing) {
+      strapi.log.debug(`[SourceCache] No legacy source found for relevance update: ${normalizedUrl}`);
+      return;
+    }
+
+    // Update with newly calculated scores
+    await knex('source_contents')
+      .where('id', existing.id)
+      .update({
+        title: cleanedSource.title,
+        summary: cleanedSource.summary ?? null,
+        cleaned_content: cleanedSource.cleanedContent,
+        original_content_length: cleanedSource.originalContentLength,
+        quality_score: cleanedSource.qualityScore,
+        relevance_score: cleanedSource.relevanceScore,
+        quality_notes: cleanedSource.qualityNotes ?? null,
+        content_type: cleanedSource.contentType,
+        junk_ratio: cleanedSource.junkRatio,
+        updated_at: new Date().toISOString(),
+        access_count: knex.raw('access_count + 1'),
+        last_accessed_at: new Date().toISOString(),
+      });
+
+    strapi.log.info(
+      `[SourceCache] Updated legacy source with relevance (Q:${cleanedSource.qualityScore}, R:${cleanedSource.relevanceScore}): ${normalizedUrl}`
+    );
+
+    // Update domain quality with new scores
+    await updateDomainQuality(strapi, cleanedSource.domain);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    strapi.log.warn(`[SourceCache] Failed to update legacy source relevance ${url}: ${message}`);
   }
 }
 

@@ -102,6 +102,10 @@ export interface SearchResultItem {
    */
   readonly summary?: string;
   readonly score?: number;
+  /** Quality score (0-100) from cleaner, if cleaned */
+  readonly qualityScore?: number;
+  /** Relevance score (0-100) from cleaner, if cleaned */
+  readonly relevanceScore?: number;
 }
 
 /**
@@ -437,6 +441,12 @@ export interface SourceUsageItem {
   readonly query: string;
   /** Which search API returned this source (exa or tavily) */
   readonly searchSource?: SearchSource;
+  /** Quality score (0-100) from cleaner */
+  readonly qualityScore?: number;
+  /** Relevance score (0-100) from cleaner */
+  readonly relevanceScore?: number;
+  /** Length of cleaned content in characters */
+  readonly cleanedCharCount?: number;
 }
 
 /**
@@ -501,6 +511,11 @@ export function extractScoutSourceUsage(researchPool: ResearchPool): readonly So
           phase: 'scout',
           query: categorized.query,
           searchSource: categorized.searchSource ?? 'tavily',
+          // Include quality/relevance scores if available (from cleaned sources)
+          ...(result.qualityScore !== undefined ? { qualityScore: result.qualityScore } : {}),
+          ...(result.relevanceScore !== undefined ? { relevanceScore: result.relevanceScore } : {}),
+          // Include cleaned content length
+          cleanedCharCount: result.content.length,
         });
       }
     }
@@ -649,6 +664,8 @@ export interface FilteredSourceSummary {
   readonly searchSource?: 'tavily' | 'exa';
   /** Stage where filtering happened */
   readonly filterStage?: 'programmatic' | 'pre_filter' | 'full_clean' | 'post_clean';
+  /** Length of cleaned content in characters (if available) */
+  readonly cleanedCharCount?: number;
 }
 
 /**
@@ -1046,6 +1063,12 @@ export interface CleanedSource {
 export interface CachedSourceContent extends CleanedSource {
   /** Whether scraping succeeded (content > MIN_CONTENT_LENGTH chars) */
   readonly scrapeSucceeded: boolean;
+  /** 
+   * Whether this cached entry needs reprocessing (legacy data with NULL relevance).
+   * If true, the entry has valid cleanedContent but missing relevance score.
+   * Caller should re-clean to calculate proper relevance.
+   */
+  readonly needsReprocessing: boolean;
 }
 
 /**

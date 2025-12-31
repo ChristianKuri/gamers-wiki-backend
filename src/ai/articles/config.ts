@@ -78,6 +78,12 @@ export const UNIFIED_EXCLUDED_DOMAINS = new Set([
   'news.google.com',
   'msn.com', // Aggregates content from other sites
 
+  // === OFF_TOPIC: Non-gaming garbage ===
+  'ww2.jacksonms.gov', // Government PDF spam
+  'ftp.oshatrain.org', // Random FTP server
+  'freewp.co.il', // WordPress spam forum
+  'catalog.neet.tv', // Dead link aggregator
+
   // === NOT_VIDEO_GAMES: Mod sites (mods ≠ game guides) ===
   'nexusmods.com',
   'www.nexusmods.com',

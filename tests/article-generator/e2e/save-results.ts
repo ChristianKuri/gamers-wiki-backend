@@ -150,6 +150,8 @@ export interface SourceItem {
   readonly title: string;
   readonly qualityScore?: number;
   readonly relevanceScore?: number;
+  /** Length of cleaned content in characters */
+  readonly cleanedCharCount?: number;
 }
 
 /** Sources grouped by query */
@@ -178,6 +180,8 @@ export interface FilteredSourceItem {
   readonly details: string;
   /** Stage where filtering happened */
   readonly filterStage?: 'programmatic' | 'pre_filter' | 'full_clean' | 'post_clean';
+  /** Length of cleaned content in characters (if available) */
+  readonly cleanedCharCount?: number;
 }
 
 /** Filtered sources grouped by query */

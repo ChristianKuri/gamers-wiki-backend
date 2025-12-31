@@ -613,6 +613,8 @@ export interface FilteredSource {
   readonly searchSource?: 'tavily' | 'exa';
   /** Stage where filtering happened */
   readonly filterStage?: 'programmatic' | 'pre_filter' | 'full_clean' | 'post_clean';
+  /** Length of cleaned content in characters (if available) */
+  readonly cleanedCharCount?: number;
 }
 
 /**
@@ -728,9 +730,12 @@ export async function processSearchResultsWithCleaning(
 
   // Track URLs that are scrape failure retries (need special handling after cleaning)
   const scrapeFailureRetryUrls = new Set<string>();
+  // Track URLs that need reprocessing (legacy data with NULL relevance)
+  const needsReprocessingUrls = new Set<string>();
 
   // Filter out cache hits from now-excluded domains (domains may have been added to exclusion list after caching)
   // Also handle scrape failure "natural retries" - if cached as failure but raw content now sufficient
+  // Also handle legacy data that needs reprocessing (NULL relevance)
   const validHits = cacheResults.filter((r) => {
     if (!r.hit) return false;
     const domain = extractDomainFromUrl(r.url);
@@ -750,6 +755,21 @@ export async function processSearchResultsWithCleaning(
       return true;
     }
     
+    // Check if this is legacy data that needs reprocessing (NULL relevance)
+    if (r.cached && r.cached.needsReprocessing) {
+      // Find the corresponding raw source to re-clean
+      const rawSource = rawSources.find(s => normalizeUrl(s.url) === normalizeUrl(r.url));
+      if (rawSource && rawSource.content.length > CLEANER_CONFIG.MIN_CONTENT_LENGTH) {
+        // Have raw content - treat as miss to re-clean and calculate relevance
+        logger?.info?.(`Reprocessing legacy: ${domain} has NULL relevance, re-cleaning to calculate scores`);
+        needsReprocessingUrls.add(r.url);
+        return false; // Remove from hits, will be added to misses
+      }
+      // No raw content available - keep as hit, will use cached quality (relevance defaults to 0)
+      // This shouldn't filter it out because MIN_RELEVANCE check handles this
+      return true;
+    }
+    
     if (excludedDomainsSet.has(domain)) {
       // Log and track excluded cached sources
       filteredSources.push({
@@ -763,6 +783,7 @@ export async function processSearchResultsWithCleaning(
         query,
         searchSource,
         filterStage: 'programmatic',
+        ...(r.cached?.cleanedContent ? { cleanedCharCount: r.cached.cleanedContent.length } : {}),
       });
       return false;
     }
@@ -770,7 +791,7 @@ export async function processSearchResultsWithCleaning(
   });
 
   // Separate valid cache hits and misses
-  // Include scrape failure retries as misses (they need to be re-cleaned)
+  // Include scrape failure retries and legacy reprocessing as misses (they need to be re-cleaned)
   const hits = validHits;
   const misses = cacheResults.filter((r) => {
     // Standard miss (not in cache)
@@ -781,6 +802,15 @@ export async function processSearchResultsWithCleaning(
       const rawSource = rawSources.find(s => normalizeUrl(s.url) === normalizeUrl(r.url));
       if (rawSource) {
         // Mutate to add raw (safe since we're building new results)
+        (r as { raw?: RawSourceInput }).raw = rawSource;
+        return true;
+      }
+    }
+    // Legacy data needing reprocessing (NULL relevance)
+    if (needsReprocessingUrls.has(r.url)) {
+      // Find and attach the raw source
+      const rawSource = rawSources.find(s => normalizeUrl(s.url) === normalizeUrl(r.url));
+      if (rawSource) {
         (r as { raw?: RawSourceInput }).raw = rawSource;
         return true;
       }
@@ -955,9 +985,12 @@ export async function processSearchResultsWithCleaning(
 
     // Store cleaned sources in DB (fire-and-forget is OK here)
     if (cleanedSources.length > 0) {
-      // Separate retry sources from new sources
+      // Separate retry sources, reprocessed sources, and new sources
       const retrySources = cleanedSources.filter(s => scrapeFailureRetryUrls.has(s.url));
-      const newSources = cleanedSources.filter(s => !scrapeFailureRetryUrls.has(s.url));
+      const reprocessedSources = cleanedSources.filter(s => needsReprocessingUrls.has(s.url));
+      const newSources = cleanedSources.filter(s => 
+        !scrapeFailureRetryUrls.has(s.url) && !needsReprocessingUrls.has(s.url)
+      );
       
       // Update retry sources (previously failed, now succeeded)
       if (retrySources.length > 0) {
@@ -969,6 +1002,18 @@ export async function processSearchResultsWithCleaning(
           });
         }
         logger?.info?.(`Updated ${retrySources.length} scrape failure(s) to success`);
+      }
+      
+      // Update reprocessed sources (legacy data with NULL relevance)
+      if (reprocessedSources.length > 0) {
+        const { updateLegacySourceRelevance } = await import('./source-cache');
+        for (const source of reprocessedSources) {
+          updateLegacySourceRelevance(strapi, source.url, source).catch((err) => {
+            const message = err instanceof Error ? err.message : String(err);
+            logger?.warn?.(`Failed to update legacy source relevance ${source.url}: ${message}`);
+          });
+        }
+        logger?.info?.(`Updated ${reprocessedSources.length} legacy source(s) with relevance scores`);
       }
       
       // Store new sources normally
@@ -1040,6 +1085,7 @@ export async function processSearchResultsWithCleaning(
             query,
             searchSource: cleanedSource.searchSource,
             filterStage: 'post_clean',
+            cleanedCharCount: cleanedSource.cleanedContent.length,
           });
           return null;
         }
@@ -1059,6 +1105,7 @@ export async function processSearchResultsWithCleaning(
             query,
             searchSource: cleanedSource.searchSource,
             filterStage: 'post_clean',
+            cleanedCharCount: cleanedSource.cleanedContent.length,
           });
           return null;
         }
@@ -1070,6 +1117,8 @@ export async function processSearchResultsWithCleaning(
           content: cleanedSource.cleanedContent,
           ...(r.summary ? { summary: r.summary } : {}),
           ...(typeof r.score === 'number' ? { score: r.score } : {}),
+          qualityScore: cleanedSource.qualityScore,
+          relevanceScore: cleanedSource.relevanceScore,
         };
       }
 

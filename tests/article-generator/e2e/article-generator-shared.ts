@@ -228,11 +228,16 @@ function groupSourcesByQuery(sources: any[]): any[] {
       });
     }
     
+    // Get cleaned char count from various possible field names
+    const cleanedCharCount = source.cleanedContentLength ?? source.cleanedCharCount ?? 
+      (source.cleanedContent?.length);
+    
     groups.get(key).sources.push({
       url: source.url,
       title: source.title,
       ...(source.qualityScore !== undefined ? { qualityScore: source.qualityScore } : {}),
       ...(source.relevanceScore !== undefined ? { relevanceScore: source.relevanceScore } : {}),
+      ...(cleanedCharCount !== undefined ? { cleanedCharCount } : {}),
     });
   }
   
@@ -256,6 +261,10 @@ function groupFilteredSourcesByQuery(sources: any[]): any[] {
       });
     }
     
+    // Get cleaned char count from various possible field names
+    const cleanedCharCount = source.cleanedContentLength ?? source.cleanedCharCount ?? 
+      (source.cleanedContent?.length);
+    
     groups.get(key).sources.push({
       url: source.url,
       domain: source.domain,
@@ -265,6 +274,7 @@ function groupFilteredSourcesByQuery(sources: any[]): any[] {
       reason: source.reason,
       details: source.details,
       ...(source.filterStage ? { filterStage: source.filterStage } : {}),
+      ...(cleanedCharCount !== undefined ? { cleanedCharCount } : {}),
     });
   }
   
