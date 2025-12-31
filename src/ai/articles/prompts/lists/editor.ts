@@ -26,9 +26,10 @@ ${ctx.validationFeedback.map((msg, i) => `${i + 1}. ${msg}`).join('\n')}
 
     return `Design a LIST article plan for "${ctx.gameName}".
 ${validationFeedbackSection}
+Suggested title from Scout: "${ctx.draftTitle}"
 
-=== SCOUT INTELLIGENCE ===
-${ctx.scoutBriefing.fullContext}
+=== RESEARCH BRIEFINGS ===
+${ctx.queryBriefingsSummary}
 
 === ${ctx.existingResearchSummary}
 ${ctx.topSourcesSummary ? `\n${ctx.topSourcesSummary}\n` : ''}

@@ -64,13 +64,15 @@ ${localeInstruction}`;
       : '';
 
 
+    const titleHint = `\nSuggested title from Scout: "${ctx.draftTitle}"\n`;
+    const researchSection = `=== RESEARCH BRIEFINGS (Per-Query Synthesis) ===\n${ctx.queryBriefingsSummary}`;
+
     return `Create a COMPLETE guide plan for "${ctx.gameName}".
-${validationFeedbackSection}
+${validationFeedbackSection}${titleHint}
 === USER REQUEST ===
 ${ctx.instruction?.trim() || 'Create a comprehensive guide'}
 
-=== SCOUT RESEARCH (YOUR SOURCE — EXTRACT EVERYTHING) ===
-${ctx.scoutBriefing.fullContext}
+${researchSection}
 
 ${ctx.existingResearchSummary}
 ${ctx.topSourcesSummary ? `\n${ctx.topSourcesSummary}\n` : ''}

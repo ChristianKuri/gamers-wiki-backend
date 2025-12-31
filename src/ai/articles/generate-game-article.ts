@@ -1524,6 +1524,10 @@ export async function generateGameArticleDraft(
     ...(scoutOutput.queryStats && scoutOutput.queryStats.length > 0
       ? { queryStats: scoutOutput.queryStats }
       : {}),
+    // Include query briefings for debugging/analysis
+    ...(scoutOutput.queryBriefings.length > 0
+      ? { queryBriefings: scoutOutput.queryBriefings }
+      : {}),
   };
 
   return {

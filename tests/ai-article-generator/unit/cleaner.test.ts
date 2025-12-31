@@ -70,6 +70,22 @@ There are many weapon types in Elden Ring:
 - Spears and halberds
 - Magic catalysts`,
   summary: 'A combat guide for Elden Ring covering basic mechanics and weapon types.',
+  detailedSummary: `This comprehensive Elden Ring combat guide covers the fundamental mechanics of combat, including stamina management which is crucial for balancing offense and defense. The guide details various weapon types available in the game.
+
+The combat system features multiple weapon categories including swords (straight, curved, and great variants), axes (regular and great), spears and halberds, and magic catalysts. Each weapon type offers different playstyles and strategic options for players.
+
+Stamina is the core resource in combat - every action from attacking to dodging costs stamina, requiring players to carefully manage their resources during encounters.`,
+  keyFacts: [
+    'Stamina management is crucial - every action costs stamina',
+    'Multiple weapon types: swords, axes, spears, halberds, magic catalysts',
+    'Sword variants include straight, curved, and great swords',
+    'Combat requires balancing offense and defense',
+  ],
+  dataPoints: [
+    'Elden Ring',
+    'FromSoftware',
+    'action RPG',
+  ],
   qualityScore: 75,
   relevanceScore: 90,
   qualityNotes: 'Good guide content with clear structure. Relevant gaming information.',

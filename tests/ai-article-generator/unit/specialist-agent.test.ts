@@ -42,16 +42,33 @@ const createMockGameContext = (overrides: Partial<GameArticleContext> = {}): Gam
 });
 
 const createMockScoutOutput = (): ScoutOutput => ({
-  briefing: {
-    overview: 'Elden Ring is an action RPG. It features open world exploration and challenging combat.',
-    categoryInsights: 'Guide content would be most valuable.',
-    recentDevelopments: 'DLC announced.',
-    fullContext: 'Full context document...',
+  queryPlan: {
+    draftTitle: 'Elden Ring: Complete Beginner Guide',
+    queries: [
+      { query: '"Elden Ring" beginner guide', engine: 'tavily', purpose: 'General overview', expectedFindings: ['Core mechanics'] },
+    ],
   },
+  discoveryCheck: {
+    needsDiscovery: false,
+    discoveryReason: 'none',
+  },
+  queryBriefings: [
+    {
+      query: '"Elden Ring" beginner guide',
+      engine: 'tavily',
+      purpose: 'General overview',
+      findings: 'Elden Ring is an action RPG with open world exploration.',
+      keyFacts: ['Open world', 'Challenging combat'],
+      gaps: [],
+      sourceCount: 3,
+    },
+  ],
   researchPool: createEmptyResearchPool(),
   sourceUrls: ['https://ign.com'],
   tokenUsage: createEmptyTokenUsage(),
   confidence: 'high',
+  searchApiCosts: { totalUsd: 0, exaSearchCount: 0, tavilySearchCount: 1, exaCostUsd: 0, tavilyCostUsd: 0.008, tavilyCredits: 1 },
+  filteredSources: [],
 });
 
 const createMockArticlePlan = (overrides: Partial<ArticlePlan> = {}): ArticlePlan => ({

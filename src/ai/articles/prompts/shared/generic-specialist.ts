@@ -41,15 +41,18 @@ ${localeInstruction}`;
     ctx: SpecialistSectionContext,
     plan: ArticlePlan,
     gameName: string,
-    maxScoutOverviewLength: number,
+    _maxScoutOverviewLength: number,
     minParagraphs: number,
     maxParagraphs: number
   ): string {
-    const truncatedOverview = 
-      ctx.scoutOverview.length > maxScoutOverviewLength
-        ? `${ctx.scoutOverview.slice(0, maxScoutOverviewLength)}
-...(truncated for brevity)`
-        : ctx.scoutOverview;
+    // Build query briefings section
+    const queryBriefingsSection = ctx.queryBriefings.length > 0
+      ? ctx.queryBriefings.map((b, i) => 
+          `Query ${i + 1}: "${b.query}"
+Findings: ${b.findings}
+Key Facts: ${b.keyFacts.length > 0 ? b.keyFacts.join('; ') : '(none)'}`
+        ).join('\n\n')
+      : '(No briefings available)';
 
     const positionText = ctx.isFirst
       ? 'Opening section (set the stage, no preamble needed)'
@@ -70,13 +73,8 @@ Headline: ${ctx.headline}
 Internal Goal: ${ctx.goal}
 Position: ${positionText}
 
-=== COMPREHENSIVE RESEARCH CONTEXT ===
-${truncatedOverview}
-
-${ctx.categoryInsights ? `Category Insights:
-${ctx.categoryInsights}
-
-` : ''}
+=== SCOUT BRIEFINGS ===
+${queryBriefingsSection}
 
 Section-Specific Research:
 ${ctx.researchContext || '(Using Scout research only for this section)'}

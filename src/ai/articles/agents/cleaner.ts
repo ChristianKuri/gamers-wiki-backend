@@ -45,6 +45,21 @@ const CleanerOutputSchema = z.object({
     .min(1)
     .max(500)
     .describe('A concise 1-2 sentence summary of what this content is about. Will be used for quick reference.'),
+  detailedSummary: z
+    .string()
+    .min(1)
+    .max(2000)
+    .describe('A detailed summary (3-5 paragraphs) preserving specific facts, numbers, names, locations, and actionable information. Include concrete details that would be useful for writing an article.'),
+  keyFacts: z
+    .array(z.string())
+    .min(1)
+    .max(10)
+    .describe('3-7 key facts as bullet points. Each fact should be specific and contain concrete information (names, numbers, locations, strategies).'),
+  dataPoints: z
+    .array(z.string())
+    .min(0)
+    .max(15)
+    .describe('Specific data points extracted: statistics, dates, version numbers, character names, item names, damage values, percentages, etc. Empty array if no specific data found.'),
   qualityScore: z
     .number()
     .int()
@@ -100,8 +115,9 @@ export interface CleanSourcesBatchResult {
 function getCleanerSystemPrompt(): string {
   return `You are a content cleaning specialist for a VIDEO GAME website. Your job is to:
 1. Extract valuable content from web pages while removing junk
-2. Rate content QUALITY (structure, depth, authority)
-3. Rate content RELEVANCE TO VIDEO GAMES (PC, console, mobile games)
+2. Create detailed summaries with specific facts for article writing
+3. Rate content QUALITY (structure, depth, authority)
+4. Rate content RELEVANCE TO VIDEO GAMES (PC, console, mobile games)
 
 REMOVE (do not include in cleanedContent):
 - Navigation menus, headers, footers
@@ -135,8 +151,30 @@ CRITICAL RULES:
 4. If the content is mostly junk, return what little value exists
 5. Be generous - when in doubt, keep the content
 
-SUMMARY:
+SUMMARY (short):
 Write a concise 1-2 sentence summary of what this content covers.
+
+DETAILED SUMMARY (rich):
+Write a detailed 3-5 paragraph summary that preserves SPECIFIC information:
+- Names of characters, items, locations, bosses, abilities
+- Numbers: damage values, percentages, stats, costs, distances
+- Step-by-step procedures or strategies
+- Conditions, requirements, prerequisites
+- Tips and warnings
+This will be used by writers who may not read the full content, so include all actionable details.
+
+KEY FACTS:
+Extract 3-7 key facts as bullet points. Each fact should be SPECIFIC and CONCRETE:
+✓ "The Moonlight Greatsword deals 180 base damage and scales with INT"
+✓ "Boss has 3 phases, second phase starts at 50% HP"
+✓ "Quest requires completing the Ranni questline first"
+✗ "This guide covers various strategies" (too vague)
+✗ "The game has interesting mechanics" (not actionable)
+
+DATA POINTS:
+Extract specific data: statistics, dates, version numbers, character names, item names, damage values, percentages, coordinates, etc.
+Examples: "Update 1.09", "35% damage reduction", "Malenia", "Sword of Night and Flame", "2024-03-15 release"
+Return empty array if no specific data found.
 
 QUALITY SCORING (0-100) - Content quality regardless of topic:
 - Content depth (0-40 pts): Detailed, comprehensive information?
@@ -199,16 +237,25 @@ ${source.content.slice(0, CLEANER_CONFIG.MAX_INPUT_CHARS)}
 Extract and return:
 1. cleanedContent: The content with all junk removed (keep ALL valuable content)
 2. summary: A concise 1-2 sentence summary of what this content covers
-3. qualityScore: 0-100 content quality rating (depth, structure, authority)
-4. relevanceScore: 0-100 VIDEO GAME relevance (PC/console/mobile games ONLY)
-5. qualityNotes: Brief explanation of BOTH scores
-6. contentType: Describe what type of content this is (be specific)
+3. detailedSummary: A rich 3-5 paragraph summary preserving ALL specific facts, names, numbers, strategies, and actionable information
+4. keyFacts: 3-7 specific, concrete facts as bullet points (include names, numbers, locations)
+5. dataPoints: Array of specific data extracted (stats, dates, character names, item names, damage values, etc.)
+6. qualityScore: 0-100 content quality rating (depth, structure, authority)
+7. relevanceScore: 0-100 VIDEO GAME relevance (PC/console/mobile games ONLY)
+8. qualityNotes: Brief explanation of BOTH scores
+9. contentType: Describe what type of content this is (be specific)
 
 CRITICAL RELEVANCE RULES:
 - Video games (PC, PlayStation, Xbox, Nintendo, mobile) = HIGH relevance (70-100)
 - Board games, card games, tabletop RPGs = relevance 0-10 (NOT video games!)
 - Programming docs, recipes, sports, news = relevance 0-20
-- boardgamegeek.com, D&D content, Magic cards = relevance 0-10`;
+- boardgamegeek.com, D&D content, Magic cards = relevance 0-10
+
+CRITICAL FOR SUMMARIES:
+- Include SPECIFIC details: character names, item names, damage numbers, percentages
+- Preserve step-by-step procedures and strategies
+- Include prerequisites, conditions, and warnings
+- Be concrete, not vague - writers will use this without reading the full content`;
 }
 
 // ============================================================================
@@ -297,6 +344,9 @@ export async function cleanSingleSource(
         domain,
         title: source.title,
         summary: output.summary,
+        detailedSummary: output.detailedSummary,
+        keyFacts: output.keyFacts,
+        dataPoints: output.dataPoints,
         cleanedContent: output.cleanedContent,
         originalContentLength: originalLength,
         qualityScore: output.qualityScore,
@@ -323,6 +373,9 @@ export async function cleanSingleSource(
         domain,
         title: source.title,
         summary: `[Cleaning failed: ${message}] ${source.title}`,
+        detailedSummary: null, // Not available for fallback
+        keyFacts: null, // Not available for fallback
+        dataPoints: null, // Not available for fallback
         cleanedContent: source.content.slice(0, CLEANER_CONFIG.MAX_INPUT_CHARS),
         originalContentLength: source.content.length,
         qualityScore: 25, // Low score since uncleaned
@@ -401,6 +454,173 @@ export async function cleanSourcesBatch(
   );
 
   return { sources: cleanedSources, tokenUsage: totalTokenUsage };
+}
+
+// ============================================================================
+// Summary Extraction from Already-Cleaned Content
+// ============================================================================
+
+/**
+ * Schema for summary extraction from already-cleaned content.
+ * Used for backfilling legacy cached content that has cleanedContent but no summaries.
+ */
+const SummaryExtractionSchema = z.object({
+  summary: z
+    .string()
+    .min(1)
+    .max(500)
+    .describe('A concise 1-2 sentence summary of what this content is about.'),
+  detailedSummary: z
+    .string()
+    .min(1)
+    .max(2000)
+    .describe('A detailed summary (3-5 paragraphs) preserving specific facts, numbers, names, locations, and actionable information.'),
+  keyFacts: z
+    .array(z.string())
+    .min(1)
+    .max(10)
+    .describe('3-7 key facts as bullet points. Each fact should be specific and contain concrete information.'),
+  dataPoints: z
+    .array(z.string())
+    .min(0)
+    .max(15)
+    .describe('Specific data points extracted: statistics, dates, version numbers, character names, item names, etc.'),
+});
+
+/**
+ * System prompt for extracting summaries from already-cleaned content.
+ * This is lighter than full cleaning since the content is already junk-free.
+ */
+function getSummaryExtractionSystemPrompt(): string {
+  return `You are extracting summaries and key facts from ALREADY CLEANED video game content.
+The content has already been cleaned of navigation, ads, and junk. Your job is to summarize it.
+
+SUMMARY (short):
+Write a concise 1-2 sentence summary of what this content covers.
+
+DETAILED SUMMARY (rich):
+Write a detailed 3-5 paragraph summary that preserves SPECIFIC information:
+- Names of characters, items, locations, bosses, abilities
+- Numbers: damage values, percentages, stats, costs, distances
+- Step-by-step procedures or strategies
+- Conditions, requirements, prerequisites
+- Tips and warnings
+This will be used by writers who may not read the full content, so include all actionable details.
+
+KEY FACTS:
+Extract 3-7 key facts as bullet points. Each fact should be SPECIFIC and CONCRETE:
+✓ "The Moonlight Greatsword deals 180 base damage and scales with INT"
+✓ "Boss has 3 phases, second phase starts at 50% HP"
+✓ "Quest requires completing the Ranni questline first"
+✗ "This guide covers various strategies" (too vague)
+✗ "The game has interesting mechanics" (not actionable)
+
+DATA POINTS:
+Extract specific data: statistics, dates, version numbers, character names, item names, damage values, percentages, etc.
+Return empty array if no specific data found.`;
+}
+
+/**
+ * User prompt for extracting summaries from cleaned content.
+ */
+function getSummaryExtractionUserPrompt(title: string, cleanedContent: string, gameName?: string): string {
+  const gameContext = gameName ? `\nContext: This content is about the video game "${gameName}".` : '';
+  const truncatedContent = cleanedContent.slice(0, CLEANER_CONFIG.MAX_INPUT_CHARS);
+
+  return `Extract summaries and key facts from this already-cleaned video game content.
+${gameContext}
+
+Title: ${title}
+
+=== CLEANED CONTENT ===
+${truncatedContent}
+=== END CONTENT ===
+
+Extract and return:
+1. summary: A concise 1-2 sentence summary
+2. detailedSummary: A rich 3-5 paragraph summary with ALL specific facts, names, numbers
+3. keyFacts: 3-7 specific, concrete facts as bullet points
+4. dataPoints: Array of specific data (stats, dates, names, numbers)`;
+}
+
+/**
+ * Result of extracting summaries from cleaned content.
+ */
+export interface SummaryExtractionResult {
+  readonly summary: string;
+  readonly detailedSummary: string;
+  readonly keyFacts: readonly string[];
+  readonly dataPoints: readonly string[];
+  readonly tokenUsage: TokenUsage;
+}
+
+/**
+ * Extract summaries from already-cleaned content.
+ * Used for backfilling legacy cached sources that have cleanedContent but no summaries.
+ * 
+ * This is MUCH cheaper than full cleaning since:
+ * - No junk removal needed (content already cleaned)
+ * - Smaller output (just summaries, not full cleanedContent)
+ * - Can use smaller/faster model
+ * 
+ * @param title - Title of the source
+ * @param cleanedContent - Already cleaned content
+ * @param deps - Cleaner dependencies
+ * @param gameName - Optional game name for context
+ * @returns Extracted summaries or null if extraction fails
+ */
+export async function extractSummariesFromCleanedContent(
+  title: string,
+  cleanedContent: string,
+  deps: CleanerDeps,
+  gameName?: string
+): Promise<SummaryExtractionResult | null> {
+  const log = deps.logger ?? createPrefixedLogger('[Cleaner]');
+
+  // Skip if content is too short
+  if (cleanedContent.length < CLEANER_CONFIG.MIN_CLEANED_CHARS) {
+    log.debug(`Content too short for summary extraction: ${cleanedContent.length} chars`);
+    return null;
+  }
+
+  try {
+    const result = await withRetry(
+      async () => {
+        const timeoutSignal = AbortSignal.timeout(CLEANER_CONFIG.TIMEOUT_MS);
+        const signal = deps.signal
+          ? AbortSignal.any([deps.signal, timeoutSignal])
+          : timeoutSignal;
+
+        return deps.generateObject({
+          model: deps.model,
+          schema: SummaryExtractionSchema,
+          temperature: CLEANER_CONFIG.TEMPERATURE,
+          abortSignal: signal,
+          system: getSummaryExtractionSystemPrompt(),
+          prompt: getSummaryExtractionUserPrompt(title, cleanedContent, gameName),
+        });
+      },
+      {
+        context: `Summary extraction: ${title.slice(0, 50)}...`,
+        signal: deps.signal,
+      }
+    );
+
+    const tokenUsage = createTokenUsageFromResult(result);
+    const output = result.object;
+
+    return {
+      summary: output.summary,
+      detailedSummary: output.detailedSummary,
+      keyFacts: output.keyFacts,
+      dataPoints: output.dataPoints,
+      tokenUsage,
+    };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    log.warn(`Failed to extract summaries from "${title}": ${message}`);
+    return null;
+  }
 }
 
 // ============================================================================

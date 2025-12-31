@@ -42,6 +42,14 @@ export {
   type ArticleGenerationPhase,
   type SectionProgressCallback,
   type Clock,
+  // New Scout Query Planning types
+  type DiscoveryCheck,
+  type DiscoveryReason,
+  type PlannedQuery,
+  type QueryPlan,
+  type QueryBriefing,
+  type SourceSummary,
+  type SourceContentType,
 } from './types';
 
 // Unified configuration

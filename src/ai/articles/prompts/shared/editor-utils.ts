@@ -1,5 +1,5 @@
 import type { ArticleCategorySlug } from '../../article-plan';
-import type { CategoryHint, ScoutOutput } from '../../types';
+import type { CategoryHint, QueryBriefing, ScoutOutput } from '../../types';
 
 // ============================================================================ 
 // Required Elements Hints
@@ -134,15 +134,75 @@ export function buildCategoryHintsSection(
  */
 export function buildExistingResearchSummary(
   scoutOutput: ScoutOutput,
-  overviewPreviewLines: number
+  _overviewPreviewLines: number
 ): string {
   const overviewSearches = scoutOutput.researchPool.scoutFindings.overview.map((s) => `"${s.query}"`).join(', ');
   const categorySearches = scoutOutput.researchPool.scoutFindings.categorySpecific.map((s) => `"${s.query}"`).join(', ');
   const recentSearches = scoutOutput.researchPool.scoutFindings.recent.map((s) => `"${s.query}"`).join(', ');
   const totalSources = scoutOutput.researchPool.allUrls.size;
-  const overviewPreview = scoutOutput.briefing.overview.split('\n').slice(0, overviewPreviewLines).join('\n');
+  
+  // Build overview from query briefings
+  const briefingOverview = scoutOutput.queryBriefings.length > 0
+    ? scoutOutput.queryBriefings.slice(0, 2).map(b => `• ${b.purpose}: ${b.findings.slice(0, 150)}...`).join('\n')
+    : '(See query briefings above for details)';
 
-  return `EXISTING RESEARCH COVERAGE:\nOverview searches: ${overviewSearches}\nCategory searches: ${categorySearches}\nRecent searches: ${recentSearches}\nTotal sources: ${totalSources}\n\nThe research pool already contains comprehensive information on:\n${overviewPreview}\n...\n\nWhen creating research queries, focus on SPECIFIC details not yet fully covered.`;
+  return `EXISTING RESEARCH COVERAGE:\nOverview searches: ${overviewSearches}\nCategory searches: ${categorySearches}\nRecent searches: ${recentSearches}\nTotal sources: ${totalSources}\n\nResearch summary:\n${briefingOverview}\n\nWhen creating research queries, focus on SPECIFIC details not yet fully covered.`;
+}
+
+/**
+ * Builds the query briefings summary for Editor context.
+ * Shows synthesized findings, key facts, and gaps for each search query.
+ * 
+ * This is the NEW format that replaces the old briefing structure.
+ *
+ * @param queryBriefings - Array of per-query briefings from Scout
+ * @returns Formatted string with query briefings, or empty string if none available
+ */
+export function buildQueryBriefingsSummary(queryBriefings: readonly QueryBriefing[] | undefined): string {
+  if (!queryBriefings || queryBriefings.length === 0) {
+    return '';
+  }
+
+  const sections: string[] = [
+    '=== RESEARCH BRIEFINGS (Per-Query Synthesis) ===',
+    'Each briefing synthesizes findings from multiple sources for a specific research query.',
+    'Use these to understand what information is available and what gaps exist.',
+    '',
+  ];
+
+  for (let i = 0; i < queryBriefings.length; i++) {
+    const briefing = queryBriefings[i];
+    const engineIcon = briefing.engine === 'exa' ? '🔍' : '📍';
+
+    sections.push(`--- BRIEFING ${i + 1}: "${briefing.query}" [${briefing.engine}] ---`);
+    sections.push(`${engineIcon} Purpose: ${briefing.purpose}`);
+    sections.push(`Sources: ${briefing.sourceCount}`);
+    sections.push('');
+    sections.push('FINDINGS:');
+    sections.push(briefing.findings);
+    sections.push('');
+    
+    if (briefing.keyFacts.length > 0) {
+      sections.push('KEY FACTS:');
+      for (const fact of briefing.keyFacts) {
+        sections.push(`• ${fact}`);
+      }
+      sections.push('');
+    }
+    
+    if (briefing.gaps.length > 0) {
+      sections.push('GAPS (not found):');
+      for (const gap of briefing.gaps) {
+        sections.push(`⚠️ ${gap}`);
+      }
+      sections.push('');
+    }
+    
+    sections.push('--- END OF BRIEFING ---');
+    sections.push('');
+  }
+
+  return sections.join('\n');
 }
 
 /**

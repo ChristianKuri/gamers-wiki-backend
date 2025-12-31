@@ -23,9 +23,10 @@ ${localeInstruction}`;
 
     return `Design a NEWS article plan for "${ctx.gameName}".
 ${validationFeedbackSection}
+Suggested title from Scout: "${ctx.draftTitle}"
 
-=== SCOUT INTELLIGENCE ===
-${ctx.scoutBriefing.fullContext}
+=== RESEARCH BRIEFINGS ===
+${ctx.queryBriefingsSummary}
 
 === ${ctx.existingResearchSummary}
 ${ctx.topSourcesSummary ? `\n${ctx.topSourcesSummary}\n` : ''}

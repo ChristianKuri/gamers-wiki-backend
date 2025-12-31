@@ -24,12 +24,13 @@ ${localeInstruction}`;
 
     return `Design an article plan for "${ctx.gameName}".
 ${validationFeedbackSection}
+Suggested title from Scout: "${ctx.draftTitle}"
 
 === USER DIRECTIVE ===
 ${ctx.instruction?.trim() || '(No specific directive — determine best article type from context)'}
 
-=== COMPREHENSIVE SCOUT INTELLIGENCE ===
-${ctx.scoutBriefing.fullContext}
+=== RESEARCH BRIEFINGS ===
+${ctx.queryBriefingsSummary}
 
 === ${ctx.existingResearchSummary}
 ${ctx.topSourcesSummary ? `\n${ctx.topSourcesSummary}\n` : ''}

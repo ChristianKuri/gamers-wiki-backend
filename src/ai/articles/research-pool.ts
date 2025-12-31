@@ -905,17 +905,34 @@ export async function processSearchResultsWithCleaning(
         scrapeFailureRetryUrls.add(r.url);
         return false; // Remove from hits, will be added to misses
       }
-      // Content still insufficient - keep as "hit" (a known failure)
-      return true;
+      // Content still insufficient - track as filtered and keep as "hit" (won't be processed)
+      const rawLength = rawSource?.content.length ?? 0;
+      filteredSources.push({
+        url: r.url,
+        domain,
+        title: r.cached.title ?? 'Unknown',
+        qualityScore: 0,
+        relevanceScore: null,
+        reason: 'scrape_failure',
+        details: `Scrape failed again: ${rawLength} chars (min: ${CLEANER_CONFIG.MIN_CONTENT_LENGTH})`,
+        query,
+        searchSource,
+        filterStage: 'programmatic',
+      });
+      duplicateTracker?.incrementFiltered(query);
+      return true; // Keep as hit so it's not retried as a miss
     }
     
-    // Check if this is legacy data that needs reprocessing (NULL relevance)
+    // Check if this is legacy data that needs reprocessing (missing relevance or detailedSummary)
     if (r.cached && r.cached.needsReprocessing) {
       // Find the corresponding raw source to re-clean
       const rawSource = rawSources.find(s => normalizeUrl(s.url) === normalizeUrl(r.url));
       if (rawSource && rawSource.content.length > CLEANER_CONFIG.MIN_CONTENT_LENGTH) {
-        // Have raw content - treat as miss to re-clean and calculate relevance
-        logger?.info?.(`Reprocessing legacy: ${domain} has NULL relevance, re-cleaning to calculate scores`);
+        // Have raw content - treat as miss to re-clean and calculate relevance/summaries
+        const reason = r.cached.relevanceScore === null 
+          ? 'missing relevance score' 
+          : 'missing detailedSummary';
+        logger?.debug?.(`Reprocessing legacy cache: ${domain} (${reason})`);
         needsReprocessingUrls.add(r.url);
         return false; // Remove from hits, will be added to misses
       }
@@ -1225,8 +1242,8 @@ export async function processSearchResultsWithCleaning(
 
       if (cleanedSource) {
         // Skip scrape failures - they have no useful content
-        if (!cleanedSource.scrapeSucceeded) {
-          // Already tracked in filtered sources during cache processing
+        // (Already tracked in filtered sources during cache hit processing)
+        if (cleanedSource.scrapeSucceeded === false) {
           return null;
         }
         
@@ -1278,6 +1295,10 @@ export async function processSearchResultsWithCleaning(
           url: normalized,
           content: cleanedSource.cleanedContent,
           ...(r.summary ? { summary: r.summary } : {}),
+          // Include detailed summary fields if available (from cleaner or cache)
+          ...(cleanedSource.detailedSummary ? { detailedSummary: cleanedSource.detailedSummary } : {}),
+          ...(cleanedSource.keyFacts && cleanedSource.keyFacts.length > 0 ? { keyFacts: cleanedSource.keyFacts } : {}),
+          ...(cleanedSource.dataPoints && cleanedSource.dataPoints.length > 0 ? { dataPoints: cleanedSource.dataPoints } : {}),
           ...(typeof r.score === 'number' ? { score: r.score } : {}),
           qualityScore: cleanedSource.qualityScore,
           relevanceScore: cleanedSource.relevanceScore,

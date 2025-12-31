@@ -398,6 +398,23 @@ export const SCOUT_CONFIG = {
   MIN_QUERIES_WARNING: 3,
   /** Minimum overview length to consider valid */
   MIN_OVERVIEW_LENGTH: 50,
+  /**
+   * Whether to use pre-extracted summaries (detailedSummary, keyFacts, dataPoints)
+   * from the Cleaner when generating QueryBriefings.
+   * 
+   * When TRUE (optimized mode, default):
+   * - Uses Cleaner's detailedSummary + keyFacts instead of raw cleanedContent
+   * - No extra tokens - Cleaner already extracted this in ONE LLM call
+   * - Best for production use
+   * 
+   * When FALSE (classic mode):
+   * - Reads raw cleanedContent (truncated to 800 chars) per source
+   * - Wasteful since Cleaner already has better summaries
+   * - Only for A/B testing comparison
+   * 
+   * @default true - Use Cleaner's already-extracted summaries
+   */
+  USE_SUMMARIES_FOR_BRIEFINGS: true,
 } as const;
 
 // ============================================================================
