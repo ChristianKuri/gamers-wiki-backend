@@ -213,6 +213,17 @@ PREVIOUSLY COVERED (Do Not Repeat):
 ${ctx.crossReferenceContext}
 ` : '';
 
+    // Build awareness of what OTHER sections will cover (to avoid duplication)
+    const otherSectionsCoverage = plan.sections
+      .filter((_, idx) => idx !== ctx.sectionIndex)
+      .map((s) => `• ${s.headline}: ${s.mustCover.slice(0, 3).join(', ')}${s.mustCover.length > 3 ? '...' : ''}`)
+      .join('\n');
+
+    const otherSectionsContext = otherSectionsCoverage ? `
+OTHER SECTIONS WILL COVER (Do NOT duplicate these topics):
+${otherSectionsCoverage}
+` : '';
+
     return `Write section ${ctx.sectionIndex + 1} of ${ctx.totalSections} for a guide about ${gameName}.
 
 ARTICLE: ${plan.title}
@@ -222,8 +233,14 @@ ${sectionScope}
 ${researchSection}
 
 ${previouslyWritten}
-
+${otherSectionsContext}
 ${mustCoverSection}
+
+SMART EXPANSION (Use Judgment):
+• You MUST cover everything in mustCover—this is non-negotiable
+• You MAY add 1-2 closely related items IF they naturally fit AND appear in your research
+• DO NOT add items that belong in other sections (see "OTHER SECTIONS WILL COVER" above)
+• When in doubt, leave it out—better to be focused than bloated
 
 WRITING GUIDELINES:
 

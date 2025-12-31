@@ -46,6 +46,16 @@ ${TONE_GUIDE}`;
 ...(truncated)`
         : ctx.scoutOverview;
 
+    // Build awareness of what OTHER sections will cover
+    const otherSectionsCoverage = plan.sections
+      .filter((_, idx) => idx !== ctx.sectionIndex)
+      .map((s) => `• ${s.headline}: ${s.mustCover.slice(0, 2).join(', ')}${s.mustCover.length > 2 ? '...' : ''}`)
+      .join('\n');
+
+    const mustCoverList = ctx.mustCover.length > 0
+      ? `\n=== MUST COVER (Non-negotiable) ===\n${ctx.mustCover.map((item) => `• ${item}`).join('\n')}\n`
+      : '';
+
     return `Write section ${ctx.sectionIndex + 1}/${ctx.totalSections} for a REVIEW article.
 
 === ARTICLE CONTEXT ===
@@ -56,6 +66,9 @@ Full Outline: ${plan.sections.map((s, idx) => `${idx + 1}. ${s.headline}`).join(
 === SECTION GOAL ===
 Headline: ${ctx.headline}
 Goal: ${ctx.goal}
+${mustCoverList}
+=== OTHER SECTIONS COVER (Don't duplicate) ===
+${otherSectionsCoverage}
 
 === RESEARCH ===
 ${ctx.researchContext || '(Using general context only)'}
@@ -64,12 +77,13 @@ General Overview:
 ${truncatedOverview}
 
 === WRITING INSTRUCTIONS ===
-- Write as many paragraphs as needed to provide thorough analysis.
-- COMPLETENESS > WORD COUNT: Deep analysis matters, but don't pad with repetition.
-- Be analytical. Don't just describe the feature, evaluate it.
-- Is it fun? Is it broken? Is it new? Support claims with evidence.
-- Compare with genre standards if applicable.
-- Quality critique > length—a concise, insightful paragraph beats three vague ones.
+- You MUST cover everything in "MUST COVER" above
+- You MAY add related analysis points from research if they strengthen the critique
+- DO NOT analyze aspects assigned to other sections
+- Write as many paragraphs as needed—depth > word count
+- Be analytical: evaluate, don't just describe
+- Support claims with evidence from research
+- Quality critique > length—insight beats verbosity
 
 Write the section now (markdown only):`;
   }
