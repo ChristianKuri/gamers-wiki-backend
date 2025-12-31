@@ -588,7 +588,8 @@ export interface FilteredSource {
   readonly domain: string;
   readonly title: string;
   readonly qualityScore: number;
-  readonly relevanceScore: number;
+  /** Relevance score (0-100), or null if unknown (e.g., scrape failures) */
+  readonly relevanceScore: number | null;
   /** Reason for filtering */
   readonly reason: 'low_relevance' | 'low_quality' | 'excluded_domain' | 'pre_filtered' | 'scrape_failure';
   /** Human-readable details */
@@ -782,7 +783,7 @@ export async function processSearchResultsWithCleaning(
           domain: extractDomainFromUrl(s.url),
           title: s.title,
           qualityScore: 0,
-          relevanceScore: 0,
+          relevanceScore: null, // Unknown - couldn't evaluate content
           reason: 'scrape_failure',
           details: `Content too short: ${s.content.length} chars (min: ${CLEANER_CONFIG.MIN_CONTENT_LENGTH})`,
           query,
@@ -819,7 +820,7 @@ export async function processSearchResultsWithCleaning(
           domain: extractDomainFromUrl(source.url),
           title: source.title,
           qualityScore: 0,
-          relevanceScore: 0,
+          relevanceScore: null, // Unknown - skipped before evaluation
           reason: 'pre_filtered',
           details: `Programmatic: ${reason}`,
           query,
@@ -1014,7 +1015,13 @@ export async function processSearchResultsWithCleaning(
     
     logger?.info?.(
       `Filtered ${filteredSources.length} source(s) for "${query.slice(0, 40)}..." (${parts.join(', ')}): ` +
-      filteredSources.map((s) => `${s.domain} [Q:${s.qualityScore}/R:${s.relevanceScore}]`).join(', ')
+      filteredSources.map((s) => {
+        // Show "scrape failed" instead of confusing Q:0/R:null for scrape failures
+        if (s.reason === 'scrape_failure') {
+          return `${s.domain} [scrape failed]`;
+        }
+        return `${s.domain} [Q:${s.qualityScore}/R:${s.relevanceScore ?? 'unknown'}]`;
+      }).join(', ')
     );
   }
 

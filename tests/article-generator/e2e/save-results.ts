@@ -147,7 +147,8 @@ export interface FilteredSourceItem {
   readonly domain: string;
   readonly title: string;
   readonly qualityScore: number;
-  readonly relevanceScore: number;
+  /** Relevance score (0-100), or null if unknown (e.g., scrape failures) */
+  readonly relevanceScore: number | null;
   readonly reason: 'low_relevance' | 'low_quality' | 'excluded_domain' | 'pre_filtered' | 'scrape_failure';
   readonly details: string;
   /** Search query that returned this source */

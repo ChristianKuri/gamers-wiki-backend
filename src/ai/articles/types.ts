@@ -601,7 +601,8 @@ export interface FilteredSourceSummary {
   readonly domain: string;
   readonly title: string;
   readonly qualityScore: number;
-  readonly relevanceScore: number;
+  /** Relevance score (0-100), or null if unknown (e.g., scrape failures) */
+  readonly relevanceScore: number | null;
   /** Reason for filtering */
   readonly reason: 'low_relevance' | 'low_quality' | 'excluded_domain' | 'pre_filtered' | 'scrape_failure';
   /** Human-readable details */

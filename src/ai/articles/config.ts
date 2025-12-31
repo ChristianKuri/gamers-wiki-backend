@@ -195,8 +195,10 @@ export const ARTICLE_PLAN_CONSTRAINTS = {
   TAG_MAX_LENGTH: 50,
 
   // Research query constraints
+  // Reduced to 1 query per section for cost optimization (Dec 2024)
+  // Scout already provides overview context, so 1 focused query is sufficient
   MIN_RESEARCH_QUERIES_PER_SECTION: 1,
-  MAX_RESEARCH_QUERIES_PER_SECTION: 6,
+  MAX_RESEARCH_QUERIES_PER_SECTION: 1,
 
   // Markdown constraints
   MIN_MARKDOWN_LENGTH: 500,
