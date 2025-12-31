@@ -5,8 +5,14 @@
  * multiple search queries and generating briefings for other agents.
  *
  * Uses two search strategies:
- * - Tavily: Keyword-based web search for factual queries (overview, recent news)
+ * - Tavily: Keyword-based web search for factual queries (overview, category-specific, tips/recent/meta)
  * - Exa: Neural/semantic search for "how does X work" queries (guides only)
+ *
+ * Query structure is flexible and defined per article type:
+ * - Guides: overview + category + tips
+ * - News: overview + category + recent
+ * - Reviews: overview + category + recent
+ * - Lists: overview + category + meta
  *
  * Optionally integrates with the Cleaner agent to clean raw content before
  * passing to downstream agents (Editor, Specialist).
@@ -17,6 +23,11 @@ import type { LanguageModel } from 'ai';
 import { createPrefixedLogger, type Logger } from '../../../utils/logger';
 import { exaSearch, isExaConfigured, type ExaSearchOptions } from '../../tools/exa';
 import { SCOUT_CONFIG } from '../config';
+import {
+  generateOptimizedQueries,
+  generateFallbackQueries,
+  type QueryOptimizerDeps,
+} from '../query-optimizer';
 import { withRetry } from '../retry';
 import {
   buildExaQueriesForGuides,
@@ -26,12 +37,14 @@ import {
   getScoutCategoryUserPrompt,
   getScoutOverviewSystemPrompt,
   getScoutOverviewUserPrompt,
-  getScoutRecentSystemPrompt,
-  getScoutRecentUserPrompt,
+  getScoutSupplementarySystemPrompt,
+  getScoutSupplementaryUserPrompt,
+  type QuerySlot,
+  type QuerySlotCategory,
   type ScoutPromptContext,
 } from '../prompts';
 import {
-  deduplicateQueries,
+  DuplicateTracker,
   processSearchResults,
   processSearchResultsWithCleaning,
   ResearchPoolBuilder,
@@ -46,6 +59,7 @@ import {
   createEmptyTokenUsage,
   createTokenUsageFromResult,
   type CategorizedSearchResult,
+  type DuplicateUrlInfo,
   type FilteredSourceSummary,
   type GameArticleContext,
   type ResearchConfidence,
@@ -53,12 +67,53 @@ import {
   type ScoutOutput,
   type SearchApiCosts,
   type SearchFunction,
+  type SearchQueryStats,
   type SearchSource,
   type TokenUsage,
+  type TopSourceForQuery,
 } from '../types';
 
 // Re-export config for backwards compatibility
 export { SCOUT_CONFIG } from '../config';
+
+/**
+ * Maps a QuerySlotCategory to a CategorizedSearchResult category.
+ * This allows flexible slot categories while maintaining backwards compatibility
+ * with the existing result structure.
+ */
+function mapSlotCategoryToResultCategory(slotCategory: QuerySlotCategory): CategorizedSearchResult['category'] {
+  switch (slotCategory) {
+    case 'overview':
+      return 'overview';
+    case 'category-specific':
+    case 'tips':
+    case 'meta':
+    case 'critic':
+      return 'category-specific';
+    case 'recent':
+      return 'recent';
+    default:
+      return 'category-specific';
+  }
+}
+
+/**
+ * Gets a human-readable label for the supplementary section based on category.
+ */
+function getSupplementaryLabel(category: QuerySlotCategory | undefined): string {
+  switch (category) {
+    case 'tips':
+      return 'TIPS & TRICKS';
+    case 'recent':
+      return 'RECENT DEVELOPMENTS';
+    case 'meta':
+      return 'META CHANGES';
+    case 'critic':
+      return 'CRITIC OPINIONS';
+    default:
+      return 'SUPPLEMENTARY RESEARCH';
+  }
+}
 
 // ============================================================================
 // Types
@@ -93,6 +148,12 @@ export type ScoutProgressCallback = (
 export interface ScoutDeps {
   readonly search: SearchFunction;
   readonly generateText: typeof import('ai').generateText;
+  /**
+   * Optional generateObject for query optimization.
+   * When provided along with SCOUT_CONFIG.QUERY_OPTIMIZATION_ENABLED,
+   * uses LLM to generate optimized search queries based on article intent.
+   */
+  readonly generateObject?: typeof import('ai').generateObject;
   readonly model: LanguageModel;
   readonly logger?: Logger;
   /** Optional AbortSignal for cancellation support */
@@ -117,12 +178,17 @@ export interface ScoutDeps {
  * Options for executing a Tavily search operation.
  */
 export interface ExecuteSearchOptions {
-  readonly searchDepth: 'basic' | 'advanced';
-  readonly maxResults: number;
+  readonly searchDepth?: 'basic' | 'advanced';
+  readonly maxResults?: number;
   readonly signal?: AbortSignal;
   /** Optional cleaning dependencies for content cleaning and caching */
   readonly cleaningDeps?: CleaningDeps;
 }
+
+/** Default search depth for slots that don't specify one */
+const DEFAULT_SEARCH_DEPTH = 'basic' as const;
+/** Default max results for slots that don't specify one */
+const DEFAULT_MAX_RESULTS = 10;
 
 /**
  * Options for executing an Exa search operation.
@@ -156,15 +222,20 @@ export async function executeSearch(
   category: CategorizedSearchResult['category'],
   options: ExecuteSearchOptions
 ): Promise<ScoutSearchResult> {
-  // Use excluded domains from cleaningDeps if available (includes DB exclusions),
-  // otherwise fall back to static config list
-  const excludeDomains = options.cleaningDeps?.excludedDomains ?? [...SCOUT_CONFIG.EXA_EXCLUDE_DOMAINS];
+  const searchDepth = options.searchDepth ?? DEFAULT_SEARCH_DEPTH;
+  const maxResults = options.maxResults ?? DEFAULT_MAX_RESULTS;
+
+  // Use Tavily-specific exclusions if available (includes engine-specific scrape failures),
+  // fallback to generic excludedDomains, then to static config list
+  const excludeDomains = options.cleaningDeps?.tavilyExcludedDomains 
+    ?? options.cleaningDeps?.excludedDomains 
+    ?? [...SCOUT_CONFIG.EXA_EXCLUDE_DOMAINS];
 
   const result = await withRetry(
     () =>
       search(query, {
-        searchDepth: options.searchDepth,
-        maxResults: options.maxResults,
+        searchDepth,
+        maxResults,
         includeAnswer: true,
         // Request raw content for cleaning (full page text)
         includeRawContent: Boolean(options.cleaningDeps),
@@ -214,9 +285,11 @@ export async function executeExaSearch(
   category: CategorizedSearchResult['category'],
   options: ExecuteExaSearchOptions = {}
 ): Promise<ScoutSearchResult> {
-  // Use excluded domains from cleaningDeps if available (includes DB exclusions),
-  // otherwise fall back to static config list
-  const excludeDomains = options.cleaningDeps?.excludedDomains ?? [...SCOUT_CONFIG.EXA_EXCLUDE_DOMAINS];
+  // Use Exa-specific exclusions if available (includes engine-specific scrape failures),
+  // fallback to generic excludedDomains, then to static config list
+  const excludeDomains = options.cleaningDeps?.exaExcludedDomains 
+    ?? options.cleaningDeps?.excludedDomains 
+    ?? [...SCOUT_CONFIG.EXA_EXCLUDE_DOMAINS];
 
   const exaOptions: ExaSearchOptions = {
     numResults: options.numResults ?? SCOUT_CONFIG.CATEGORY_SEARCH_RESULTS,
@@ -361,25 +434,44 @@ export function buildCategoryContext(
 }
 
 /**
- * Builds recent developments context string.
+ * Config options for buildSupplementaryContext / buildRecentContext.
+ * Supports both new and legacy parameter names for backwards compatibility.
+ */
+export interface SupplementaryContextConfig {
+  /** Number of results to include per search (new name) */
+  readonly resultsLimit?: number;
+  /** Max content length per item (new name) */
+  readonly contentLength?: number;
+  /** @deprecated Use resultsLimit instead */
+  readonly recentResultsLimit?: number;
+  /** @deprecated Use contentLength instead */
+  readonly recentContentLength?: number;
+}
+
+/**
+ * Builds supplementary context string (tips, recent, meta, etc.).
  * Exported for unit testing.
  *
- * @param findings - Array of recent search results
+ * @param findings - Array of supplementary search results
  * @param config - Optional config overrides for limits
- * @returns Formatted recent developments string
+ * @returns Formatted supplementary context string
  */
-export function buildRecentContext(
+export function buildSupplementaryContext(
   findings: readonly CategorizedSearchResult[],
-  config: { recentResultsLimit?: number; recentContentLength?: number } = {}
+  config: SupplementaryContextConfig = {}
 ): string {
-  const recentResultsLimit = config.recentResultsLimit ?? SCOUT_CONFIG.RECENT_RESULTS_LIMIT;
-  const recentContentLength = config.recentContentLength ?? SCOUT_CONFIG.RECENT_CONTENT_LENGTH;
+  // Support both new and legacy parameter names
+  const resultsLimit = config.resultsLimit ?? config.recentResultsLimit ?? SCOUT_CONFIG.SUPPLEMENTARY_RESULTS_LIMIT;
+  const contentLength = config.contentLength ?? config.recentContentLength ?? SCOUT_CONFIG.SUPPLEMENTARY_CONTENT_LENGTH;
 
   return findings
-    .flatMap((search) => search.results.slice(0, recentResultsLimit))
-    .map((r) => `- ${r.title}: ${r.content.slice(0, recentContentLength)}`)
+    .flatMap((search) => search.results.slice(0, resultsLimit))
+    .map((r) => `- ${r.title}: ${r.content.slice(0, contentLength)}`)
     .join('\n');
 }
+
+// Backwards compatibility alias
+export const buildRecentContext = buildSupplementaryContext;
 
 /**
  * Builds the full context document combining all briefings.
@@ -388,14 +480,16 @@ export function buildRecentContext(
  * @param context - Game article context
  * @param overviewBriefing - Overview briefing text
  * @param categoryBriefing - Category insights text
- * @param recentBriefing - Recent developments text
+ * @param supplementaryBriefing - Supplementary briefing text (tips/recent/meta)
+ * @param supplementaryLabel - Label for supplementary section (e.g., "TIPS & TRICKS", "RECENT DEVELOPMENTS")
  * @returns Formatted full context document
  */
 export function buildFullContext(
   context: GameArticleContext,
   overviewBriefing: string,
   categoryBriefing: string,
-  recentBriefing: string
+  supplementaryBriefing: string,
+  supplementaryLabel: string = 'SUPPLEMENTARY RESEARCH'
 ): string {
   return `=== OVERVIEW ===
 ${overviewBriefing}
@@ -403,8 +497,8 @@ ${overviewBriefing}
 === CATEGORY INSIGHTS ===
 ${categoryBriefing}
 
-=== RECENT DEVELOPMENTS ===
-${recentBriefing}
+=== ${supplementaryLabel} ===
+${supplementaryBriefing}
 
 === METADATA ===
 Game: ${context.gameName}
@@ -513,38 +607,104 @@ export function calculateResearchConfidence(
 }
 
 /**
+ * Extracts the best source (highest quality + relevance) from each search query.
+ * Used to give the Editor detailed context for planning.
+ *
+ * @param allResults - All categorized search results from the Scout phase
+ * @returns Array of top sources, one per query
+ */
+export function extractTopSourcesPerQuery(
+  allResults: readonly CategorizedSearchResult[]
+): TopSourceForQuery[] {
+  const topSources: TopSourceForQuery[] = [];
+
+  for (const result of allResults) {
+    // Find the best source in this query's results
+    let bestSource: TopSourceForQuery | null = null;
+    let bestScore = -1;
+
+    for (const item of result.results) {
+      // Skip sources without quality/relevance scores (not cleaned)
+      if (item.qualityScore === undefined || item.relevanceScore === undefined) {
+        continue;
+      }
+
+      // Skip sources with no/minimal content
+      if (!item.content || item.content.length < 100) {
+        continue;
+      }
+
+      const combinedScore = item.qualityScore + item.relevanceScore;
+      if (combinedScore > bestScore) {
+        bestScore = combinedScore;
+        bestSource = {
+          query: result.query,
+          searchSource: result.searchSource ?? 'tavily',
+          title: item.title,
+          url: item.url,
+          content: item.content,
+          qualityScore: item.qualityScore,
+          relevanceScore: item.relevanceScore,
+          combinedScore,
+        };
+      }
+    }
+
+    // Only include if we found a valid source
+    if (bestSource) {
+      topSources.push(bestSource);
+    }
+  }
+
+  return topSources;
+}
+
+/**
+ * Options for assembling ScoutOutput.
+ */
+export interface AssembleScoutOutputOptions {
+  readonly cleaningTokenUsage?: TokenUsage;
+  readonly filteredSources?: readonly FilteredSourceSummary[];
+  readonly duplicatedUrls?: readonly DuplicateUrlInfo[];
+  readonly queryStats?: readonly SearchQueryStats[];
+  readonly topSourcesPerQuery?: readonly TopSourceForQuery[];
+}
+
+/**
  * Assembles the final ScoutOutput from components.
  * Exported for unit testing.
  *
  * @param overviewBriefing - Overview briefing text
  * @param categoryBriefing - Category insights text
- * @param recentBriefing - Recent developments text
+ * @param supplementaryBriefing - Supplementary briefing text (tips/recent/meta)
  * @param fullContext - Full context document
  * @param researchPool - Built research pool
  * @param tokenUsage - Aggregated token usage from LLM calls
  * @param confidence - Research confidence level
  * @param searchApiCosts - Aggregated search API costs
- * @param cleaningTokenUsage - Optional cleaning token usage (tracked separately)
- * @param filteredSources - Sources filtered out due to low quality or relevance
+ * @param options - Optional additional data (cleaning usage, filtered sources, duplicates)
  * @returns Complete ScoutOutput
  */
 export function assembleScoutOutput(
   overviewBriefing: string,
   categoryBriefing: string,
-  recentBriefing: string,
+  supplementaryBriefing: string,
   fullContext: string,
   researchPool: ResearchPool,
   tokenUsage: TokenUsage,
   confidence: ResearchConfidence,
   searchApiCosts: SearchApiCosts,
-  cleaningTokenUsage?: TokenUsage,
-  filteredSources: readonly FilteredSourceSummary[] = []
+  options: AssembleScoutOutputOptions = {}
 ): ScoutOutput {
+  const { cleaningTokenUsage, filteredSources = [], duplicatedUrls, queryStats, topSourcesPerQuery } = options;
+
   const output: ScoutOutput = {
     briefing: {
       overview: overviewBriefing,
       categoryInsights: categoryBriefing,
-      recentDevelopments: recentBriefing,
+      // Keep 'recentDevelopments' for backwards compatibility in ScoutOutput type
+      // This now contains tips/recent/meta depending on article type
+      recentDevelopments: supplementaryBriefing,
       fullContext,
     },
     researchPool,
@@ -553,6 +713,12 @@ export function assembleScoutOutput(
     confidence,
     searchApiCosts,
     filteredSources,
+    // Include duplicate info if any duplicates were found
+    ...(duplicatedUrls && duplicatedUrls.length > 0 ? { duplicatedUrls } : {}),
+    // Include query stats if available
+    ...(queryStats && queryStats.length > 0 ? { queryStats } : {}),
+    // Include top sources per query for Editor context
+    ...(topSourcesPerQuery && topSourcesPerQuery.length > 0 ? { topSourcesPerQuery } : {}),
   };
 
   // Only include cleaningTokenUsage if there was actual cleaning
@@ -598,35 +764,81 @@ export async function runScout(
     // If generic, we default to guides logic inside the prompt functions or null here
   }
 
-  // Build search queries (Tavily keyword-based)
-  const queries = buildScoutQueries(context);
-  const dedupedCategoryQueries = deduplicateQueries(queries.category);
-  const categoryQueriesToExecute = dedupedCategoryQueries.slice(0, SCOUT_CONFIG.MAX_CATEGORY_SEARCHES);
+  // Determine article type for query optimization
+  const articleType = effectiveCategorySlug ?? 'guide';
 
-  // Build Exa queries for guides (semantic/neural search)
-  const exaConfig = buildExaQueriesForGuides(context);
-  const useExa = exaConfig && isExaConfigured();
+  // ===== QUERY OPTIMIZATION PHASE =====
+  // Use LLM to generate optimized queries based on intent
+  let optimizedQueries: { tavily: readonly string[]; exa: readonly string[] } | null = null;
+  let queryOptimizationTokenUsage: TokenUsage = createEmptyTokenUsage();
+
+  if (SCOUT_CONFIG.QUERY_OPTIMIZATION_ENABLED && deps.generateObject) {
+    try {
+      log.info('Optimizing search queries with LLM...');
+      const optimizerDeps: QueryOptimizerDeps = {
+        generateObject: deps.generateObject,
+        model: deps.model,
+        logger: log,
+        signal,
+      };
+      const optimizationResult = await generateOptimizedQueries(context, articleType, optimizerDeps);
+      optimizedQueries = optimizationResult.queries;
+      queryOptimizationTokenUsage = optimizationResult.tokenUsage;
+      log.info(`Query optimization complete (${queryOptimizationTokenUsage.input + queryOptimizationTokenUsage.output} tokens)`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      log.warn(`Query optimization failed, using fallback templates: ${message}`);
+      // Fall through to use template-based queries
+    }
+  }
+
+  // Build search queries - use optimized if available, otherwise templates
+  let slots: readonly QuerySlot[];
+  let exaQueries: readonly string[];
+
+  if (optimizedQueries) {
+    // Use LLM-optimized queries
+    const categories: QuerySlotCategory[] = ['overview', 'category-specific', 'tips'];
+    slots = optimizedQueries.tavily.map((query, i) => ({
+      query,
+      category: categories[i] ?? 'category-specific',
+      maxResults: 10,
+      searchDepth: i === 0 ? 'advanced' as const : 'basic' as const,
+    }));
+    exaQueries = optimizedQueries.exa;
+  } else {
+    // Use template-based queries (fallback)
+    const queryConfig = buildScoutQueries(context);
+    slots = queryConfig.slots;
+    const exaConfig = buildExaQueriesForGuides(context);
+    exaQueries = exaConfig?.semantic ?? [];
+  }
+
+  // Check if Exa is available
+  const useExa = exaQueries.length > 0 && isExaConfigured();
 
   // Log Exa availability
-  if (exaConfig && !isExaConfigured()) {
+  if (exaQueries.length > 0 && !isExaConfigured()) {
     log.debug('Exa API not configured (EXA_API_KEY missing) - skipping semantic search');
   }
 
   // Calculate total searches
-  const tavilySearchCount = 1 + categoryQueriesToExecute.length + 1; // overview + category + recent
-  const exaSearchCount = useExa ? exaConfig.semantic.length : 0;
+  const tavilySearchCount = slots.length;
+  const exaSearchCount = useExa ? exaQueries.length : 0;
   const totalSearches = tavilySearchCount + exaSearchCount;
 
+  // Log slot categories for debugging
+  const slotCategories = slots.map((s) => s.category).join(', ');
   if (useExa) {
     log.debug(
       `Executing ${totalSearches} parallel searches: ` +
-        `${tavilySearchCount} Tavily (overview + ${categoryQueriesToExecute.length} category + recent) + ` +
+        `${tavilySearchCount} Tavily (${slotCategories}) + ` +
         `${exaSearchCount} Exa (semantic)`
     );
-    log.debug(`Exa semantic queries: ${exaConfig.semantic.map((q) => `"${q.slice(0, 50)}..."`).join(', ')}`);
+    log.debug(`Exa semantic queries: ${exaQueries.map((q) => `"${q.slice(0, 50)}..."`).join(', ')}`);
   } else {
     log.debug(
-      `Executing ${totalSearches} parallel searches: ${tavilySearchCount} Tavily (overview + ${categoryQueriesToExecute.length} category + recent)`
+      `Executing ${totalSearches} parallel searches: ${tavilySearchCount} Tavily (${slotCategories})`
     );
   }
 
@@ -648,46 +860,36 @@ export async function runScout(
     log.debug('Content cleaning enabled - search results will be cleaned and cached');
   }
 
-  // ===== PARALLEL SEARCH PHASE =====
-  // Tavily searches (keyword-based)
-  const tavilyPromises: Promise<ScoutSearchResult>[] = [
-    trackSearchProgress(
-      executeSearch(deps.search, queries.overview, 'overview', {
-        searchDepth: SCOUT_CONFIG.OVERVIEW_SEARCH_DEPTH,
-        maxResults: SCOUT_CONFIG.OVERVIEW_SEARCH_RESULTS,
-        signal,
-        cleaningDeps,
-      })
-    ),
-    ...categoryQueriesToExecute.map((query) =>
-      trackSearchProgress(
-        executeSearch(deps.search, query, 'category-specific', {
-          searchDepth: SCOUT_CONFIG.CATEGORY_SEARCH_DEPTH,
-          maxResults: SCOUT_CONFIG.CATEGORY_SEARCH_RESULTS,
-          signal,
-          cleaningDeps,
-        })
-      )
-    ),
-    trackSearchProgress(
-      executeSearch(deps.search, queries.recent, 'recent', {
-        searchDepth: SCOUT_CONFIG.RECENT_SEARCH_DEPTH,
-        maxResults: SCOUT_CONFIG.RECENT_SEARCH_RESULTS,
-        signal,
-        cleaningDeps,
-      })
-    ),
-  ];
+  // Create duplicate tracker to track URLs across all queries
+  const duplicateTracker = new DuplicateTracker();
 
-  // Exa searches (semantic/neural) - only for guides
+  // Enhance cleaningDeps with duplicate tracker
+  const cleaningDepsWithTracker: CleaningDeps | undefined = cleaningDeps
+    ? { ...cleaningDeps, duplicateTracker, phase: 'scout' }
+    : undefined;
+
+  // ===== PARALLEL SEARCH PHASE =====
+  // Execute all Tavily searches from slots in parallel
+  const tavilyPromises: Promise<ScoutSearchResult>[] = slots.map((slot) =>
+    trackSearchProgress(
+      executeSearch(deps.search, slot.query, mapSlotCategoryToResultCategory(slot.category), {
+        searchDepth: slot.searchDepth,
+        maxResults: slot.maxResults,
+        signal,
+        cleaningDeps: cleaningDepsWithTracker,
+      })
+    )
+  );
+
+  // Exa searches (semantic/neural) - uses LLM-optimized or template queries
   const exaPromises: Promise<ScoutSearchResult>[] = useExa
-    ? exaConfig.semantic.map((query) =>
+    ? exaQueries.map((query) =>
         trackSearchProgress(
           executeExaSearch(query, 'category-specific', {
             numResults: SCOUT_CONFIG.EXA_SEARCH_RESULTS,
             // Uses default from exa.ts (neural) - 4x faster, same cost
             signal,
-            cleaningDeps,
+            cleaningDeps: cleaningDepsWithTracker,
           })
         )
       )
@@ -699,19 +901,47 @@ export async function runScout(
     Promise.all(exaPromises),
   ]);
 
-  // Process Tavily results: first is overview, last is recent, middle are category
-  const overviewSearch = tavilyResults[0].result;
-  const recentSearch = tavilyResults[tavilyResults.length - 1].result;
-  const tavilyCategorySearches = tavilyResults.slice(1, -1).map((r) => r.result);
+  // Organize results by slot category
+  const resultsByCategory = new Map<QuerySlotCategory, CategorizedSearchResult[]>();
+  slots.forEach((slot, index) => {
+    const existing = resultsByCategory.get(slot.category) ?? [];
+    existing.push(tavilyResults[index].result);
+    resultsByCategory.set(slot.category, existing);
+  });
 
-  // Combine category searches from both sources
-  const allCategorySearches = [...tavilyCategorySearches, ...exaResults.map((r) => r.result)];
+  // Add Exa results to category-specific
+  if (exaResults.length > 0) {
+    const categorySpecific = resultsByCategory.get('category-specific') ?? [];
+    categorySpecific.push(...exaResults.map((r) => r.result));
+    resultsByCategory.set('category-specific', categorySpecific);
+  }
 
-  // Build research pool
-  const poolBuilder = new ResearchPoolBuilder()
-    .add(overviewSearch)
-    .addAll(allCategorySearches)
-    .add(recentSearch);
+  // Extract results by category type
+  const overviewResults = resultsByCategory.get('overview') ?? [];
+  const categorySpecificResults = resultsByCategory.get('category-specific') ?? [];
+  // Supplementary = tips, recent, meta, critic (whichever is present)
+  const supplementaryResults = [
+    ...(resultsByCategory.get('tips') ?? []),
+    ...(resultsByCategory.get('recent') ?? []),
+    ...(resultsByCategory.get('meta') ?? []),
+    ...(resultsByCategory.get('critic') ?? []),
+  ];
+
+  // Determine supplementary label based on what categories were used
+  const supplementaryCategory = slots.find((s) => ['tips', 'recent', 'meta', 'critic'].includes(s.category))?.category;
+  const supplementaryLabel = getSupplementaryLabel(supplementaryCategory);
+
+  // Build research pool from all results
+  const poolBuilder = new ResearchPoolBuilder();
+  for (const result of overviewResults) {
+    poolBuilder.add(result);
+  }
+  for (const result of categorySpecificResults) {
+    poolBuilder.add(result);
+  }
+  for (const result of supplementaryResults) {
+    poolBuilder.add(result);
+  }
 
   const researchPool = poolBuilder.build();
 
@@ -794,14 +1024,14 @@ export async function runScout(
 
   // ===== BRIEFING GENERATION PHASE =====
   const allSearchResults = [
-    ...researchPool.scoutFindings.overview,
-    ...researchPool.scoutFindings.categorySpecific,
-    ...researchPool.scoutFindings.recent,
+    ...overviewResults,
+    ...categorySpecificResults,
+    ...supplementaryResults,
   ];
 
   const searchContext = buildSearchContext(allSearchResults);
-  const categoryContext = buildCategoryContext(researchPool.scoutFindings.categorySpecific);
-  const recentContext = buildRecentContext(researchPool.scoutFindings.recent);
+  const categoryContext = buildCategoryContext(categorySpecificResults);
+  const supplementaryContext = buildSupplementaryContext(supplementaryResults);
 
   const promptContext: ScoutPromptContext = {
     gameName: context.gameName,
@@ -815,7 +1045,7 @@ export async function runScout(
     localeInstruction,
     searchContext,
     categoryContext,
-    recentContext,
+    supplementaryContext,
   };
 
   log.debug('Generating briefings in parallel...');
@@ -834,7 +1064,7 @@ export async function runScout(
   deps.onProgress?.('briefing', 0, totalBriefings);
 
   // Run all briefing generations in parallel with retry logic
-  const [overviewResult, categoryResult, recentResult] = await Promise.all([
+  const [overviewResult, categoryResult, supplementaryResult] = await Promise.all([
     trackBriefingProgress(
       withRetry(
         () =>
@@ -865,23 +1095,27 @@ export async function runScout(
           deps.generateText({
             model: deps.model,
             temperature,
-            system: getScoutRecentSystemPrompt(localeInstruction, effectiveCategorySlug),
-            prompt: getScoutRecentUserPrompt(context.gameName, recentContext, effectiveCategorySlug, context.instruction),
+            system: getScoutSupplementarySystemPrompt(localeInstruction, effectiveCategorySlug),
+            prompt: getScoutSupplementaryUserPrompt(context.gameName, supplementaryContext, effectiveCategorySlug, context.instruction),
           }),
-        { context: 'Scout recent briefing', signal }
+        { context: `Scout ${supplementaryLabel.toLowerCase()} briefing`, signal }
       )
     ),
   ]);
 
   const overviewBriefing = overviewResult.text.trim();
   const categoryBriefing = categoryResult.text.trim();
-  const recentBriefing = recentResult.text.trim();
+  const supplementaryBriefing = supplementaryResult.text.trim();
 
   // ===== AGGREGATE TOKEN USAGE =====
   // Use createTokenUsageFromResult to capture both tokens and actual cost from OpenRouter
   // Note: cleaningTokenUsage is tracked separately for cost visibility
   let tokenUsage = createEmptyTokenUsage();
-  for (const result of [overviewResult, categoryResult, recentResult]) {
+
+  // Include query optimization tokens (if LLM was used)
+  tokenUsage = addTokenUsage(tokenUsage, queryOptimizationTokenUsage);
+
+  for (const result of [overviewResult, categoryResult, supplementaryResult]) {
     tokenUsage = addTokenUsage(tokenUsage, createTokenUsageFromResult(result));
   }
 
@@ -903,18 +1137,43 @@ export async function runScout(
   }
 
   // ===== ASSEMBLE OUTPUT =====
-  const fullContext = buildFullContext(context, overviewBriefing, categoryBriefing, recentBriefing);
+  const fullContext = buildFullContext(context, overviewBriefing, categoryBriefing, supplementaryBriefing, supplementaryLabel);
+
+  // Extract duplicate tracking info
+  const duplicatedUrls = duplicateTracker.getDuplicates();
+  const queryStats = duplicateTracker.getQueryStats();
+
+  // Log duplicate summary if any found
+  if (duplicatedUrls.length > 0) {
+    log.debug(
+      `Duplicate tracking: ${duplicatedUrls.length} URLs appeared in multiple queries, ` +
+        `${queryStats.reduce((sum, s) => sum + s.duplicates, 0)} total duplicates removed`
+    );
+  }
+
+  // Extract top source from each query for Editor context
+  const combinedSearchResults = [...tavilyResults, ...exaResults].map((r) => r.result);
+  const topSourcesPerQuery = extractTopSourcesPerQuery(combinedSearchResults);
+  if (topSourcesPerQuery.length > 0) {
+    log.debug(`Extracted ${topSourcesPerQuery.length} top sources for Editor context`);
+  }
+
   return assembleScoutOutput(
     overviewBriefing,
     categoryBriefing,
-    recentBriefing,
+    supplementaryBriefing,
     fullContext,
     researchPool,
     tokenUsage,
     confidence,
     searchApiCosts,
-    cleaningTokenUsage,
-    allFilteredSources
+    {
+      cleaningTokenUsage,
+      filteredSources: allFilteredSources,
+      duplicatedUrls,
+      queryStats,
+      topSourcesPerQuery,
+    }
   );
 }
 

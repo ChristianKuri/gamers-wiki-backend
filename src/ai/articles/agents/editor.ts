@@ -22,6 +22,7 @@ import { withRetry } from '../retry';
 import {
   buildCategoryHintsSection,
   buildExistingResearchSummary,
+  buildTopSourcesSummary,
   detectArticleIntent,
   getEditorSystemPrompt,
   getEditorUserPrompt,
@@ -102,6 +103,7 @@ export async function runEditor(
     scoutOutput,
     EDITOR_CONFIG.OVERVIEW_LINES_IN_PROMPT
   );
+  const topSourcesSummary = buildTopSourcesSummary(scoutOutput);
 
   const targetWordCount = deps.targetWordCount ?? context.targetWordCount;
 
@@ -120,6 +122,7 @@ export async function runEditor(
     targetWordCount,
     validationFeedback: deps.validationFeedback,
     categorySlug: effectiveCategorySlug,
+    topSourcesSummary,
   };
 
   // Build prompts and log sizes for debugging

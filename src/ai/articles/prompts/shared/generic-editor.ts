@@ -32,7 +32,7 @@ ${ctx.instruction?.trim() || '(No specific directive — determine best article 
 ${ctx.scoutBriefing.fullContext}
 
 === ${ctx.existingResearchSummary}
-
+${ctx.topSourcesSummary ? `\n${ctx.topSourcesSummary}\n` : ''}
 === GAME METADATA ===
 - Name: ${ctx.gameName}
 - Genre: ${ctx.genres?.join(', ') || 'unknown'}

@@ -102,6 +102,12 @@ export interface SearchResultItem {
    */
   readonly summary?: string;
   readonly score?: number;
+  /** Quality score (0-100) from cleaner, if cleaned */
+  readonly qualityScore?: number;
+  /** Relevance score (0-100) from cleaner, if cleaned */
+  readonly relevanceScore?: number;
+  /** Whether this content was retrieved from cache (true) or newly cleaned (false) */
+  readonly wasCached?: boolean;
 }
 
 /**
@@ -200,6 +206,93 @@ export interface ScoutOutput {
    * Tracked for transparency and debugging.
    */
   readonly filteredSources: readonly FilteredSourceSummary[];
+  /**
+   * URLs that appeared in multiple search queries.
+   * Tracks where duplicates were found and which query "kept" the result.
+   */
+  readonly duplicatedUrls?: readonly DuplicateUrlInfo[];
+  /**
+   * Per-query statistics showing received vs used results.
+   * Helps understand where results were lost to deduplication or filtering.
+   */
+  readonly queryStats?: readonly SearchQueryStats[];
+  /**
+   * The best source (highest quality + relevance) from each search query.
+   * Used by the Editor to see actual content when planning the article.
+   */
+  readonly topSourcesPerQuery?: readonly TopSourceForQuery[];
+}
+
+// ============================================================================
+// Top Sources Per Query (for Editor context)
+// ============================================================================
+
+/**
+ * The best source from a single search query, selected by quality + relevance.
+ * Used to give the Editor agent detailed context for planning.
+ */
+export interface TopSourceForQuery {
+  /** The search query this source came from */
+  readonly query: string;
+  /** The search engine used (tavily or exa) */
+  readonly searchSource: SearchSource;
+  /** Title of the source page */
+  readonly title: string;
+  /** URL of the source */
+  readonly url: string;
+  /** The cleaned content from this source */
+  readonly content: string;
+  /** Quality score (0-100) */
+  readonly qualityScore: number;
+  /** Relevance score (0-100) */
+  readonly relevanceScore: number;
+  /** Combined score used for selection (quality + relevance) */
+  readonly combinedScore: number;
+}
+
+// ============================================================================
+// Duplicate Tracking Types
+// ============================================================================
+
+/**
+ * Information about a URL that appeared in multiple search queries.
+ */
+export interface DuplicateUrlInfo {
+  /** The duplicated URL */
+  readonly url: string;
+  /** Domain extracted from URL */
+  readonly domain: string;
+  /** The first query that returned this URL (kept) */
+  readonly firstSeenIn: {
+    readonly query: string;
+    readonly engine: SearchSource;
+  };
+  /** Subsequent queries that also returned this URL (duplicates) */
+  readonly alsoDuplicatedIn: readonly {
+    readonly query: string;
+    readonly engine: SearchSource;
+  }[];
+}
+
+/**
+ * Statistics for a single search query.
+ * Shows how results were filtered/deduplicated.
+ */
+export interface SearchQueryStats {
+  /** The search query */
+  readonly query: string;
+  /** Search engine used */
+  readonly engine: SearchSource;
+  /** Phase (scout or specialist) */
+  readonly phase: 'scout' | 'specialist';
+  /** Number of results returned by the search engine */
+  readonly received: number;
+  /** Number of results removed as duplicates (already seen in earlier queries) */
+  readonly duplicates: number;
+  /** Number of results filtered (scrape failures, low quality, low relevance, etc.) */
+  readonly filtered: number;
+  /** Final number of usable results */
+  readonly used: number;
 }
 
 // ============================================================================
@@ -437,6 +530,14 @@ export interface SourceUsageItem {
   readonly query: string;
   /** Which search API returned this source (exa or tavily) */
   readonly searchSource?: SearchSource;
+  /** Quality score (0-100) from cleaner */
+  readonly qualityScore?: number;
+  /** Relevance score (0-100) from cleaner */
+  readonly relevanceScore?: number;
+  /** Length of cleaned content in characters */
+  readonly cleanedCharCount?: number;
+  /** Whether this content was retrieved from cache (true) or newly cleaned (false) */
+  readonly wasCached?: boolean;
 }
 
 /**
@@ -476,6 +577,49 @@ export function addSourceUsage(
       total: usage.counts.total + items.length,
     },
   };
+}
+
+/**
+ * Extracts source usage items from Scout's research pool.
+ * Converts the research pool's CategorizedSearchResults into SourceUsageItems.
+ */
+export function extractScoutSourceUsage(researchPool: ResearchPool): readonly SourceUsageItem[] {
+  const sources: SourceUsageItem[] = [];
+  const seenUrls = new Set<string>();
+
+  // Helper to process a list of categorized results
+  const processResults = (results: readonly CategorizedSearchResult[]) => {
+    for (const categorized of results) {
+      for (const result of categorized.results) {
+        // Deduplicate by URL
+        if (seenUrls.has(result.url)) continue;
+        seenUrls.add(result.url);
+
+        sources.push({
+          url: result.url,
+          title: result.title,
+          contentType: 'full',
+          phase: 'scout',
+          query: categorized.query,
+          searchSource: categorized.searchSource ?? 'tavily',
+          // Include quality/relevance scores if available (from cleaned sources)
+          ...(result.qualityScore !== undefined ? { qualityScore: result.qualityScore } : {}),
+          ...(result.relevanceScore !== undefined ? { relevanceScore: result.relevanceScore } : {}),
+          // Include cleaned content length
+          cleanedCharCount: result.content.length,
+          // Include cache status if available
+          ...(result.wasCached !== undefined ? { wasCached: result.wasCached } : {}),
+        });
+      }
+    }
+  };
+
+  // Process all Scout findings
+  processResults(researchPool.scoutFindings.overview);
+  processResults(researchPool.scoutFindings.categorySpecific);
+  processResults(researchPool.scoutFindings.recent);
+
+  return sources;
 }
 
 /**
@@ -591,6 +735,16 @@ export interface ArticleGenerationMetadata {
    * Tracked for transparency and debugging.
    */
   readonly filteredSources?: readonly FilteredSourceSummary[];
+  /**
+   * URLs that appeared in multiple search queries.
+   * Tracks where duplicates were found and which query "kept" the result.
+   */
+  readonly duplicatedUrls?: readonly DuplicateUrlInfo[];
+  /**
+   * Per-query statistics showing received vs used results.
+   * Helps understand where results were lost to deduplication or filtering.
+   */
+  readonly queryStats?: readonly SearchQueryStats[];
 }
 
 /**
@@ -601,17 +755,22 @@ export interface FilteredSourceSummary {
   readonly domain: string;
   readonly title: string;
   readonly qualityScore: number;
-  readonly relevanceScore: number;
+  /** Relevance score (0-100), or null if unknown (e.g., scrape failures) */
+  readonly relevanceScore: number | null;
   /** Reason for filtering */
   readonly reason: 'low_relevance' | 'low_quality' | 'excluded_domain' | 'pre_filtered' | 'scrape_failure';
   /** Human-readable details */
   readonly details: string;
   /** Search query that returned this source */
   readonly query?: string;
+  /** Phase where this source was filtered (scout or specialist) */
+  readonly phase?: 'scout' | 'specialist';
   /** Search provider that returned this source */
   readonly searchSource?: 'tavily' | 'exa';
   /** Stage where filtering happened */
   readonly filterStage?: 'programmatic' | 'pre_filter' | 'full_clean' | 'post_clean';
+  /** Length of cleaned content in characters (if available) */
+  readonly cleanedCharCount?: number;
 }
 
 /**
@@ -1003,12 +1162,28 @@ export interface CleanedSource {
 }
 
 /**
+ * Cached source content from checkSourceCache.
+ * Extends CleanedSource with scrapeSucceeded for detecting scrape failures.
+ */
+export interface CachedSourceContent extends CleanedSource {
+  /** Whether scraping succeeded (content > MIN_CONTENT_LENGTH chars) */
+  readonly scrapeSucceeded: boolean;
+  /** 
+   * Whether this cached entry needs reprocessing (legacy data with NULL relevance).
+   * If true, the entry has valid cleanedContent but missing relevance score.
+   * Caller should re-clean to calculate proper relevance.
+   */
+  readonly needsReprocessing: boolean;
+}
+
+/**
  * Cache check result for a single URL.
  */
 export interface CacheCheckResult {
   readonly url: string;
   readonly hit: boolean;
-  readonly cached?: CleanedSource;
+  /** Cached content (may be a scrape failure if scrapeSucceeded is false) */
+  readonly cached?: CachedSourceContent;
   readonly raw?: RawSourceInput;
 }
 
@@ -1025,9 +1200,10 @@ export interface StoredSourceContent {
   readonly summary: string | null;
   readonly cleanedContent: string;
   readonly originalContentLength: number;
-  readonly qualityScore: number;
-  /** Relevance to gaming score (0-100) */
-  readonly relevanceScore: number;
+  /** Quality score (0-100), null for scrape failures */
+  readonly qualityScore: number | null;
+  /** Relevance to gaming score (0-100), null for scrape failures */
+  readonly relevanceScore: number | null;
   readonly qualityNotes: string | null;
   /** AI-determined content type */
   readonly contentType: string;
@@ -1035,6 +1211,8 @@ export interface StoredSourceContent {
   readonly accessCount: number;
   readonly lastAccessedAt: string | null;
   readonly searchSource: SearchSource;
+  /** Whether scraping succeeded (content > MIN_CONTENT_LENGTH chars) */
+  readonly scrapeSucceeded: boolean;
 }
 
 /**
@@ -1049,10 +1227,27 @@ export interface StoredDomainQuality {
   readonly avgRelevanceScore: number;
   readonly totalSources: number;
   readonly tier: DomainTier;
+  /** Global exclusion (low quality or low relevance) */
   readonly isExcluded: boolean;
   readonly excludeReason: string | null;
   /** AI-inferred domain type */
   readonly domainType: string;
+  /** Total scrape attempts via Tavily */
+  readonly tavilyAttempts: number;
+  /** Scrape failures via Tavily */
+  readonly tavilyScrapeFailures: number;
+  /** Total scrape attempts via Exa */
+  readonly exaAttempts: number;
+  /** Scrape failures via Exa */
+  readonly exaScrapeFailures: number;
+  /** Per-engine exclusion for Tavily (scrape failure rate exceeded) */
+  readonly isExcludedTavily: boolean;
+  /** Per-engine exclusion for Exa (scrape failure rate exceeded) */
+  readonly isExcludedExa: boolean;
+  /** Reason for Tavily exclusion */
+  readonly tavilyExcludeReason: string | null;
+  /** Reason for Exa exclusion */
+  readonly exaExcludeReason: string | null;
 }
 
 /**

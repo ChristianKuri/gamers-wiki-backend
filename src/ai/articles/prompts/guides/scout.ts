@@ -1,5 +1,12 @@
 import type { GameArticleContext } from '../../types';
-import type { ExaQueryConfig, ScoutPromptContext, ScoutPrompts, ScoutQueryConfig } from '../shared/scout';
+import type {
+  ExaQueryConfig,
+  QueryOptimizationContext,
+  QueryOptimizationPrompt,
+  ScoutPromptContext,
+  ScoutPrompts,
+  ScoutQueryConfig,
+} from '../shared/scout';
 
 export const scoutPrompts: ScoutPrompts = {
   getSystemPrompt(localeInstruction: string): string {
@@ -62,42 +69,50 @@ Identify:
 - Any gaps where we need more specific "how-to" info`;
   },
 
-  getRecentUserPrompt(gameName: string, recentContext: string): string {
-    return `Summarize recent changes relevant to a GUIDE for "${gameName}".
-Focus on: Patch notes that changed mechanics, new content/DLC, or balance changes (nerfs/buffs).
-Ignore: Sales numbers, corporate news, unrelated announcements.
+  getSupplementaryUserPrompt(gameName: string, supplementaryContext: string): string {
+    return `Analyze tips, tricks, and secrets for a GUIDE about "${gameName}".
+Focus on: Practical advice, common mistakes to avoid, hidden mechanics, pro strategies.
+Ignore: News, patch notes, corporate announcements.
 
-=== RECENT NEWS ===
-${recentContext}`;
+=== TIPS & TRICKS ===
+${supplementaryContext}`;
   },
 
   buildQueries(context: GameArticleContext): ScoutQueryConfig {
-    const overview = `"${context.gameName}" gameplay mechanics guide walkthrough tutorial`;
-    const category: string[] = [];
-
-    // Base guide queries
-    category.push(`"${context.gameName}" beginner guide tips tricks`);
-    category.push(`"${context.gameName}" full walkthrough strategy`);
-    category.push(`"${context.gameName}" how to play mechanics explained`);
-
-    // Instruction specific
+    // Build instruction-specific category query
+    let categoryQuery = `"${context.gameName}" beginner guide walkthrough`;
     if (context.instruction) {
       const cleaned = context.instruction.replace(/guide|walkthrough|how to/gi, '').trim();
       if (cleaned) {
-        category.push(`"${context.gameName}" ${cleaned} guide steps`);
-        category.push(`"${context.gameName}" ${cleaned} location solution`);
+        categoryQuery = `"${context.gameName}" ${cleaned} guide walkthrough`;
       }
     }
 
-    // Genre specific
-    if (context.genres?.some(g => g.toLowerCase().includes('rpg'))) {
-      category.push(`"${context.gameName}" best build stats leveling`);
-    }
-
-    // Recent updates for guides
-    const recent = `"${context.gameName}" latest patch notes mechanics changes ${new Date().getFullYear()}`;
-
-    return { overview, category, recent };
+    return {
+      slots: [
+        // Slot 1: Overview - General game mechanics
+        {
+          query: `"${context.gameName}" gameplay mechanics guide tutorial`,
+          category: 'overview',
+          maxResults: 10,
+          searchDepth: 'advanced',
+        },
+        // Slot 2: Category-specific - Based on instruction or general beginner guide
+        {
+          query: categoryQuery,
+          category: 'category-specific',
+          maxResults: 10,
+          searchDepth: 'basic',
+        },
+        // Slot 3: Tips - Practical advice (NOT recent news)
+        {
+          query: `"${context.gameName}" tips tricks secrets mistakes to avoid`,
+          category: 'tips',
+          maxResults: 10,
+          searchDepth: 'basic',
+        },
+      ],
+    };
   },
 
   buildExaQueries(context: GameArticleContext): ExaQueryConfig | null {
@@ -121,5 +136,38 @@ ${recentContext}`;
         'eurogamer.net', 'kotaku.com', 'pcgamer.com', 'rockpapershotgun.com'
       ]
     };
-  }
+  },
+
+  getQueryOptimizationPrompt(ctx: QueryOptimizationContext): QueryOptimizationPrompt {
+    const intent = ctx.instruction || 'general gameplay';
+    
+    return {
+      queryStructure: `For a GUIDE article, generate 3 complementary queries covering:
+
+1. OVERVIEW QUERY: General game mechanics and systems
+   - Focus on core gameplay, controls, fundamental systems
+   - NOT specific to the user's intent yet
+   
+2. INTENT-SPECIFIC QUERY: Directly about "${intent}"
+   - This is the MAIN query - most relevant to what the user wants
+   - Be very specific to the user's goal
+   
+3. TIPS & TRICKS QUERY: Practical advice and secrets
+   - Common mistakes to avoid
+   - Pro tips, hidden mechanics, shortcuts
+   - Should complement the intent query, not duplicate it`,
+
+      tavilyExamples: [
+        `"${ctx.gameName}" gameplay mechanics controls tutorial guide`,
+        `"${ctx.gameName}" ${intent} guide walkthrough strategies`,
+        `"${ctx.gameName}" tips tricks secrets mistakes to avoid`,
+      ],
+
+      exaExamples: [
+        `How do the core gameplay systems work in ${ctx.gameName}?`,
+        `What's the best way to ${intent} in ${ctx.gameName}?`,
+        `What are common mistakes beginners make in ${ctx.gameName} and how to avoid them?`,
+      ],
+    };
+  },
 };

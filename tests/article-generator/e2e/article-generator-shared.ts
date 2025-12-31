@@ -20,6 +20,7 @@ import {
   type ArticlePlanAnalysis,
   type DatabaseVerification,
   type GameInfo,
+  type DuplicateTrackingStats,
 } from './save-results';
 
 // Re-export for convenience
@@ -208,37 +209,108 @@ export function extractGameInfo(json: any): GameInfo {
   };
 }
 
+/**
+ * Group sources by query to reduce JSON repetition.
+ */
+function groupSourcesByQuery(sources: any[]): any[] {
+  const groups = new Map<string, any>();
+  
+  for (const source of sources) {
+    const key = `${source.query}|${source.phase}|${source.searchSource ?? 'unknown'}|${source.section ?? ''}`;
+    
+    if (!groups.has(key)) {
+      groups.set(key, {
+        query: source.query,
+        phase: source.phase,
+        searchSource: source.searchSource,
+        contentType: source.contentType ?? 'full',
+        ...(source.section ? { section: source.section } : {}),
+        sources: [],
+      });
+    }
+    
+    // Get cleaned char count from various possible field names
+    const cleanedCharCount = source.cleanedContentLength ?? source.cleanedCharCount ?? 
+      (source.cleanedContent?.length);
+    
+    groups.get(key).sources.push({
+      url: source.url,
+      title: source.title,
+      ...(source.qualityScore !== undefined ? { qualityScore: source.qualityScore } : {}),
+      ...(source.relevanceScore !== undefined ? { relevanceScore: source.relevanceScore } : {}),
+      ...(cleanedCharCount !== undefined ? { cleanedCharCount } : {}),
+      ...(source.wasCached !== undefined ? { wasCached: source.wasCached } : {}),
+    });
+  }
+  
+  return Array.from(groups.values());
+}
+
+/**
+ * Group filtered sources by query to reduce JSON repetition.
+ */
+function groupFilteredSourcesByQuery(sources: any[]): any[] {
+  const groups = new Map<string, any>();
+  
+  for (const source of sources) {
+    const key = `${source.query ?? 'unknown'}|${source.phase ?? 'unknown'}|${source.searchSource ?? 'unknown'}`;
+    
+    if (!groups.has(key)) {
+      groups.set(key, {
+        query: source.query ?? 'unknown',
+        ...(source.phase ? { phase: source.phase } : {}),
+        searchSource: source.searchSource,
+        sources: [],
+      });
+    }
+    
+    // Get cleaned char count from various possible field names
+    const cleanedCharCount = source.cleanedContentLength ?? source.cleanedCharCount ?? 
+      (source.cleanedContent?.length);
+    
+    groups.get(key).sources.push({
+      url: source.url,
+      domain: source.domain,
+      title: source.title,
+      qualityScore: source.qualityScore,
+      relevanceScore: source.relevanceScore,
+      reason: source.reason,
+      details: source.details,
+      ...(source.filterStage ? { filterStage: source.filterStage } : {}),
+      ...(cleanedCharCount !== undefined ? { cleanedCharCount } : {}),
+    });
+  }
+  
+  return Array.from(groups.values());
+}
+
 export function extractGenerationStats(json: any): GenerationStats {
   const metadata = json?.draft?.metadata ?? {};
   const tokenUsage = metadata.tokenUsage ?? {};
   const searchApiCosts = metadata.searchApiCosts;
-  const sourceContentUsage = metadata.sourceContentUsage;
-  const filteredSources = metadata.filteredSources;
+  const rawSourceContentUsage = metadata.sourceContentUsage;
+  const rawFilteredSources = metadata.filteredSources;
+  const rawDuplicatedUrls = metadata.duplicatedUrls;
+  const rawQueryStats = metadata.queryStats;
 
-  // Build filtered sources stats if available
-  const filteredSourcesStats = filteredSources && filteredSources.length > 0
-    ? {
-        sources: filteredSources,
-        counts: {
-          total: filteredSources.length,
-          lowRelevance: filteredSources.filter((s: any) => s.reason === 'low_relevance').length,
-          lowQuality: filteredSources.filter((s: any) => s.reason === 'low_quality').length,
-          excludedDomain: filteredSources.filter((s: any) => s.reason === 'excluded_domain').length,
-          preFiltered: filteredSources.filter((s: any) => s.reason === 'pre_filtered').length,
-          scrapeFailure: filteredSources.filter((s: any) => s.reason === 'scrape_failure').length,
-        },
-        byProvider: {
-          tavily: filteredSources.filter((s: any) => s.searchSource === 'tavily').length,
-          exa: filteredSources.filter((s: any) => s.searchSource === 'exa').length,
-        },
-        byStage: {
-          programmatic: filteredSources.filter((s: any) => s.filterStage === 'programmatic').length,
-          preFilter: filteredSources.filter((s: any) => s.filterStage === 'pre_filter').length,
-          fullClean: filteredSources.filter((s: any) => s.filterStage === 'full_clean').length,
-          postClean: filteredSources.filter((s: any) => s.filterStage === 'post_clean').length,
-        },
-      }
+  // Group source content usage by query (directly as array)
+  const sourceContentUsage = rawSourceContentUsage?.sources?.length > 0
+    ? groupSourcesByQuery(rawSourceContentUsage.sources)
     : undefined;
+
+  // Group filtered sources by query (directly as array)
+  const filteredSourcesStats = rawFilteredSources && rawFilteredSources.length > 0
+    ? groupFilteredSourcesByQuery(rawFilteredSources)
+    : undefined;
+
+  // Extract duplicate tracking stats if available
+  const duplicateTracking: DuplicateTrackingStats | undefined = 
+    (rawDuplicatedUrls?.length > 0 || rawQueryStats?.length > 0)
+      ? {
+          duplicatedUrls: rawDuplicatedUrls ?? [],
+          queryStats: rawQueryStats ?? [],
+        }
+      : undefined;
 
   return {
     success: json?.success ?? false,
@@ -281,6 +353,8 @@ export function extractGenerationStats(json: any): GenerationStats {
     ...(sourceContentUsage ? { sourceContentUsage } : {}),
     // Include filtered sources tracking if available
     ...(filteredSourcesStats ? { filteredSources: filteredSourcesStats } : {}),
+    // Include duplicate tracking if available
+    ...(duplicateTracking ? { duplicateTracking } : {}),
   };
 }
 

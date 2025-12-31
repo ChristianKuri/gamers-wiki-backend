@@ -60,7 +60,7 @@ import {
 } from '../../utils/logger';
 import { runScout, runEditor, runSpecialist, runReviewer, type EditorOutput, type ReviewerOutput } from './agents';
 import type { CleaningDeps } from './research-pool';
-import { getAllExcludedDomains } from './source-cache';
+import { getAllExcludedDomains, getAllExcludedDomainsForEngine } from './source-cache';
 import type { SpecialistOutput } from './agents/specialist';
 import type { ArticlePlan, ArticleCategorySlug } from './article-plan';
 import { GENERATOR_CONFIG, WORD_COUNT_DEFAULTS, WORD_COUNT_CONSTRAINTS, REVIEWER_CONFIG, FIXER_CONFIG } from './config';
@@ -81,6 +81,7 @@ import {
   type Clock,
   type FixApplied,
   type FixerOutcomeMetrics,
+  extractScoutSourceUsage,
   type GameArticleContext,
   type GameArticleDraft,
   type RecoveryMetadata,
@@ -544,6 +545,7 @@ async function executeScoutPhase(
       runScout(context, {
         search: deps.search,
         generateText: deps.generateText,
+        generateObject: deps.generateObject,
         model: deps.openrouter(scoutModel),
         logger: createPrefixedLogger('[Scout]'),
         signal: basePhaseOptions.signal,
@@ -1006,9 +1008,15 @@ export async function generateGameArticleDraft(
   // Build cleaning deps only when Strapi is available
   // This enables content cleaning and caching for search results
   // Also fetch excluded domains from DB to combine with static list
+  // Per-engine exclusions include scrape failure exclusions specific to each search engine
   let cleaningDeps: CleaningDeps | undefined;
   if (strapi) {
-    const excludedDomains = await getAllExcludedDomains(strapi);
+    // Fetch exclusions in parallel for efficiency
+    const [excludedDomains, tavilyExcludedDomains, exaExcludedDomains] = await Promise.all([
+      getAllExcludedDomains(strapi),
+      getAllExcludedDomainsForEngine(strapi, 'tavily'),
+      getAllExcludedDomainsForEngine(strapi, 'exa'),
+    ]);
     cleaningDeps = {
       strapi,
       generateObject: genObject,
@@ -1018,9 +1026,11 @@ export async function generateGameArticleDraft(
       gameName: context.gameName,
       gameDocumentId: context.gameDocumentId,
       excludedDomains,
+      tavilyExcludedDomains,
+      exaExcludedDomains,
     };
     log.info(`Content cleaning enabled (model: ${cleanerModel})`);
-    log.debug(`Excluded domains: ${excludedDomains.length} total (static + DB)`);
+    log.debug(`Excluded domains: ${excludedDomains.length} global, Tavily: ${tavilyExcludedDomains.length}, Exa: ${exaExcludedDomains.length}`);
   }
 
   const phaseContext: PhaseContext = {
@@ -1476,12 +1486,18 @@ export async function generateGameArticleDraft(
   const llmCostUsd = tokenUsage?.actualCostUsd ?? 0;
   const totalEstimatedCostUsd = llmCostUsd + searchApiCosts.totalUsd;
 
-  // Build source content usage tracking (Specialist phase only for now)
-  // TODO: Add Scout phase source tracking in future
+  // Build source content usage tracking (Scout + Specialist phases)
+  const scoutSourceUsage = extractScoutSourceUsage(scoutOutput.researchPool);
   const sourceContentUsage: SourceContentUsage = addSourceUsage(
-    createEmptySourceContentUsage(),
+    addSourceUsage(createEmptySourceContentUsage(), scoutSourceUsage),
     specialistSourceUsage
   );
+
+  // Merge filtered sources from Scout and Specialist phases, adding phase info
+  const allFilteredSources = [
+    ...scoutOutput.filteredSources.map(s => ({ ...s, phase: 'scout' as const })),
+    ...specialistResult.output.filteredSources.map(s => ({ ...s, phase: 'specialist' as const })),
+  ];
 
   // Build immutable metadata for debugging and analytics
   const metadata: ArticleGenerationMetadata = {
@@ -1497,9 +1513,16 @@ export async function generateGameArticleDraft(
     correlationId,
     researchConfidence: scoutOutput.confidence,
     ...(recovery ? { recovery } : {}),
-    // Include filtered sources if any were filtered out
-    ...(scoutOutput.filteredSources.length > 0
-      ? { filteredSources: scoutOutput.filteredSources }
+    // Include filtered sources from both Scout and Specialist phases
+    ...(allFilteredSources.length > 0
+      ? { filteredSources: allFilteredSources }
+      : {}),
+    // Include duplicate tracking from Scout phase
+    ...(scoutOutput.duplicatedUrls && scoutOutput.duplicatedUrls.length > 0
+      ? { duplicatedUrls: scoutOutput.duplicatedUrls }
+      : {}),
+    ...(scoutOutput.queryStats && scoutOutput.queryStats.length > 0
+      ? { queryStats: scoutOutput.queryStats }
       : {}),
   };
 

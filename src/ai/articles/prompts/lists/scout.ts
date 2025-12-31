@@ -1,5 +1,11 @@
 import type { GameArticleContext } from '../../types';
-import type { ScoutPromptContext, ScoutPrompts, ScoutQueryConfig } from '../shared/scout';
+import type {
+  QueryOptimizationContext,
+  QueryOptimizationPrompt,
+  ScoutPromptContext,
+  ScoutPrompts,
+  ScoutQueryConfig,
+} from '../shared/scout';
 
 export const scoutPrompts: ScoutPrompts = {
   getSystemPrompt(localeInstruction: string): string {
@@ -56,36 +62,85 @@ Identify:
 - Common arguments/debates in the community (e.g., "Weapon A vs Weapon B")`;
   },
 
-  getRecentUserPrompt(gameName: string, recentContext: string): string {
+  getSupplementaryUserPrompt(gameName: string, supplementaryContext: string): string {
     return `Summarize recent meta changes for "${gameName}" that affect rankings.
 Focus on: Buffs/nerfs, new items added, new strategies that changed the tier list.
+Ignore: Unrelated news, corporate announcements.
 
-=== RECENT NEWS ===
-${recentContext}`;
+=== META CHANGES ===
+${supplementaryContext}`;
   },
 
   buildQueries(context: GameArticleContext): ScoutQueryConfig {
-    const overview = `"${context.gameName}" best top ranked tier list`;
-    const category: string[] = [];
+    const currentYear = new Date().getFullYear();
 
-    // Base list queries
-    category.push(`"${context.gameName}" best items ranking`);
-    category.push(`"${context.gameName}" meta tier list`);
-    category.push(`"${context.gameName}" comparison guide`);
-    category.push(`"${context.gameName}" reddit best setup`);
-
-    // Instruction specific (defines the list topic)
+    // Build instruction-specific category query
+    let categoryQuery = `"${context.gameName}" best items ranking tier list`;
     if (context.instruction) {
       const topic = context.instruction.replace(/list|ranking|best|top/gi, '').trim();
       if (topic) {
-        category.push(`"${context.gameName}" best ${topic} ranking`);
-        category.push(`"${context.gameName}" top ${topic} list`);
-        category.push(`"${context.gameName}" ${topic} tier list`);
+        categoryQuery = `"${context.gameName}" best ${topic} ranking tier list`;
       }
     }
 
-    const recent = `"${context.gameName}" meta changes patch notes ${new Date().getFullYear()}`;
+    return {
+      slots: [
+        // Slot 1: Overview - General tier list and rankings
+        {
+          query: `"${context.gameName}" best top ranked tier list`,
+          category: 'overview',
+          maxResults: 10,
+          searchDepth: 'advanced',
+        },
+        // Slot 2: Category-specific - Focused on the list topic
+        {
+          query: categoryQuery,
+          category: 'category-specific',
+          maxResults: 10,
+          searchDepth: 'basic',
+        },
+        // Slot 3: Meta - Recent balance changes that affect rankings
+        {
+          query: `"${context.gameName}" meta changes patch notes buffs nerfs ${currentYear}`,
+          category: 'meta',
+          maxResults: 10,
+          searchDepth: 'basic',
+        },
+      ],
+    };
+  },
 
-    return { overview, category, recent };
-  }
+  getQueryOptimizationPrompt(ctx: QueryOptimizationContext): QueryOptimizationPrompt {
+    const currentYear = new Date().getFullYear();
+    const topic = ctx.instruction?.replace(/list|ranking|best|top/gi, '').trim() || 'items';
+    
+    return {
+      queryStructure: `For a LIST/RANKING article, generate 3 complementary queries covering:
+
+1. OVERVIEW QUERY: General tier lists and rankings
+   - Focus on community consensus rankings
+   - Look for tier list images, ranking discussions
+   
+2. TOPIC-SPECIFIC QUERY: Directly about "best ${topic}"
+   - This is the MAIN query - the specific ranking topic
+   - Find detailed comparisons, pros/cons of each item
+   
+3. META QUERY: Recent balance changes affecting rankings
+   - Buffs, nerfs, patches that changed the meta
+   - New items/characters added recently
+   - Must include current year (${currentYear})`,
+
+      tavilyExamples: [
+        `"${ctx.gameName}" tier list ranking best top`,
+        `"${ctx.gameName}" best ${topic} ranking comparison`,
+        `"${ctx.gameName}" meta changes buffs nerfs ${currentYear}`,
+      ],
+
+      exaExamples: [
+        `What is the current tier list for ${ctx.gameName}?`,
+        `What are the best ${topic} in ${ctx.gameName} and why?`,
+        `How did recent patches change the meta in ${ctx.gameName}?`,
+      ],
+    };
+  },
 };

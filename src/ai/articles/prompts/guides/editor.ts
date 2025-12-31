@@ -73,7 +73,7 @@ ${ctx.instruction?.trim() || 'Create a comprehensive guide'}
 ${ctx.scoutBriefing.fullContext}
 
 ${ctx.existingResearchSummary}
-
+${ctx.topSourcesSummary ? `\n${ctx.topSourcesSummary}\n` : ''}
 ██████████████████████████████████████████████████████████████████████████████
 ██  PHASE 1: EXHAUSTIVE EXTRACTION (Do this mentally BEFORE planning)       ██
 ██████████████████████████████████████████████████████████████████████████████
@@ -167,8 +167,7 @@ OUTPUT STRUCTURE:
       "headline": "Clear section title",
       "goal": "What player accomplishes in this section",
       "researchQueries": [
-        "\"Game Name\" specific topic guide",
-        "Game Name how to do specific thing"
+        "\"Game Name\" section topic guide"
       ],
       "mustCover": [
         "Item: Archaic Tunic (Great Sky Island > Pondside Cave, chest in main chamber)",
@@ -178,12 +177,24 @@ OUTPUT STRUCTURE:
   ]
 }
 
-RESEARCH QUERY FORMAT (CRITICAL):
-• ALWAYS include the game name at the START of every query
-• Use quotes around game name for exact match: "Elden Ring" how to get Torrent
-• Be specific: "Elden Ring" Torrent mount unlock location (NOT just "how to get Torrent")
-• Bad: "How to get Torrent" → returns mod sites, unrelated results
-• Good: "Elden Ring" Torrent spectral steed how to unlock location
+RESEARCH QUERY FORMAT (CRITICAL — ONE QUERY PER SECTION):
+Each section gets exactly ONE search query. Make it count!
+
+FORMAT: "Game Name" + section topic + "guide"
+• ALWAYS start with game name in quotes: "Elden Ring"
+• ALWAYS include "guide" — we're creating guides, search results should be guides
+• Be specific about the section's main topic
+• Tavily uses semantic search — clear, natural queries work best
+
+EXAMPLES:
+✅ "Elden Ring" best starting class and keepsake guide
+✅ "Zelda Tears of the Kingdom" Ultrahand and Fuse abilities guide
+✅ "Elden Ring" Spirit Calling Bell location guide
+✅ "Elden Ring" guard counter and stance break combat guide
+
+❌ "Elden Ring" class (too vague)
+❌ "how to get Torrent" (missing game name — returns mod sites)
+❌ Three separate queries (wasteful — combine into one)
 `;
   }
 };

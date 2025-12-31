@@ -51,6 +51,9 @@ export const UNIFIED_EXCLUDED_DOMAINS = new Set([
   // === SPAM: Gold selling / RMT sites ===
   'mtmmo.com',
   'u4gm.com',
+  'mmogah.com', // Gold/item selling
+  'aoeah.com', // Game currency selling
+  'mmopixel.com', // Game currency selling
 
   // === LOW_AUTHORITY: Q&A / forums / social ===
   'quora.com',
@@ -60,6 +63,10 @@ export const UNIFIED_EXCLUDED_DOMAINS = new Set([
   'gamefaqs.gamespot.com', // Use official GameSpot guides instead
   'steamcommunity.com', // Low-quality discussions
   'fextralife.com', // Forums at fextralife.com/forums (wikis like eldenring.wiki.fextralife.com are fine)
+  '4chan.org', // Anonymous forum, often toxic
+  'boards.4chan.org',
+  'resetera.com', // Gaming forum, low quality (25 avg score in DB)
+  'forum.psnprofiles.com', // Trophy hunting forum
 
   // === OFF_TOPIC: Generic tech (not gaming-focused) ===
   'techradar.com',
@@ -69,6 +76,13 @@ export const UNIFIED_EXCLUDED_DOMAINS = new Set([
 
   // === OFF_TOPIC: News aggregators ===
   'news.google.com',
+  'msn.com', // Aggregates content from other sites
+
+  // === OFF_TOPIC: Non-gaming garbage ===
+  'ww2.jacksonms.gov', // Government PDF spam
+  'ftp.oshatrain.org', // Random FTP server
+  'freewp.co.il', // WordPress spam forum
+  'catalog.neet.tv', // Dead link aggregator
 
   // === NOT_VIDEO_GAMES: Mod sites (mods ≠ game guides) ===
   'nexusmods.com',
@@ -103,6 +117,11 @@ export const UNIFIED_EXCLUDED_DOMAINS = new Set([
   'timesofindia.indiatimes.com',
   'oreateai.com', // AI-generated spam
   'mandatory.gg',
+
+  // === OFF_TOPIC: Non-gaming sites found in searches ===
+  'plarium.com', // Mobile game publisher, aggressive monetization spam
+  'arsturn.com', // AI chatbot company
+  'freewp.co.il', // WordPress site, not gaming
 ]);
 
 // ============================================================================
@@ -195,8 +214,10 @@ export const ARTICLE_PLAN_CONSTRAINTS = {
   TAG_MAX_LENGTH: 50,
 
   // Research query constraints
+  // Reduced to 1 query per section for cost optimization (Dec 2024)
+  // Scout already provides overview context, so 1 focused query is sufficient
   MIN_RESEARCH_QUERIES_PER_SECTION: 1,
-  MAX_RESEARCH_QUERIES_PER_SECTION: 6,
+  MAX_RESEARCH_QUERIES_PER_SECTION: 1,
 
   // Markdown constraints
   MIN_MARKDOWN_LENGTH: 500,
@@ -251,6 +272,13 @@ export const WORD_COUNT_CONSTRAINTS = {
 // ============================================================================
 
 export const SCOUT_CONFIG = {
+  /**
+   * Whether to use LLM to optimize search queries based on article intent.
+   * When enabled, generates tailored queries for both Tavily (keywords) and Exa (semantic).
+   * Cost: ~$0.001 per optimization, adds ~1-2s latency.
+   * Benefits: Much better query relevance for specific intents (e.g., "boss guide").
+   */
+  QUERY_OPTIMIZATION_ENABLED: true,
   /**
    * Maximum length of a single snippet in search context.
    * INCREASED: Now that Exa returns 20,000c per result, use more of it.
@@ -309,24 +337,34 @@ export const SCOUT_CONFIG = {
   get EXA_EXCLUDE_DOMAINS(): readonly string[] {
     return [...UNIFIED_EXCLUDED_DOMAINS];
   },
-  /** Number of results for recent news search */
-  RECENT_SEARCH_RESULTS: 5,
-  /** Maximum number of category-specific searches to run */
-  MAX_CATEGORY_SEARCHES: 2,
   /**
-   * Search depth for overview queries (Tavily).
-   * OPTIMIZED: 'basic' based on A/B testing (Dec 2024).
+   * @deprecated Query structure is now defined by article-type-specific slots.
+   * Each article type (guides, news, reviews, lists) defines its own slots
+   * with maxResults and searchDepth per slot. See prompts/{type}/scout.ts.
+   * Keeping for backwards compatibility with tests.
+   */
+  RECENT_SEARCH_RESULTS: 10,
+  /**
+   * @deprecated Query structure is now defined by article-type-specific slots.
+   * See prompts/{type}/scout.ts for slot definitions.
+   */
+  MAX_CATEGORY_SEARCHES: 1,
+  /**
+   * @deprecated Search depth is now defined per slot by article type.
+   * See prompts/{type}/scout.ts for slot definitions.
+   * 
+   * Legacy note: 'basic' based on A/B testing (Dec 2024).
    * - basic = 1 credit ($0.008), advanced = 2 credits ($0.016)
    * - basic-10 gets wikis + quality sources at half the cost
-   * - With proper exclude_domains, basic quality is sufficient
    */
   OVERVIEW_SEARCH_DEPTH: 'basic' as const,
   /**
-   * Search depth for category queries (Tavily).
-   * OPTIMIZED: 'basic' - same cost savings as overview.
+   * @deprecated Search depth is now defined per slot by article type.
    */
   CATEGORY_SEARCH_DEPTH: 'basic' as const,
-  /** Search depth for recent news queries */
+  /**
+   * @deprecated Search depth is now defined per slot by article type.
+   */
   RECENT_SEARCH_DEPTH: 'basic' as const,
   /**
    * Temperature for Scout LLM calls.
@@ -340,10 +378,20 @@ export const SCOUT_CONFIG = {
   RESULTS_PER_SEARCH_CONTEXT: 5,
   /** Limit for key findings in category context */
   KEY_FINDINGS_LIMIT: 3,
-  /** Limit for recent results */
-  RECENT_RESULTS_LIMIT: 3,
-  /** Max content length for recent items */
-  RECENT_CONTENT_LENGTH: 300,
+  /**
+   * Limit for supplementary results (tips, recent, meta, etc.).
+   * Used when building context for the supplementary briefing.
+   */
+  SUPPLEMENTARY_RESULTS_LIMIT: 5,
+  /**
+   * Max content length for supplementary items.
+   * Used when building context for the supplementary briefing.
+   */
+  SUPPLEMENTARY_CONTENT_LENGTH: 500,
+  /** @deprecated Use SUPPLEMENTARY_RESULTS_LIMIT instead */
+  RECENT_RESULTS_LIMIT: 5,
+  /** @deprecated Use SUPPLEMENTARY_CONTENT_LENGTH instead */
+  RECENT_CONTENT_LENGTH: 500,
   /** Minimum sources before warning */
   MIN_SOURCES_WARNING: 5,
   /** Minimum queries before warning */
@@ -612,9 +660,9 @@ export const CLEANER_CONFIG = {
   BATCH_SIZE: 100,
   /**
    * Timeout for cleaning a single URL (ms).
-   * 30 seconds should be plenty for content extraction.
+   * 90 seconds to handle large content (up to 100K chars).
    */
-  TIMEOUT_MS: 30000,
+  TIMEOUT_MS: 90000,
   /**
    * Minimum content length (chars) to attempt cleaning.
    * Content below this is likely a scrape failure (JS-heavy site, paywall, etc.)
@@ -659,26 +707,44 @@ export const CLEANER_CONFIG = {
   MIN_QUALITY_FOR_RESULTS: 35,
   /**
    * Domains with average relevance below this get auto-excluded.
-   * Stricter than individual filtering since consistently off-topic
-   * domains waste API calls on every search.
+   * Set below MIN_RELEVANCE_FOR_RESULTS (70) but high enough to catch
+   * domains that rarely produce usable content.
+   * At 50 avg, most articles will be <70 and get filtered anyway.
    */
-  AUTO_EXCLUDE_RELEVANCE_THRESHOLD: 30,
+  AUTO_EXCLUDE_RELEVANCE_THRESHOLD: 50,
   /**
-   * Domain average score below this triggers auto-exclusion.
+   * Domain average quality score below this triggers auto-exclusion.
    * Same as MIN_QUALITY_FOR_RESULTS for consistency.
-   * Requires AUTO_EXCLUDE_MIN_SAMPLES to prevent premature exclusion.
    */
-  AUTO_EXCLUDE_THRESHOLD: 35,
+  AUTO_EXCLUDE_QUALITY_THRESHOLD: 35,
   /**
-   * Minimum samples before auto-excluding a domain.
-   * Prevents exclusion based on one bad page.
+   * Minimum samples before auto-excluding for LOW QUALITY.
+   * Quality varies per page, so we need more samples for a fair average.
    */
-  AUTO_EXCLUDE_MIN_SAMPLES: 5,
+  AUTO_EXCLUDE_QUALITY_MIN_SAMPLES: 5,
+  /**
+   * Minimum samples before auto-excluding for LOW RELEVANCE.
+   * Relevance is domain-wide: if it's not about games, it never will be.
+   */
+  AUTO_EXCLUDE_RELEVANCE_MIN_SAMPLES: 3,
+  /**
+   * Minimum scrape attempts before evaluating per-engine exclusion.
+   * A domain must be tried at least this many times with a specific engine
+   * before we consider excluding it for that engine.
+   */
+  SCRAPE_FAILURE_MIN_ATTEMPTS: 10,
+  /**
+   * Scrape failure rate threshold for per-engine exclusion.
+   * If a domain has >= MIN_ATTEMPTS and > this failure rate,
+   * it gets excluded for that specific engine.
+   * 0.70 = exclude if >70% of attempts fail.
+   */
+  SCRAPE_FAILURE_RATE_THRESHOLD: 0.70,
   /**
    * Maximum input characters to process.
    * Skip processing huge pages to save costs.
    */
-  MAX_INPUT_CHARS: 50000,
+  MAX_INPUT_CHARS: 100000,
   /**
    * Minimum cleaned content length to consider valid.
    * If cleaning results in less than this, content is likely garbage.
@@ -969,8 +1035,15 @@ function validateConfiguration(): void {
       `MIN_QUALITY_FOR_STORAGE (${CLEANER_CONFIG.MIN_QUALITY_FOR_STORAGE}) cannot be higher than MIN_QUALITY_FOR_RESULTS (${CLEANER_CONFIG.MIN_QUALITY_FOR_RESULTS})`
     );
   }
-  validateNonNegative(CLEANER_CONFIG.AUTO_EXCLUDE_THRESHOLD, 'CLEANER_CONFIG.AUTO_EXCLUDE_THRESHOLD');
-  validatePositive(CLEANER_CONFIG.AUTO_EXCLUDE_MIN_SAMPLES, 'CLEANER_CONFIG.AUTO_EXCLUDE_MIN_SAMPLES');
+  validateNonNegative(CLEANER_CONFIG.AUTO_EXCLUDE_QUALITY_THRESHOLD, 'CLEANER_CONFIG.AUTO_EXCLUDE_QUALITY_THRESHOLD');
+  validatePositive(CLEANER_CONFIG.AUTO_EXCLUDE_QUALITY_MIN_SAMPLES, 'CLEANER_CONFIG.AUTO_EXCLUDE_QUALITY_MIN_SAMPLES');
+  validatePositive(CLEANER_CONFIG.AUTO_EXCLUDE_RELEVANCE_MIN_SAMPLES, 'CLEANER_CONFIG.AUTO_EXCLUDE_RELEVANCE_MIN_SAMPLES');
+  validatePositive(CLEANER_CONFIG.SCRAPE_FAILURE_MIN_ATTEMPTS, 'CLEANER_CONFIG.SCRAPE_FAILURE_MIN_ATTEMPTS');
+  if (CLEANER_CONFIG.SCRAPE_FAILURE_RATE_THRESHOLD < 0 || CLEANER_CONFIG.SCRAPE_FAILURE_RATE_THRESHOLD > 1) {
+    throw new ConfigValidationError(
+      `SCRAPE_FAILURE_RATE_THRESHOLD must be between 0 and 1 (got ${CLEANER_CONFIG.SCRAPE_FAILURE_RATE_THRESHOLD})`
+    );
+  }
   validatePositive(CLEANER_CONFIG.MAX_INPUT_CHARS, 'CLEANER_CONFIG.MAX_INPUT_CHARS');
   validatePositive(CLEANER_CONFIG.MIN_CLEANED_CHARS, 'CLEANER_CONFIG.MIN_CLEANED_CHARS');
 

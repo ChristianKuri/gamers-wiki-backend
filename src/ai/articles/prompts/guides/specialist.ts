@@ -213,6 +213,17 @@ PREVIOUSLY COVERED (Do Not Repeat):
 ${ctx.crossReferenceContext}
 ` : '';
 
+    // Build awareness of what OTHER sections will cover (to avoid duplication)
+    const otherSectionsCoverage = plan.sections
+      .filter((_, idx) => idx !== ctx.sectionIndex)
+      .map((s) => `• ${s.headline}: ${s.mustCover.slice(0, 3).join(', ')}${s.mustCover.length > 3 ? '...' : ''}`)
+      .join('\n');
+
+    const otherSectionsContext = otherSectionsCoverage ? `
+OTHER SECTIONS WILL COVER (Do NOT duplicate these topics):
+${otherSectionsCoverage}
+` : '';
+
     return `Write section ${ctx.sectionIndex + 1} of ${ctx.totalSections} for a guide about ${gameName}.
 
 ARTICLE: ${plan.title}
@@ -222,17 +233,29 @@ ${sectionScope}
 ${researchSection}
 
 ${previouslyWritten}
-
+${otherSectionsContext}
 ${mustCoverSection}
+
+SMART EXPANSION (Use Judgment):
+• You MUST cover everything in mustCover—this is non-negotiable
+• You MAY add 1-2 closely related items IF they naturally fit AND appear in your research
+• DO NOT add items that belong in other sections (see "OTHER SECTIONS WILL COVER" above)
+• When in doubt, leave it out—better to be focused than bloated
 
 WRITING GUIDELINES:
 
 Format:
 • Do NOT include the section headline (##)—it's added automatically
 • Start with content or a subheading (###)
-• Write ${minParagraphs}-${maxParagraphs} focused paragraphs
+• Write as many paragraphs as needed to fully cover ALL mustCover elements
 • Use **bold** for item/ability/location names on FIRST mention only
 • End with an actionable takeaway
+
+COMPLETENESS > WORD COUNT:
+• Every mustCover element MUST be thoroughly explained
+• Don't pad with filler—be concise but complete
+• If an element needs 2 paragraphs to explain properly, use 2 paragraphs
+• If you can cover everything in 3 paragraphs, that's fine—don't stretch to fill space
 
 Precision checklist (verify before submitting):
 ✓ Every named element leads with its proper name

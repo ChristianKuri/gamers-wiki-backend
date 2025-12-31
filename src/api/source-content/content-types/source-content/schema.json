@@ -42,9 +42,14 @@
     },
     "qualityScore": {
       "type": "integer",
-      "required": true,
+      "required": false,
       "min": 0,
       "max": 100
+    },
+    "scrapeSucceeded": {
+      "type": "boolean",
+      "required": true,
+      "default": true
     },
     "relevanceScore": {
       "type": "integer",

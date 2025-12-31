@@ -139,56 +139,115 @@ export interface GenerationStats {
    * Shows sources that were filtered out due to low quality or relevance.
    */
   readonly filteredSources?: FilteredSourcesStats;
-}
-
-/** A source that was filtered out */
-export interface FilteredSourceItem {
-  readonly url: string;
-  readonly domain: string;
-  readonly title: string;
-  readonly qualityScore: number;
-  readonly relevanceScore: number;
-  readonly reason: 'low_relevance' | 'low_quality' | 'excluded_domain' | 'pre_filtered' | 'scrape_failure';
-  readonly details: string;
-  /** Search query that returned this source */
-  readonly query?: string;
-  /** Search provider (tavily/exa) */
-  readonly searchSource?: 'tavily' | 'exa';
-  /** Stage where filtering happened */
-  readonly filterStage?: 'programmatic' | 'pre_filter' | 'full_clean' | 'post_clean';
-}
-
-/** Filtered sources statistics */
-export interface FilteredSourcesStats {
-  /** Individual filtered sources */
-  readonly sources: readonly FilteredSourceItem[];
-  /** Summary counts */
-  readonly counts: {
-    readonly total: number;
-    readonly lowRelevance: number;
-    readonly lowQuality: number;
-    readonly excludedDomain: number;
-    readonly preFiltered: number;
-    readonly scrapeFailure: number;
-  };
-  /** Breakdown by search provider */
-  readonly byProvider?: {
-    readonly tavily: number;
-    readonly exa: number;
-  };
-  /** Breakdown by filter stage */
-  readonly byStage?: {
-    readonly programmatic: number;
-    readonly preFilter: number;
-    readonly fullClean: number;
-    readonly postClean: number;
-  };
+  /**
+   * Duplicate URL tracking.
+   * Shows which URLs appeared in multiple queries and per-query stats.
+   */
+  readonly duplicateTracking?: DuplicateTrackingStats;
 }
 
 /** Content type used for a source (always 'full') */
 export type ContentType = 'full';
 
-/** Individual source usage tracking */
+/** Individual source within a query group */
+export interface SourceItem {
+  readonly url: string;
+  readonly title: string;
+  readonly qualityScore?: number;
+  readonly relevanceScore?: number;
+  /** Length of cleaned content in characters */
+  readonly cleanedCharCount?: number;
+  /** Whether this content was retrieved from cache (true) or newly cleaned (false) */
+  readonly wasCached?: boolean;
+}
+
+/** Sources grouped by query */
+export interface SourcesByQuery {
+  readonly query: string;
+  readonly phase: 'scout' | 'specialist';
+  readonly searchSource?: 'tavily' | 'exa';
+  readonly contentType: ContentType;
+  /** Section name (only for specialist phase) */
+  readonly section?: string;
+  readonly sources: readonly SourceItem[];
+}
+
+/** Source content usage - array of query groups */
+export type SourceContentUsageStats = readonly SourcesByQuery[];
+
+/** Individual filtered source within a query group */
+export interface FilteredSourceItem {
+  readonly url: string;
+  readonly domain: string;
+  readonly title: string;
+  readonly qualityScore: number;
+  /** Relevance score (0-100), or null if unknown (e.g., scrape failures) */
+  readonly relevanceScore: number | null;
+  readonly reason: 'low_relevance' | 'low_quality' | 'excluded_domain' | 'pre_filtered' | 'scrape_failure';
+  readonly details: string;
+  /** Stage where filtering happened */
+  readonly filterStage?: 'programmatic' | 'pre_filter' | 'full_clean' | 'post_clean';
+  /** Length of cleaned content in characters (if available) */
+  readonly cleanedCharCount?: number;
+}
+
+/** Filtered sources grouped by query */
+export interface FilteredSourcesByQuery {
+  readonly query: string;
+  readonly phase?: 'scout' | 'specialist';
+  readonly searchSource?: 'tavily' | 'exa';
+  readonly sources: readonly FilteredSourceItem[];
+}
+
+/** Filtered sources - array of query groups */
+export type FilteredSourcesStats = readonly FilteredSourcesByQuery[];
+
+// ============================================================================
+// Duplicate Tracking Types
+// ============================================================================
+
+/** Information about a URL that appeared in multiple search queries */
+export interface DuplicateUrlItem {
+  readonly url: string;
+  readonly domain: string;
+  readonly firstSeenIn: {
+    readonly query: string;
+    readonly engine: 'tavily' | 'exa';
+  };
+  readonly alsoDuplicatedIn: readonly {
+    readonly query: string;
+    readonly engine: 'tavily' | 'exa';
+  }[];
+}
+
+/** Statistics for a single search query */
+export interface QueryStatsItem {
+  readonly query: string;
+  readonly engine: 'tavily' | 'exa';
+  readonly phase: 'scout' | 'specialist';
+  /** Number of results returned by the search engine */
+  readonly received: number;
+  /** Number of results removed as duplicates (already seen in earlier queries) */
+  readonly duplicates: number;
+  /** Number of results filtered (scrape failures, low quality, low relevance, etc.) */
+  readonly filtered: number;
+  /** Final number of usable results */
+  readonly used: number;
+}
+
+/** Duplicate tracking statistics */
+export interface DuplicateTrackingStats {
+  /** URLs that appeared in multiple search queries */
+  readonly duplicatedUrls: readonly DuplicateUrlItem[];
+  /** Per-query statistics */
+  readonly queryStats: readonly QueryStatsItem[];
+}
+
+// ============================================================================
+// Legacy interfaces (for backward compatibility)
+// ============================================================================
+
+/** @deprecated Use SourceItem instead */
 export interface SourceUsageItem {
   readonly url: string;
   readonly title: string;
@@ -196,16 +255,7 @@ export interface SourceUsageItem {
   readonly phase: 'scout' | 'specialist';
   readonly section?: string;
   readonly query: string;
-}
-
-/** Source content usage statistics */
-export interface SourceContentUsageStats {
-  /** Per-source tracking */
-  readonly sources: readonly SourceUsageItem[];
-  /** Summary counts */
-  readonly counts: {
-    readonly total: number;
-  };
+  readonly searchSource?: 'tavily' | 'exa';
 }
 
 /** Section statistics from markdown */

@@ -64,7 +64,7 @@ export function buildResearchContext(
         .map((result) => {
           const source = getSourceContent(result, contentPerResult);
           
-          // Track usage - include search source if known
+          // Track usage - include search source and quality/relevance if known
           allSourceUsage.push({
             url: result.url,
             title: result.title,
@@ -74,6 +74,13 @@ export function buildResearchContext(
             query: r.query,
             // Only include searchSource if explicitly set (don't guess)
             ...(r.searchSource ? { searchSource: r.searchSource } : {}),
+            // Include quality/relevance scores if available (from cleaned sources)
+            ...(result.qualityScore !== undefined ? { qualityScore: result.qualityScore } : {}),
+            ...(result.relevanceScore !== undefined ? { relevanceScore: result.relevanceScore } : {}),
+            // Include cleaned content length
+            cleanedCharCount: result.content.length,
+            // Include cache status if available
+            ...(result.wasCached !== undefined ? { wasCached: result.wasCached } : {}),
           });
 
           return `  - ${result.title} (${result.url})\n    ${source.content}`;

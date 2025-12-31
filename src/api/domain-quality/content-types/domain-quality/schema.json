@@ -56,6 +56,46 @@
       "type": "string",
       "required": true,
       "maxLength": 100
+    },
+    "tavilyAttempts": {
+      "type": "integer",
+      "required": true,
+      "default": 0,
+      "min": 0
+    },
+    "tavilyScrapeFailures": {
+      "type": "integer",
+      "required": true,
+      "default": 0,
+      "min": 0
+    },
+    "exaAttempts": {
+      "type": "integer",
+      "required": true,
+      "default": 0,
+      "min": 0
+    },
+    "exaScrapeFailures": {
+      "type": "integer",
+      "required": true,
+      "default": 0,
+      "min": 0
+    },
+    "isExcludedTavily": {
+      "type": "boolean",
+      "required": true,
+      "default": false
+    },
+    "isExcludedExa": {
+      "type": "boolean",
+      "required": true,
+      "default": false
+    },
+    "tavilyExcludeReason": {
+      "type": "text"
+    },
+    "exaExcludeReason": {
+      "type": "text"
     }
   }
 }

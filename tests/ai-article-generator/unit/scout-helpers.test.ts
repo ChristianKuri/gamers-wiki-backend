@@ -269,16 +269,28 @@ describe('Scout Helper Functions', () => {
         mockContext,
         'Overview briefing content',
         'Category briefing content',
-        'Recent briefing content'
+        'Supplementary briefing content',
+        'TIPS & TRICKS'
       );
 
       expect(context).toContain('=== OVERVIEW ===');
       expect(context).toContain('Overview briefing content');
       expect(context).toContain('=== CATEGORY INSIGHTS ===');
       expect(context).toContain('Category briefing content');
-      expect(context).toContain('=== RECENT DEVELOPMENTS ===');
-      expect(context).toContain('Recent briefing content');
+      expect(context).toContain('=== TIPS & TRICKS ===');
+      expect(context).toContain('Supplementary briefing content');
       expect(context).toContain('=== METADATA ===');
+    });
+
+    it('uses default label when not specified', () => {
+      const context = buildFullContext(
+        mockContext,
+        'Overview',
+        'Category',
+        'Supplementary'
+      );
+
+      expect(context).toContain('=== SUPPLEMENTARY RESEARCH ===');
     });
 
     it('includes all game metadata', () => {

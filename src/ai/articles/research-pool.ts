@@ -19,9 +19,11 @@ import {
   createEmptyTokenUsage,
   type CategorizedSearchResult,
   type CleanedSource,
+  type DuplicateUrlInfo,
   type RawSourceInput,
   type ResearchPool,
   type SearchCategory,
+  type SearchQueryStats,
   type SearchResultItem,
   type SearchSource,
   type TokenUsage,
@@ -65,6 +67,131 @@ export function extractDomainFromUrl(url: string): string {
     return new URL(url).hostname.replace(/^www\./, '');
   } catch {
     return '';
+  }
+}
+
+// ============================================================================
+// Duplicate Tracking
+// ============================================================================
+
+/**
+ * Internal record of where a URL was first seen.
+ */
+interface UrlFirstSeen {
+  readonly query: string;
+  readonly engine: SearchSource;
+}
+
+/**
+ * Tracks duplicate URLs across multiple search queries.
+ * Thread-safe for use across parallel searches.
+ */
+export class DuplicateTracker {
+  /** Map of normalized URL -> first occurrence info */
+  private readonly firstSeen = new Map<string, UrlFirstSeen>();
+  /** Map of normalized URL -> list of duplicate occurrences */
+  private readonly duplicates = new Map<string, { query: string; engine: SearchSource }[]>();
+  /** Map of query -> stats */
+  private readonly queryStats = new Map<string, {
+    engine: SearchSource;
+    phase: 'scout' | 'specialist';
+    received: number;
+    duplicates: number;
+    filtered: number;
+  }>();
+
+  /**
+   * Records a URL from a search query.
+   * @returns true if this is the first time seeing this URL, false if duplicate
+   */
+  recordUrl(url: string, query: string, engine: SearchSource): boolean {
+    const normalized = normalizeUrl(url);
+    if (!normalized) return false;
+
+    if (this.firstSeen.has(normalized)) {
+      // Duplicate - record where it was duplicated
+      const existing = this.duplicates.get(normalized) ?? [];
+      existing.push({ query, engine });
+      this.duplicates.set(normalized, existing);
+      return false;
+    }
+
+    // First occurrence
+    this.firstSeen.set(normalized, { query, engine });
+    return true;
+  }
+
+  /**
+   * Initializes stats for a query before processing results.
+   */
+  initQueryStats(query: string, engine: SearchSource, phase: 'scout' | 'specialist', received: number): void {
+    this.queryStats.set(query, { engine, phase, received, duplicates: 0, filtered: 0 });
+  }
+
+  /**
+   * Increments the duplicate count for a query.
+   */
+  incrementDuplicates(query: string): void {
+    const stats = this.queryStats.get(query);
+    if (stats) {
+      this.queryStats.set(query, { ...stats, duplicates: stats.duplicates + 1 });
+    }
+  }
+
+  /**
+   * Increments the filtered count for a query.
+   */
+  incrementFiltered(query: string): void {
+    const stats = this.queryStats.get(query);
+    if (stats) {
+      this.queryStats.set(query, { ...stats, filtered: stats.filtered + 1 });
+    }
+  }
+
+  /**
+   * Gets all duplicated URLs with their occurrence info.
+   */
+  getDuplicates(): readonly DuplicateUrlInfo[] {
+    const result: DuplicateUrlInfo[] = [];
+    for (const [url, dupes] of this.duplicates) {
+      const firstSeen = this.firstSeen.get(url);
+      if (!firstSeen || dupes.length === 0) continue;
+
+      result.push({
+        url,
+        domain: extractDomainFromUrl(url),
+        firstSeenIn: firstSeen,
+        alsoDuplicatedIn: dupes,
+      });
+    }
+    return result;
+  }
+
+  /**
+   * Gets query statistics.
+   */
+  getQueryStats(): readonly SearchQueryStats[] {
+    const result: SearchQueryStats[] = [];
+    for (const [query, stats] of this.queryStats) {
+      result.push({
+        query,
+        engine: stats.engine,
+        phase: stats.phase,
+        received: stats.received,
+        duplicates: stats.duplicates,
+        filtered: stats.filtered,
+        used: stats.received - stats.duplicates - stats.filtered,
+      });
+    }
+    return result;
+  }
+
+  /**
+   * Checks if a URL has been seen before.
+   */
+  hasSeen(url: string): boolean {
+    const normalized = normalizeUrl(url);
+    return normalized ? this.firstSeen.has(normalized) : false;
   }
 }
 
@@ -558,8 +685,21 @@ export interface CleaningDeps {
    * Pre-fetched excluded domains (static + database).
    * If not provided, only static exclusions are used at search time.
    * Call getAllExcludedDomains(strapi) to populate this.
+   * @deprecated Use tavilyExcludedDomains and exaExcludedDomains for per-engine exclusions
    */
   readonly excludedDomains?: readonly string[];
+  /**
+   * Pre-fetched excluded domains for Tavily searches.
+   * Includes global exclusions + Tavily-specific scrape failure exclusions.
+   * Call getAllExcludedDomainsForEngine(strapi, 'tavily') to populate this.
+   */
+  readonly tavilyExcludedDomains?: readonly string[];
+  /**
+   * Pre-fetched excluded domains for Exa searches.
+   * Includes global exclusions + Exa-specific scrape failure exclusions.
+   * Call getAllExcludedDomainsForEngine(strapi, 'exa') to populate this.
+   */
+  readonly exaExcludedDomains?: readonly string[];
   /**
    * Override minimum relevance score for filtering.
    * Default: CLEANER_CONFIG.MIN_RELEVANCE_FOR_RESULTS (70)
@@ -578,6 +718,16 @@ export interface CleaningDeps {
   readonly gameDocumentId?: string | null;
   /** Article topic/title for pre-filter relevance scoring */
   readonly articleTopic?: string;
+  /**
+   * Shared duplicate tracker across all search queries.
+   * When provided, tracks which URLs appear in multiple queries.
+   */
+  readonly duplicateTracker?: DuplicateTracker;
+  /**
+   * Current phase for tracking purposes.
+   * Default: 'scout'
+   */
+  readonly phase?: 'scout' | 'specialist';
 }
 
 /**
@@ -588,17 +738,22 @@ export interface FilteredSource {
   readonly domain: string;
   readonly title: string;
   readonly qualityScore: number;
-  readonly relevanceScore: number;
+  /** Relevance score (0-100), or null if unknown (e.g., scrape failures) */
+  readonly relevanceScore: number | null;
   /** Reason for filtering */
   readonly reason: 'low_relevance' | 'low_quality' | 'excluded_domain' | 'pre_filtered' | 'scrape_failure';
   /** Human-readable details */
   readonly details: string;
   /** Search query that returned this source */
   readonly query?: string;
+  /** Phase where this source was filtered (scout or specialist) */
+  readonly phase?: 'scout' | 'specialist';
   /** Search provider that returned this source */
   readonly searchSource?: 'tavily' | 'exa';
   /** Stage where filtering happened */
   readonly filterStage?: 'programmatic' | 'pre_filter' | 'full_clean' | 'post_clean';
+  /** Length of cleaned content in characters (if available) */
+  readonly cleanedCharCount?: number;
 }
 
 /**
@@ -672,17 +827,32 @@ export async function processSearchResultsWithCleaning(
   const { cleanSourcesBatch } = await import('./agents/cleaner');
   const { checkSourceCache, storeCleanedSources } = await import('./source-cache');
 
-  const { strapi, generateObject, model, logger, signal, gameName, gameDocumentId, minRelevanceOverride, minQualityOverride, articleTopic } = cleaningDeps;
+  const { strapi, generateObject, model, logger, signal, gameName, gameDocumentId, minRelevanceOverride, minQualityOverride, articleTopic, duplicateTracker, phase = 'scout' } = cleaningDeps;
 
   // Use overrides if provided, otherwise fall back to config defaults
   const minRelevance = minRelevanceOverride ?? CLEANER_CONFIG.MIN_RELEVANCE_FOR_RESULTS;
   const minQuality = minQualityOverride ?? CLEANER_CONFIG.MIN_QUALITY_FOR_RESULTS;
 
-  // Build raw source inputs
+  // Initialize query stats if tracking duplicates
+  const receivedCount = rawResults.results.length;
+  duplicateTracker?.initQueryStats(query, searchSource, phase, receivedCount);
+
+  // Build raw source inputs, filtering out duplicates if tracker provided
   const rawSources: RawSourceInput[] = rawResults.results
     .map((r) => {
       const normalized = normalizeUrl(r.url);
       if (!normalized) return null;
+
+      // Check for duplicates against previous queries
+      if (duplicateTracker) {
+        const isFirstSeen = duplicateTracker.recordUrl(normalized, query, searchSource);
+        if (!isFirstSeen) {
+          // This URL was already seen in a previous query - skip it
+          duplicateTracker.incrementDuplicates(query);
+          return null;
+        }
+      }
+
       return {
         url: normalized,
         title: r.title,
@@ -712,10 +882,48 @@ export async function processSearchResultsWithCleaning(
   // Track filtered sources for logging and result tracking (declare early for exclusion filter)
   const filteredSources: FilteredSource[] = [];
 
+  // Track URLs that are scrape failure retries (need special handling after cleaning)
+  const scrapeFailureRetryUrls = new Set<string>();
+  // Track URLs that need reprocessing (legacy data with NULL relevance)
+  const needsReprocessingUrls = new Set<string>();
+
   // Filter out cache hits from now-excluded domains (domains may have been added to exclusion list after caching)
+  // Also handle scrape failure "natural retries" - if cached as failure but raw content now sufficient
+  // Also handle legacy data that needs reprocessing (NULL relevance)
   const validHits = cacheResults.filter((r) => {
     if (!r.hit) return false;
     const domain = extractDomainFromUrl(r.url);
+    
+    // Check if this is a scrape failure that might now succeed
+    // The cached record has scrapeSucceeded field indicating previous failure
+    if (r.cached && !r.cached.scrapeSucceeded) {
+      // Find the corresponding raw source to check if content is now sufficient
+      const rawSource = rawSources.find(s => normalizeUrl(s.url) === normalizeUrl(r.url));
+      if (rawSource && rawSource.content.length > CLEANER_CONFIG.MIN_CONTENT_LENGTH) {
+        // Content is now sufficient - treat as a miss to retry cleaning
+        logger?.info?.(`Natural retry: ${domain} previously failed but now has ${rawSource.content.length} chars`);
+        scrapeFailureRetryUrls.add(r.url);
+        return false; // Remove from hits, will be added to misses
+      }
+      // Content still insufficient - keep as "hit" (a known failure)
+      return true;
+    }
+    
+    // Check if this is legacy data that needs reprocessing (NULL relevance)
+    if (r.cached && r.cached.needsReprocessing) {
+      // Find the corresponding raw source to re-clean
+      const rawSource = rawSources.find(s => normalizeUrl(s.url) === normalizeUrl(r.url));
+      if (rawSource && rawSource.content.length > CLEANER_CONFIG.MIN_CONTENT_LENGTH) {
+        // Have raw content - treat as miss to re-clean and calculate relevance
+        logger?.info?.(`Reprocessing legacy: ${domain} has NULL relevance, re-cleaning to calculate scores`);
+        needsReprocessingUrls.add(r.url);
+        return false; // Remove from hits, will be added to misses
+      }
+      // No raw content available - keep as hit, will use cached quality (relevance defaults to 0)
+      // This shouldn't filter it out because MIN_RELEVANCE check handles this
+      return true;
+    }
+    
     if (excludedDomainsSet.has(domain)) {
       // Log and track excluded cached sources
       filteredSources.push({
@@ -729,15 +937,41 @@ export async function processSearchResultsWithCleaning(
         query,
         searchSource,
         filterStage: 'programmatic',
+        ...(r.cached?.cleanedContent ? { cleanedCharCount: r.cached.cleanedContent.length } : {}),
       });
+      duplicateTracker?.incrementFiltered(query);
       return false;
     }
     return true;
   });
 
   // Separate valid cache hits and misses
+  // Include scrape failure retries and legacy reprocessing as misses (they need to be re-cleaned)
   const hits = validHits;
-  const misses = cacheResults.filter((r) => !r.hit && r.raw);
+  const misses = cacheResults.filter((r) => {
+    // Standard miss (not in cache)
+    if (!r.hit && r.raw) return true;
+    // Scrape failure retry (was in cache as failure, now has content)
+    if (scrapeFailureRetryUrls.has(r.url)) {
+      // Find and attach the raw source
+      const rawSource = rawSources.find(s => normalizeUrl(s.url) === normalizeUrl(r.url));
+      if (rawSource) {
+        // Mutate to add raw (safe since we're building new results)
+        (r as { raw?: RawSourceInput }).raw = rawSource;
+        return true;
+      }
+    }
+    // Legacy data needing reprocessing (NULL relevance)
+    if (needsReprocessingUrls.has(r.url)) {
+      // Find and attach the raw source
+      const rawSource = rawSources.find(s => normalizeUrl(s.url) === normalizeUrl(r.url));
+      if (rawSource) {
+        (r as { raw?: RawSourceInput }).raw = rawSource;
+        return true;
+      }
+    }
+    return false;
+  });
 
   // Log cache status (include excluded count if any)
   const cleanerEnabled = CLEANER_CONFIG.ENABLED;
@@ -782,13 +1016,14 @@ export async function processSearchResultsWithCleaning(
           domain: extractDomainFromUrl(s.url),
           title: s.title,
           qualityScore: 0,
-          relevanceScore: 0,
+          relevanceScore: null, // Unknown - couldn't evaluate content
           reason: 'scrape_failure',
           details: `Content too short: ${s.content.length} chars (min: ${CLEANER_CONFIG.MIN_CONTENT_LENGTH})`,
           query,
           searchSource: s.searchSource,
           filterStage: 'programmatic',
         });
+        duplicateTracker?.incrementFiltered(query);
       }
 
       // Store scrape failures to track domains and prevent re-processing
@@ -819,13 +1054,14 @@ export async function processSearchResultsWithCleaning(
           domain: extractDomainFromUrl(source.url),
           title: source.title,
           qualityScore: 0,
-          relevanceScore: 0,
+          relevanceScore: null, // Unknown - skipped before evaluation
           reason: 'pre_filtered',
           details: `Programmatic: ${reason}`,
           query,
           searchSource,
           filterStage: 'programmatic',
         });
+        duplicateTracker?.incrementFiltered(query);
       }
     }
 
@@ -882,6 +1118,7 @@ export async function processSearchResultsWithCleaning(
             searchSource: source.searchSource,
             filterStage: 'pre_filter',
           });
+          duplicateTracker?.incrementFiltered(query);
         }
       }
 
@@ -906,10 +1143,44 @@ export async function processSearchResultsWithCleaning(
 
     // Store cleaned sources in DB (fire-and-forget is OK here)
     if (cleanedSources.length > 0) {
-      storeCleanedSources(strapi, cleanedSources, gameDocumentId).catch((err) => {
-        const message = err instanceof Error ? err.message : String(err);
-        logger?.warn?.(`Failed to store cleaned sources: ${message}`);
-      });
+      // Separate retry sources, reprocessed sources, and new sources
+      const retrySources = cleanedSources.filter(s => scrapeFailureRetryUrls.has(s.url));
+      const reprocessedSources = cleanedSources.filter(s => needsReprocessingUrls.has(s.url));
+      const newSources = cleanedSources.filter(s => 
+        !scrapeFailureRetryUrls.has(s.url) && !needsReprocessingUrls.has(s.url)
+      );
+      
+      // Update retry sources (previously failed, now succeeded)
+      if (retrySources.length > 0) {
+        const { updateScrapeFailureToSuccess } = await import('./source-cache');
+        for (const source of retrySources) {
+          updateScrapeFailureToSuccess(strapi, source.url, source).catch((err) => {
+            const message = err instanceof Error ? err.message : String(err);
+            logger?.warn?.(`Failed to update scrape failure to success ${source.url}: ${message}`);
+          });
+        }
+        logger?.info?.(`Updated ${retrySources.length} scrape failure(s) to success`);
+      }
+      
+      // Update reprocessed sources (legacy data with NULL relevance)
+      if (reprocessedSources.length > 0) {
+        const { updateLegacySourceRelevance } = await import('./source-cache');
+        for (const source of reprocessedSources) {
+          updateLegacySourceRelevance(strapi, source.url, source).catch((err) => {
+            const message = err instanceof Error ? err.message : String(err);
+            logger?.warn?.(`Failed to update legacy source relevance ${source.url}: ${message}`);
+          });
+        }
+        logger?.info?.(`Updated ${reprocessedSources.length} legacy source(s) with relevance scores`);
+      }
+      
+      // Store new sources normally
+      if (newSources.length > 0) {
+        storeCleanedSources(strapi, newSources, gameDocumentId).catch((err) => {
+          const message = err instanceof Error ? err.message : String(err);
+          logger?.warn?.(`Failed to store cleaned sources: ${message}`);
+        });
+      }
     }
   } else if (misses.length > 0 && !cleanerEnabled) {
     // Log that we're skipping cleaning
@@ -917,16 +1188,25 @@ export async function processSearchResultsWithCleaning(
   }
 
   // Build lookup maps for merging
-  const cachedByUrl = new Map<string, CleanedSource>();
+  // Extend CleanedSource with scrapeSucceeded for cache hits
+  type CleanedSourceWithScrapeStatus = CleanedSource & { scrapeSucceeded?: boolean };
+  const cachedByUrl = new Map<string, CleanedSourceWithScrapeStatus>();
   for (const hit of hits) {
     if (hit.cached) {
-      cachedByUrl.set(hit.url, hit.cached);
+      // Include scrapeSucceeded from cache result for filtering
+      cachedByUrl.set(hit.url, {
+        ...hit.cached,
+        scrapeSucceeded: hit.cached.scrapeSucceeded,
+      });
     }
   }
 
-  const cleanedByUrl = new Map<string, CleanedSource>();
+  const cleanedByUrl = new Map<string, CleanedSourceWithScrapeStatus>();
   for (const cleaned of cleanedSources) {
-    cleanedByUrl.set(cleaned.url, cleaned);
+    cleanedByUrl.set(cleaned.url, {
+      ...cleaned,
+      scrapeSucceeded: true, // Newly cleaned sources always succeeded
+    });
   }
 
   // Build final result items, using cleaned content when available
@@ -940,39 +1220,55 @@ export async function processSearchResultsWithCleaning(
       const cached = cachedByUrl.get(normalized);
       const cleaned = cleanedByUrl.get(normalized);
       const cleanedSource = cached || cleaned;
+      // Track whether content was from cache or newly cleaned
+      const wasCached = cached !== undefined;
 
       if (cleanedSource) {
+        // Skip scrape failures - they have no useful content
+        if (!cleanedSource.scrapeSucceeded) {
+          // Already tracked in filtered sources during cache processing
+          return null;
+        }
+        
         // Check relevance score - filter out irrelevant content
-        if (cleanedSource.relevanceScore < minRelevance) {
+        // Handle null relevanceScore (legacy data) - default to passing
+        const relevanceScore = cleanedSource.relevanceScore ?? 100;
+        if (relevanceScore < minRelevance) {
           filteredSources.push({
             url: normalized,
             domain: cleanedSource.domain,
             title: r.title,
-            qualityScore: cleanedSource.qualityScore,
+            qualityScore: cleanedSource.qualityScore ?? 0,
             relevanceScore: cleanedSource.relevanceScore,
             reason: 'low_relevance',
-            details: `Relevance ${cleanedSource.relevanceScore}/100 < min ${minRelevance}`,
+            details: `Relevance ${relevanceScore}/100 < min ${minRelevance}`,
             query,
             searchSource: cleanedSource.searchSource,
             filterStage: 'post_clean',
+            cleanedCharCount: cleanedSource.cleanedContent.length,
           });
+          duplicateTracker?.incrementFiltered(query);
           return null;
         }
 
         // Check quality score - filter out low-quality content
-        if (cleanedSource.qualityScore < minQuality) {
+        // Handle null qualityScore (legacy data) - default to passing
+        const qualityScore = cleanedSource.qualityScore ?? 100;
+        if (qualityScore < minQuality) {
           filteredSources.push({
             url: normalized,
             domain: cleanedSource.domain,
             title: r.title,
-            qualityScore: cleanedSource.qualityScore,
+            qualityScore: cleanedSource.qualityScore ?? 0,
             relevanceScore: cleanedSource.relevanceScore,
             reason: 'low_quality',
-            details: `Quality ${cleanedSource.qualityScore}/100 < min ${minQuality}`,
+            details: `Quality ${qualityScore}/100 < min ${minQuality}`,
             query,
             searchSource: cleanedSource.searchSource,
             filterStage: 'post_clean',
+            cleanedCharCount: cleanedSource.cleanedContent.length,
           });
+          duplicateTracker?.incrementFiltered(query);
           return null;
         }
 
@@ -983,6 +1279,9 @@ export async function processSearchResultsWithCleaning(
           content: cleanedSource.cleanedContent,
           ...(r.summary ? { summary: r.summary } : {}),
           ...(typeof r.score === 'number' ? { score: r.score } : {}),
+          qualityScore: cleanedSource.qualityScore,
+          relevanceScore: cleanedSource.relevanceScore,
+          wasCached,
         };
       }
 
@@ -1014,7 +1313,13 @@ export async function processSearchResultsWithCleaning(
     
     logger?.info?.(
       `Filtered ${filteredSources.length} source(s) for "${query.slice(0, 40)}..." (${parts.join(', ')}): ` +
-      filteredSources.map((s) => `${s.domain} [Q:${s.qualityScore}/R:${s.relevanceScore}]`).join(', ')
+      filteredSources.map((s) => {
+        // Show "scrape failed" instead of confusing Q:0/R:null for scrape failures
+        if (s.reason === 'scrape_failure') {
+          return `${s.domain} [scrape failed]`;
+        }
+        return `${s.domain} [Q:${s.qualityScore}/R:${s.relevanceScore ?? 'unknown'}]`;
+      }).join(', ')
     );
   }
 
