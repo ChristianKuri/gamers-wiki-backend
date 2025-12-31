@@ -169,7 +169,7 @@ describe('runScout', () => {
       expect(queries.some((q) => q.toLowerCase().includes('guide') || q.toLowerCase().includes('beginner'))).toBe(true);
     });
 
-    it('executes recent news search', async () => {
+    it('executes supplementary search (tips for guides, recent for news/reviews)', async () => {
       const mockSearch = createMockSearch();
       const mockGenerateText = vi.fn()
         .mockResolvedValueOnce({ text: MOCK_OVERVIEW_BRIEFING, usage: {} })
@@ -185,8 +185,11 @@ describe('runScout', () => {
 
       const calls = mockSearch.mock.calls;
       const queries = calls.map((call) => call[0]);
-      // Should have recent/news-related searches
+      // Should have supplementary searches - tips for guides, recent/news for other types
       expect(queries.some((q) =>
+        q.toLowerCase().includes('tips') ||
+        q.toLowerCase().includes('tricks') ||
+        q.toLowerCase().includes('secrets') ||
         q.toLowerCase().includes('news') ||
         q.toLowerCase().includes('update') ||
         q.toLowerCase().includes(String(new Date().getFullYear()))

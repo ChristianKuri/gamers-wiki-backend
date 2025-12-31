@@ -19,9 +19,11 @@ import {
   createEmptyTokenUsage,
   type CategorizedSearchResult,
   type CleanedSource,
+  type DuplicateUrlInfo,
   type RawSourceInput,
   type ResearchPool,
   type SearchCategory,
+  type SearchQueryStats,
   type SearchResultItem,
   type SearchSource,
   type TokenUsage,
@@ -65,6 +67,131 @@ export function extractDomainFromUrl(url: string): string {
     return new URL(url).hostname.replace(/^www\./, '');
   } catch {
     return '';
+  }
+}
+
+// ============================================================================
+// Duplicate Tracking
+// ============================================================================
+
+/**
+ * Internal record of where a URL was first seen.
+ */
+interface UrlFirstSeen {
+  readonly query: string;
+  readonly engine: SearchSource;
+}
+
+/**
+ * Tracks duplicate URLs across multiple search queries.
+ * Thread-safe for use across parallel searches.
+ */
+export class DuplicateTracker {
+  /** Map of normalized URL -> first occurrence info */
+  private readonly firstSeen = new Map<string, UrlFirstSeen>();
+  /** Map of normalized URL -> list of duplicate occurrences */
+  private readonly duplicates = new Map<string, { query: string; engine: SearchSource }[]>();
+  /** Map of query -> stats */
+  private readonly queryStats = new Map<string, {
+    engine: SearchSource;
+    phase: 'scout' | 'specialist';
+    received: number;
+    duplicates: number;
+    filtered: number;
+  }>();
+
+  /**
+   * Records a URL from a search query.
+   * @returns true if this is the first time seeing this URL, false if duplicate
+   */
+  recordUrl(url: string, query: string, engine: SearchSource): boolean {
+    const normalized = normalizeUrl(url);
+    if (!normalized) return false;
+
+    if (this.firstSeen.has(normalized)) {
+      // Duplicate - record where it was duplicated
+      const existing = this.duplicates.get(normalized) ?? [];
+      existing.push({ query, engine });
+      this.duplicates.set(normalized, existing);
+      return false;
+    }
+
+    // First occurrence
+    this.firstSeen.set(normalized, { query, engine });
+    return true;
+  }
+
+  /**
+   * Initializes stats for a query before processing results.
+   */
+  initQueryStats(query: string, engine: SearchSource, phase: 'scout' | 'specialist', received: number): void {
+    this.queryStats.set(query, { engine, phase, received, duplicates: 0, filtered: 0 });
+  }
+
+  /**
+   * Increments the duplicate count for a query.
+   */
+  incrementDuplicates(query: string): void {
+    const stats = this.queryStats.get(query);
+    if (stats) {
+      this.queryStats.set(query, { ...stats, duplicates: stats.duplicates + 1 });
+    }
+  }
+
+  /**
+   * Increments the filtered count for a query.
+   */
+  incrementFiltered(query: string): void {
+    const stats = this.queryStats.get(query);
+    if (stats) {
+      this.queryStats.set(query, { ...stats, filtered: stats.filtered + 1 });
+    }
+  }
+
+  /**
+   * Gets all duplicated URLs with their occurrence info.
+   */
+  getDuplicates(): readonly DuplicateUrlInfo[] {
+    const result: DuplicateUrlInfo[] = [];
+    for (const [url, dupes] of this.duplicates) {
+      const firstSeen = this.firstSeen.get(url);
+      if (!firstSeen || dupes.length === 0) continue;
+
+      result.push({
+        url,
+        domain: extractDomainFromUrl(url),
+        firstSeenIn: firstSeen,
+        alsoDuplicatedIn: dupes,
+      });
+    }
+    return result;
+  }
+
+  /**
+   * Gets query statistics.
+   */
+  getQueryStats(): readonly SearchQueryStats[] {
+    const result: SearchQueryStats[] = [];
+    for (const [query, stats] of this.queryStats) {
+      result.push({
+        query,
+        engine: stats.engine,
+        phase: stats.phase,
+        received: stats.received,
+        duplicates: stats.duplicates,
+        filtered: stats.filtered,
+        used: stats.received - stats.duplicates - stats.filtered,
+      });
+    }
+    return result;
+  }
+
+  /**
+   * Checks if a URL has been seen before.
+   */
+  hasSeen(url: string): boolean {
+    const normalized = normalizeUrl(url);
+    return normalized ? this.firstSeen.has(normalized) : false;
   }
 }
 
@@ -591,6 +718,16 @@ export interface CleaningDeps {
   readonly gameDocumentId?: string | null;
   /** Article topic/title for pre-filter relevance scoring */
   readonly articleTopic?: string;
+  /**
+   * Shared duplicate tracker across all search queries.
+   * When provided, tracks which URLs appear in multiple queries.
+   */
+  readonly duplicateTracker?: DuplicateTracker;
+  /**
+   * Current phase for tracking purposes.
+   * Default: 'scout'
+   */
+  readonly phase?: 'scout' | 'specialist';
 }
 
 /**
@@ -690,17 +827,32 @@ export async function processSearchResultsWithCleaning(
   const { cleanSourcesBatch } = await import('./agents/cleaner');
   const { checkSourceCache, storeCleanedSources } = await import('./source-cache');
 
-  const { strapi, generateObject, model, logger, signal, gameName, gameDocumentId, minRelevanceOverride, minQualityOverride, articleTopic } = cleaningDeps;
+  const { strapi, generateObject, model, logger, signal, gameName, gameDocumentId, minRelevanceOverride, minQualityOverride, articleTopic, duplicateTracker, phase = 'scout' } = cleaningDeps;
 
   // Use overrides if provided, otherwise fall back to config defaults
   const minRelevance = minRelevanceOverride ?? CLEANER_CONFIG.MIN_RELEVANCE_FOR_RESULTS;
   const minQuality = minQualityOverride ?? CLEANER_CONFIG.MIN_QUALITY_FOR_RESULTS;
 
-  // Build raw source inputs
+  // Initialize query stats if tracking duplicates
+  const receivedCount = rawResults.results.length;
+  duplicateTracker?.initQueryStats(query, searchSource, phase, receivedCount);
+
+  // Build raw source inputs, filtering out duplicates if tracker provided
   const rawSources: RawSourceInput[] = rawResults.results
     .map((r) => {
       const normalized = normalizeUrl(r.url);
       if (!normalized) return null;
+
+      // Check for duplicates against previous queries
+      if (duplicateTracker) {
+        const isFirstSeen = duplicateTracker.recordUrl(normalized, query, searchSource);
+        if (!isFirstSeen) {
+          // This URL was already seen in a previous query - skip it
+          duplicateTracker.incrementDuplicates(query);
+          return null;
+        }
+      }
+
       return {
         url: normalized,
         title: r.title,
@@ -787,6 +939,7 @@ export async function processSearchResultsWithCleaning(
         filterStage: 'programmatic',
         ...(r.cached?.cleanedContent ? { cleanedCharCount: r.cached.cleanedContent.length } : {}),
       });
+      duplicateTracker?.incrementFiltered(query);
       return false;
     }
     return true;
@@ -870,6 +1023,7 @@ export async function processSearchResultsWithCleaning(
           searchSource: s.searchSource,
           filterStage: 'programmatic',
         });
+        duplicateTracker?.incrementFiltered(query);
       }
 
       // Store scrape failures to track domains and prevent re-processing
@@ -907,6 +1061,7 @@ export async function processSearchResultsWithCleaning(
           searchSource,
           filterStage: 'programmatic',
         });
+        duplicateTracker?.incrementFiltered(query);
       }
     }
 
@@ -963,6 +1118,7 @@ export async function processSearchResultsWithCleaning(
             searchSource: source.searchSource,
             filterStage: 'pre_filter',
           });
+          duplicateTracker?.incrementFiltered(query);
         }
       }
 
@@ -1091,6 +1247,7 @@ export async function processSearchResultsWithCleaning(
             filterStage: 'post_clean',
             cleanedCharCount: cleanedSource.cleanedContent.length,
           });
+          duplicateTracker?.incrementFiltered(query);
           return null;
         }
 
@@ -1111,6 +1268,7 @@ export async function processSearchResultsWithCleaning(
             filterStage: 'post_clean',
             cleanedCharCount: cleanedSource.cleanedContent.length,
           });
+          duplicateTracker?.incrementFiltered(query);
           return null;
         }
 

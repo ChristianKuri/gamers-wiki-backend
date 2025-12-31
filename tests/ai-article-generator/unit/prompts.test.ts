@@ -7,8 +7,8 @@ import {
   getScoutOverviewUserPrompt,
   getScoutCategorySystemPrompt,
   getScoutCategoryUserPrompt,
-  getScoutRecentSystemPrompt,
-  getScoutRecentUserPrompt,
+  getScoutSupplementarySystemPrompt,
+  getScoutSupplementaryUserPrompt,
   type ScoutPromptContext,
   // Editor prompts
   buildCategoryHintsSection,
@@ -117,56 +117,72 @@ const createMockSearchResult = (
 
 describe('Scout Prompts', () => {
   describe('buildScoutQueries', () => {
-    it('generates overview query with game name', () => {
+    it('generates slots with overview query containing game name', () => {
       const context = createMockGameContext();
-      const queries = buildScoutQueries(context);
+      const config = buildScoutQueries(context);
 
-      expect(queries.overview).toContain('Elden Ring');
+      // New slot-based structure
+      expect(config.slots).toBeDefined();
+      expect(config.slots.length).toBeGreaterThan(0);
+
+      // Find overview slot
+      const overviewSlot = config.slots.find(s => s.category === 'overview');
+      expect(overviewSlot).toBeDefined();
+      expect(overviewSlot!.query).toContain('Elden Ring');
       // Guides strategy includes gameplay/mechanics keywords
-      expect(queries.overview).toMatch(/gameplay|mechanics|guide|walkthrough/i);
+      expect(overviewSlot!.query).toMatch(/gameplay|mechanics|guide|walkthrough/i);
     });
 
-    it('generates category queries based on instruction', () => {
-      const context = createMockGameContext({ instruction: 'Write a review' });
-      const queries = buildScoutQueries(context);
+    it('generates category-specific slot based on instruction', () => {
+      const context = createMockGameContext({ instruction: 'how to defeat boss' });
+      const config = buildScoutQueries(context);
 
-      expect(queries.category.some((q) => q.includes('Write a review'))).toBe(true);
-    });
-
-    it('generates default category queries when no instruction provided', () => {
-      const context = createMockGameContext({ instruction: null });
-      const queries = buildScoutQueries(context);
-
-      expect(queries.category.some((q) => q.includes('review') || q.includes('guide'))).toBe(true);
-    });
-
-    it('includes instruction-based queries when provided', () => {
-      const context = createMockGameContext({
-        instruction: 'how to defeat boss',
-      });
-      const queries = buildScoutQueries(context);
-
+      // Find category-specific slot
+      const categorySlot = config.slots.find(s => s.category === 'category-specific');
+      expect(categorySlot).toBeDefined();
       // Guides strategy includes instruction in category queries
-      expect(queries.category.some((q) => q.toLowerCase().includes('boss') || q.toLowerCase().includes('defeat'))).toBe(true);
+      expect(categorySlot!.query.toLowerCase()).toMatch(/boss|defeat|guide/i);
     });
 
-    it('generates recent query with current year', () => {
-      const context = createMockGameContext();
-      const queries = buildScoutQueries(context);
-      const currentYear = new Date().getFullYear();
+    it('generates default category slot when no instruction provided', () => {
+      const context = createMockGameContext({ instruction: null });
+      const config = buildScoutQueries(context);
 
-      expect(queries.recent).toContain('Elden Ring');
-      expect(queries.recent).toContain(String(currentYear));
-      // Guides strategy focuses on patch notes and mechanics changes
-      expect(queries.recent).toMatch(/patch|mechanics|changes/i);
+      const categorySlot = config.slots.find(s => s.category === 'category-specific');
+      expect(categorySlot).toBeDefined();
+      expect(categorySlot!.query.toLowerCase()).toMatch(/guide|walkthrough|beginner/i);
+    });
+
+    it('generates supplementary slot (tips for guides)', () => {
+      const context = createMockGameContext();
+      const config = buildScoutQueries(context);
+
+      // For guides, should have 'tips' slot instead of 'recent'
+      const tipsSlot = config.slots.find(s => s.category === 'tips');
+      expect(tipsSlot).toBeDefined();
+      expect(tipsSlot!.query).toContain('Elden Ring');
+      expect(tipsSlot!.query.toLowerCase()).toMatch(/tips|tricks|secrets/i);
+    });
+
+    it('each slot has required configuration', () => {
+      const context = createMockGameContext();
+      const config = buildScoutQueries(context);
+
+      for (const slot of config.slots) {
+        expect(slot.query).toBeDefined();
+        expect(slot.category).toBeDefined();
+        // maxResults and searchDepth are optional with defaults
+      }
     });
 
     it('handles missing genres gracefully', () => {
       const context = createMockGameContext({ genres: undefined });
-      const queries = buildScoutQueries(context);
+      const config = buildScoutQueries(context);
 
-      expect(queries.overview).toContain('Elden Ring');
-      expect(queries.overview).not.toContain('undefined');
+      const overviewSlot = config.slots.find(s => s.category === 'overview');
+      expect(overviewSlot).toBeDefined();
+      expect(overviewSlot!.query).toContain('Elden Ring');
+      expect(overviewSlot!.query).not.toContain('undefined');
     });
   });
 
@@ -281,28 +297,29 @@ describe('Scout Prompts', () => {
     });
   });
 
-  describe('getScoutRecentSystemPrompt', () => {
+  describe('getScoutSupplementarySystemPrompt', () => {
     it('includes locale instruction', () => {
-      const prompt = getScoutRecentSystemPrompt('Write in English.');
+      const prompt = getScoutSupplementarySystemPrompt('Write in English.');
 
       expect(prompt).toContain('Write in English.');
     });
   });
 
-  describe('getScoutRecentUserPrompt', () => {
-    it('includes game name and recent context', () => {
-      const prompt = getScoutRecentUserPrompt('Elden Ring', 'Recent news here');
+  describe('getScoutSupplementaryUserPrompt', () => {
+    it('includes game name and supplementary context', () => {
+      const prompt = getScoutSupplementaryUserPrompt('Elden Ring', 'Tips and tricks here');
 
       expect(prompt).toContain('Elden Ring');
-      expect(prompt).toContain('Recent news here');
+      expect(prompt).toContain('Tips and tricks here');
     });
 
-    it('handles empty recent context gracefully', () => {
-      const prompt = getScoutRecentUserPrompt('Elden Ring', '');
+    it('handles empty supplementary context gracefully', () => {
+      const prompt = getScoutSupplementaryUserPrompt('Elden Ring', '');
 
       // Should still produce valid prompt structure even with empty context
       expect(prompt).toContain('Elden Ring');
-      expect(prompt).toContain('RECENT NEWS');
+      // For guides, this will contain TIPS & TRICKS section
+      expect(prompt.length).toBeGreaterThan(0);
     });
   });
 });

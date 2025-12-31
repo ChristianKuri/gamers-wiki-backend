@@ -421,8 +421,8 @@ describe('CLEANER_CONFIG', () => {
     expect(CLEANER_CONFIG.MIN_QUALITY_FOR_STORAGE).toBeLessThanOrEqual(100);
     expect(CLEANER_CONFIG.MIN_QUALITY_FOR_RESULTS).toBeGreaterThanOrEqual(0);
     expect(CLEANER_CONFIG.MIN_QUALITY_FOR_RESULTS).toBeLessThanOrEqual(100);
-    expect(CLEANER_CONFIG.AUTO_EXCLUDE_THRESHOLD).toBeGreaterThanOrEqual(0);
-    expect(CLEANER_CONFIG.AUTO_EXCLUDE_THRESHOLD).toBeLessThanOrEqual(100);
+    expect(CLEANER_CONFIG.AUTO_EXCLUDE_QUALITY_THRESHOLD).toBeGreaterThanOrEqual(0);
+    expect(CLEANER_CONFIG.AUTO_EXCLUDE_QUALITY_THRESHOLD).toBeLessThanOrEqual(100);
   });
 
   it('has valid tier thresholds in descending order', () => {

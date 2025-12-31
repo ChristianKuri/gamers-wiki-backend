@@ -139,6 +139,11 @@ export interface GenerationStats {
    * Shows sources that were filtered out due to low quality or relevance.
    */
   readonly filteredSources?: FilteredSourcesStats;
+  /**
+   * Duplicate URL tracking.
+   * Shows which URLs appeared in multiple queries and per-query stats.
+   */
+  readonly duplicateTracking?: DuplicateTrackingStats;
 }
 
 /** Content type used for a source (always 'full') */
@@ -196,6 +201,47 @@ export interface FilteredSourcesByQuery {
 
 /** Filtered sources - array of query groups */
 export type FilteredSourcesStats = readonly FilteredSourcesByQuery[];
+
+// ============================================================================
+// Duplicate Tracking Types
+// ============================================================================
+
+/** Information about a URL that appeared in multiple search queries */
+export interface DuplicateUrlItem {
+  readonly url: string;
+  readonly domain: string;
+  readonly firstSeenIn: {
+    readonly query: string;
+    readonly engine: 'tavily' | 'exa';
+  };
+  readonly alsoDuplicatedIn: readonly {
+    readonly query: string;
+    readonly engine: 'tavily' | 'exa';
+  }[];
+}
+
+/** Statistics for a single search query */
+export interface QueryStatsItem {
+  readonly query: string;
+  readonly engine: 'tavily' | 'exa';
+  readonly phase: 'scout' | 'specialist';
+  /** Number of results returned by the search engine */
+  readonly received: number;
+  /** Number of results removed as duplicates (already seen in earlier queries) */
+  readonly duplicates: number;
+  /** Number of results filtered (scrape failures, low quality, low relevance, etc.) */
+  readonly filtered: number;
+  /** Final number of usable results */
+  readonly used: number;
+}
+
+/** Duplicate tracking statistics */
+export interface DuplicateTrackingStats {
+  /** URLs that appeared in multiple search queries */
+  readonly duplicatedUrls: readonly DuplicateUrlItem[];
+  /** Per-query statistics */
+  readonly queryStats: readonly QueryStatsItem[];
+}
 
 // ============================================================================
 // Legacy interfaces (for backward compatibility)

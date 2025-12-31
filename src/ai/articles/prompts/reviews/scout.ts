@@ -1,5 +1,11 @@
 import type { GameArticleContext } from '../../types';
-import type { ScoutPromptContext, ScoutPrompts, ScoutQueryConfig } from '../shared/scout';
+import type {
+  QueryOptimizationContext,
+  QueryOptimizationPrompt,
+  ScoutPromptContext,
+  ScoutPrompts,
+  ScoutQueryConfig,
+} from '../shared/scout';
 
 export const scoutPrompts: ScoutPrompts = {
   getSystemPrompt(localeInstruction: string): string {
@@ -60,33 +66,82 @@ Identify:
 - Final verdict themes (e.g., "Good but buggy", "Masterpiece", "Wait for sale")`;
   },
 
-  getRecentUserPrompt(gameName: string, recentContext: string): string {
+  getSupplementaryUserPrompt(gameName: string, supplementaryContext: string): string {
     return `Summarize recent updates relevant to a REVIEW for "${gameName}".
 Focus on: Fixes for reported bugs, performance patches, post-launch content that changes the value proposition.
 Ignore: Minor cosmetic DLC, esports news.
 
-=== RECENT NEWS ===
-${recentContext}`;
+=== RECENT UPDATES ===
+${supplementaryContext}`;
   },
 
   buildQueries(context: GameArticleContext): ScoutQueryConfig {
-    const overview = `"${context.gameName}" review analysis critique pros cons`;
-    const category: string[] = [];
+    const currentYear = new Date().getFullYear();
 
-    // Base review queries
-    category.push(`"${context.gameName}" review score verdict`);
-    category.push(`"${context.gameName}" performance technical review bugs`);
-    category.push(`"${context.gameName}" worth it review opinion`);
-    category.push(`"${context.gameName}" reddit player reviews`);
-
-    // Instruction specific
+    // Build instruction-specific category query
+    let categoryQuery = `"${context.gameName}" review score verdict pros cons`;
     if (context.instruction) {
-      category.push(`"${context.gameName}" ${context.instruction} review`);
+      categoryQuery = `"${context.gameName}" ${context.instruction} review`;
     }
 
-    // Recent updates (is it fixed?)
-    const recent = `"${context.gameName}" current state review ${new Date().getFullYear()} after updates`;
+    return {
+      slots: [
+        // Slot 1: Overview - Critical consensus
+        {
+          query: `"${context.gameName}" review analysis critique pros cons`,
+          category: 'overview',
+          maxResults: 10,
+          searchDepth: 'advanced',
+        },
+        // Slot 2: Category-specific - Player opinions and technical state
+        {
+          query: categoryQuery,
+          category: 'category-specific',
+          maxResults: 10,
+          searchDepth: 'basic',
+        },
+        // Slot 3: Recent - Current state after patches
+        {
+          query: `"${context.gameName}" current state review ${currentYear} after updates patches`,
+          category: 'recent',
+          maxResults: 10,
+          searchDepth: 'basic',
+        },
+      ],
+    };
+  },
 
-    return { overview, category, recent };
-  }
+  getQueryOptimizationPrompt(ctx: QueryOptimizationContext): QueryOptimizationPrompt {
+    const currentYear = new Date().getFullYear();
+    const focus = ctx.instruction || 'overall game quality';
+    
+    return {
+      queryStructure: `For a REVIEW article, generate 3 complementary queries covering:
+
+1. OVERVIEW QUERY: Critical consensus and general reception
+   - Focus on pros and cons from multiple reviewers
+   - Metacritic/OpenCritic style consensus
+   
+2. FOCUS-SPECIFIC QUERY: Directly about "${focus}"
+   - This is the MAIN query - the specific review angle
+   - Look for detailed analysis of this aspect
+   
+3. CURRENT STATE QUERY: How the game is NOW after patches
+   - Critical for reviews - games change post-launch
+   - Bug fixes, performance patches, new content
+   - Must include current year (${currentYear})`,
+
+      tavilyExamples: [
+        `"${ctx.gameName}" review analysis pros cons verdict`,
+        `"${ctx.gameName}" ${focus} review critique`,
+        `"${ctx.gameName}" current state ${currentYear} after patches updates`,
+      ],
+
+      exaExamples: [
+        `What do critics and players think about ${ctx.gameName}?`,
+        `How good is the ${focus} in ${ctx.gameName}?`,
+        `Is ${ctx.gameName} worth playing now after all the patches?`,
+      ],
+    };
+  },
 };

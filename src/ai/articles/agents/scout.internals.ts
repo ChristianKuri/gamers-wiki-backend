@@ -27,8 +27,10 @@ export {
   // Context building
   buildSearchContext,
   buildCategoryContext,
-  buildRecentContext,
+  buildSupplementaryContext,
+  buildRecentContext, // Backwards compatibility alias for buildSupplementaryContext
   buildFullContext,
+  type SupplementaryContextConfig,
 
   // Validation
   validateScoutOutput,

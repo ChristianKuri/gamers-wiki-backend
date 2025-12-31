@@ -545,6 +545,7 @@ async function executeScoutPhase(
       runScout(context, {
         search: deps.search,
         generateText: deps.generateText,
+        generateObject: deps.generateObject,
         model: deps.openrouter(scoutModel),
         logger: createPrefixedLogger('[Scout]'),
         signal: basePhaseOptions.signal,
@@ -1515,6 +1516,13 @@ export async function generateGameArticleDraft(
     // Include filtered sources from both Scout and Specialist phases
     ...(allFilteredSources.length > 0
       ? { filteredSources: allFilteredSources }
+      : {}),
+    // Include duplicate tracking from Scout phase
+    ...(scoutOutput.duplicatedUrls && scoutOutput.duplicatedUrls.length > 0
+      ? { duplicatedUrls: scoutOutput.duplicatedUrls }
+      : {}),
+    ...(scoutOutput.queryStats && scoutOutput.queryStats.length > 0
+      ? { queryStats: scoutOutput.queryStats }
       : {}),
   };
 

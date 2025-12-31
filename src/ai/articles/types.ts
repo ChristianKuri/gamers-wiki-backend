@@ -206,6 +206,61 @@ export interface ScoutOutput {
    * Tracked for transparency and debugging.
    */
   readonly filteredSources: readonly FilteredSourceSummary[];
+  /**
+   * URLs that appeared in multiple search queries.
+   * Tracks where duplicates were found and which query "kept" the result.
+   */
+  readonly duplicatedUrls?: readonly DuplicateUrlInfo[];
+  /**
+   * Per-query statistics showing received vs used results.
+   * Helps understand where results were lost to deduplication or filtering.
+   */
+  readonly queryStats?: readonly SearchQueryStats[];
+}
+
+// ============================================================================
+// Duplicate Tracking Types
+// ============================================================================
+
+/**
+ * Information about a URL that appeared in multiple search queries.
+ */
+export interface DuplicateUrlInfo {
+  /** The duplicated URL */
+  readonly url: string;
+  /** Domain extracted from URL */
+  readonly domain: string;
+  /** The first query that returned this URL (kept) */
+  readonly firstSeenIn: {
+    readonly query: string;
+    readonly engine: SearchSource;
+  };
+  /** Subsequent queries that also returned this URL (duplicates) */
+  readonly alsoDuplicatedIn: readonly {
+    readonly query: string;
+    readonly engine: SearchSource;
+  }[];
+}
+
+/**
+ * Statistics for a single search query.
+ * Shows how results were filtered/deduplicated.
+ */
+export interface SearchQueryStats {
+  /** The search query */
+  readonly query: string;
+  /** Search engine used */
+  readonly engine: SearchSource;
+  /** Phase (scout or specialist) */
+  readonly phase: 'scout' | 'specialist';
+  /** Number of results returned by the search engine */
+  readonly received: number;
+  /** Number of results removed as duplicates (already seen in earlier queries) */
+  readonly duplicates: number;
+  /** Number of results filtered (scrape failures, low quality, low relevance, etc.) */
+  readonly filtered: number;
+  /** Final number of usable results */
+  readonly used: number;
 }
 
 // ============================================================================
@@ -648,6 +703,16 @@ export interface ArticleGenerationMetadata {
    * Tracked for transparency and debugging.
    */
   readonly filteredSources?: readonly FilteredSourceSummary[];
+  /**
+   * URLs that appeared in multiple search queries.
+   * Tracks where duplicates were found and which query "kept" the result.
+   */
+  readonly duplicatedUrls?: readonly DuplicateUrlInfo[];
+  /**
+   * Per-query statistics showing received vs used results.
+   * Helps understand where results were lost to deduplication or filtering.
+   */
+  readonly queryStats?: readonly SearchQueryStats[];
 }
 
 /**

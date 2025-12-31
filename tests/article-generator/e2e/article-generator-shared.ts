@@ -20,6 +20,7 @@ import {
   type ArticlePlanAnalysis,
   type DatabaseVerification,
   type GameInfo,
+  type DuplicateTrackingStats,
 } from './save-results';
 
 // Re-export for convenience
@@ -289,6 +290,8 @@ export function extractGenerationStats(json: any): GenerationStats {
   const searchApiCosts = metadata.searchApiCosts;
   const rawSourceContentUsage = metadata.sourceContentUsage;
   const rawFilteredSources = metadata.filteredSources;
+  const rawDuplicatedUrls = metadata.duplicatedUrls;
+  const rawQueryStats = metadata.queryStats;
 
   // Group source content usage by query (directly as array)
   const sourceContentUsage = rawSourceContentUsage?.sources?.length > 0
@@ -299,6 +302,15 @@ export function extractGenerationStats(json: any): GenerationStats {
   const filteredSourcesStats = rawFilteredSources && rawFilteredSources.length > 0
     ? groupFilteredSourcesByQuery(rawFilteredSources)
     : undefined;
+
+  // Extract duplicate tracking stats if available
+  const duplicateTracking: DuplicateTrackingStats | undefined = 
+    (rawDuplicatedUrls?.length > 0 || rawQueryStats?.length > 0)
+      ? {
+          duplicatedUrls: rawDuplicatedUrls ?? [],
+          queryStats: rawQueryStats ?? [],
+        }
+      : undefined;
 
   return {
     success: json?.success ?? false,
@@ -341,6 +353,8 @@ export function extractGenerationStats(json: any): GenerationStats {
     ...(sourceContentUsage ? { sourceContentUsage } : {}),
     // Include filtered sources tracking if available
     ...(filteredSourcesStats ? { filteredSources: filteredSourcesStats } : {}),
+    // Include duplicate tracking if available
+    ...(duplicateTracking ? { duplicateTracking } : {}),
   };
 }
 

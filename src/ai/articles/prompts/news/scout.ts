@@ -1,5 +1,11 @@
 import type { GameArticleContext } from '../../types';
-import type { ScoutPromptContext, ScoutPrompts, ScoutQueryConfig } from '../shared/scout';
+import type {
+  QueryOptimizationContext,
+  QueryOptimizationPrompt,
+  ScoutPromptContext,
+  ScoutPrompts,
+  ScoutQueryConfig,
+} from '../shared/scout';
 
 export const scoutPrompts: ScoutPrompts = {
   getSystemPrompt(localeInstruction: string): string {
@@ -57,34 +63,80 @@ Identify:
 - Specific details that might be buried (patch sizes, exact times, region restrictions)`;
   },
 
-  getRecentUserPrompt(gameName: string, recentContext: string): string {
+  getSupplementaryUserPrompt(gameName: string, supplementaryContext: string): string {
     return `Summarize the very latest developments for "${gameName}".
 For NEWS, this is the most important section. Ensure nothing from the last 24-48 hours is missed.
 
 === RECENT NEWS ===
-${recentContext}`;
+${supplementaryContext}`;
   },
 
   buildQueries(context: GameArticleContext): ScoutQueryConfig {
     const currentYear = new Date().getFullYear();
-    const overview = `"${context.gameName}" latest news announcement official ${currentYear}`;
-    const category: string[] = [];
 
-    // Base news queries
-    category.push(`"${context.gameName}" press release official`);
-    category.push(`"${context.gameName}" developer update blog`);
-    category.push(`"${context.gameName}" release date rumors leak`); // For unreleased
-    category.push(`"${context.gameName}" twitter official account`);
-
-    // Instruction specific (usually the topic of the news)
+    // Build instruction-specific category query
+    let categoryQuery = `"${context.gameName}" press release official announcement`;
     if (context.instruction) {
-      category.push(`"${context.gameName}" ${context.instruction} news`);
-      category.push(`"${context.gameName}" ${context.instruction} date`);
+      categoryQuery = `"${context.gameName}" ${context.instruction} news announcement`;
     }
 
-    // Recent is redundant but required structure, optimize for immediate past
-    const recent = `"${context.gameName}" news last week ${currentYear}`;
+    return {
+      slots: [
+        // Slot 1: Overview - Latest news and announcements
+        {
+          query: `"${context.gameName}" latest news announcement official ${currentYear}`,
+          category: 'overview',
+          maxResults: 10,
+          searchDepth: 'advanced',
+        },
+        // Slot 2: Category-specific - Official sources
+        {
+          query: categoryQuery,
+          category: 'category-specific',
+          maxResults: 10,
+          searchDepth: 'basic',
+        },
+        // Slot 3: Recent - Very latest developments (critical for news)
+        {
+          query: `"${context.gameName}" news last week ${currentYear}`,
+          category: 'recent',
+          maxResults: 10,
+          searchDepth: 'advanced',
+        },
+      ],
+    };
+  },
 
-    return { overview, category, recent };
-  }
+  getQueryOptimizationPrompt(ctx: QueryOptimizationContext): QueryOptimizationPrompt {
+    const currentYear = new Date().getFullYear();
+    const intent = ctx.instruction || 'latest announcements';
+    
+    return {
+      queryStructure: `For a NEWS article, generate 3 complementary queries covering:
+
+1. OVERVIEW QUERY: General latest news and official announcements
+   - Focus on recent official statements, press releases
+   - Include the current year (${currentYear})
+   
+2. INTENT-SPECIFIC QUERY: Directly about "${intent}"
+   - This is the MAIN query - the specific news topic
+   - Look for official sources and primary reports
+   
+3. RECENT QUERY: Very latest developments (last 24-48 hours)
+   - Critical for news articles - must be current
+   - Check for updates, follow-ups, community reactions`,
+
+      tavilyExamples: [
+        `"${ctx.gameName}" latest news announcement official ${currentYear}`,
+        `"${ctx.gameName}" ${intent} news announcement`,
+        `"${ctx.gameName}" news this week ${currentYear}`,
+      ],
+
+      exaExamples: [
+        `What is the latest official news about ${ctx.gameName}?`,
+        `What was announced about ${intent} for ${ctx.gameName}?`,
+        `What are players saying about the recent ${ctx.gameName} news?`,
+      ],
+    };
+  },
 };

@@ -91,19 +91,24 @@ export function getScoutCategoryUserPrompt(
 }
 
 /**
- * System prompt for Scout recent developments.
+ * System prompt for Scout supplementary briefing (tips/recent/meta).
  */
-export function getScoutRecentSystemPrompt(localeInstruction: string, categorySlug?: ArticleCategorySlug): string {
+export function getScoutSupplementarySystemPrompt(localeInstruction: string, categorySlug?: ArticleCategorySlug): string {
   const strategy = categorySlug ? strategies[categorySlug] : guidesPrompts;
   return strategy.getSystemPrompt(localeInstruction);
 }
 
 /**
- * User prompt for Scout recent developments.
+ * User prompt for Scout supplementary briefing (tips/recent/meta).
  */
-export function getScoutRecentUserPrompt(gameName: string, recentContext: string, categorySlug?: ArticleCategorySlug, instruction?: string | null): string {
+export function getScoutSupplementaryUserPrompt(
+  gameName: string,
+  supplementaryContext: string,
+  categorySlug?: ArticleCategorySlug,
+  instruction?: string | null
+): string {
   const strategy = getStrategy(categorySlug, instruction);
-  return strategy.getRecentUserPrompt(gameName, recentContext);
+  return strategy.getSupplementaryUserPrompt(gameName, supplementaryContext);
 }
 
 /**
@@ -123,4 +128,27 @@ export function buildExaQueriesForGuides(context: GameArticleContext): ExaQueryC
 export function buildScoutQueries(context: GameArticleContext): ScoutQueryConfig {
   const strategy = getStrategy(context.categorySlug, context.instruction);
   return strategy.buildQueries(context);
+}
+
+/**
+ * Gets query optimization prompt for LLM-based query generation.
+ * Returns article-type-specific guidance for the LLM.
+ */
+export function getQueryOptimizationPrompt(
+  gameName: string,
+  instruction: string | null | undefined,
+  genres: readonly string[] | undefined,
+  articleType: string,
+  categorySlug?: ArticleCategorySlug
+): import('./shared/scout').QueryOptimizationPrompt | null {
+  const strategy = getStrategy(categorySlug, instruction);
+  if (!strategy.getQueryOptimizationPrompt) {
+    return null;
+  }
+  return strategy.getQueryOptimizationPrompt({
+    gameName,
+    genres,
+    instruction,
+    articleType,
+  });
 }

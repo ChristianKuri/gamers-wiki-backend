@@ -273,6 +273,13 @@ export const WORD_COUNT_CONSTRAINTS = {
 
 export const SCOUT_CONFIG = {
   /**
+   * Whether to use LLM to optimize search queries based on article intent.
+   * When enabled, generates tailored queries for both Tavily (keywords) and Exa (semantic).
+   * Cost: ~$0.001 per optimization, adds ~1-2s latency.
+   * Benefits: Much better query relevance for specific intents (e.g., "boss guide").
+   */
+  QUERY_OPTIMIZATION_ENABLED: true,
+  /**
    * Maximum length of a single snippet in search context.
    * INCREASED: Now that Exa returns 20,000c per result, use more of it.
    * 10,000c × 5 results = 50,000c max in Scout context (reasonable for 1M token LLM).
@@ -330,24 +337,34 @@ export const SCOUT_CONFIG = {
   get EXA_EXCLUDE_DOMAINS(): readonly string[] {
     return [...UNIFIED_EXCLUDED_DOMAINS];
   },
-  /** Number of results for recent news search */
-  RECENT_SEARCH_RESULTS: 5,
-  /** Maximum number of category-specific searches to run */
-  MAX_CATEGORY_SEARCHES: 2,
   /**
-   * Search depth for overview queries (Tavily).
-   * OPTIMIZED: 'basic' based on A/B testing (Dec 2024).
+   * @deprecated Query structure is now defined by article-type-specific slots.
+   * Each article type (guides, news, reviews, lists) defines its own slots
+   * with maxResults and searchDepth per slot. See prompts/{type}/scout.ts.
+   * Keeping for backwards compatibility with tests.
+   */
+  RECENT_SEARCH_RESULTS: 10,
+  /**
+   * @deprecated Query structure is now defined by article-type-specific slots.
+   * See prompts/{type}/scout.ts for slot definitions.
+   */
+  MAX_CATEGORY_SEARCHES: 1,
+  /**
+   * @deprecated Search depth is now defined per slot by article type.
+   * See prompts/{type}/scout.ts for slot definitions.
+   * 
+   * Legacy note: 'basic' based on A/B testing (Dec 2024).
    * - basic = 1 credit ($0.008), advanced = 2 credits ($0.016)
    * - basic-10 gets wikis + quality sources at half the cost
-   * - With proper exclude_domains, basic quality is sufficient
    */
   OVERVIEW_SEARCH_DEPTH: 'basic' as const,
   /**
-   * Search depth for category queries (Tavily).
-   * OPTIMIZED: 'basic' - same cost savings as overview.
+   * @deprecated Search depth is now defined per slot by article type.
    */
   CATEGORY_SEARCH_DEPTH: 'basic' as const,
-  /** Search depth for recent news queries */
+  /**
+   * @deprecated Search depth is now defined per slot by article type.
+   */
   RECENT_SEARCH_DEPTH: 'basic' as const,
   /**
    * Temperature for Scout LLM calls.
@@ -361,10 +378,20 @@ export const SCOUT_CONFIG = {
   RESULTS_PER_SEARCH_CONTEXT: 5,
   /** Limit for key findings in category context */
   KEY_FINDINGS_LIMIT: 3,
-  /** Limit for recent results */
-  RECENT_RESULTS_LIMIT: 3,
-  /** Max content length for recent items */
-  RECENT_CONTENT_LENGTH: 300,
+  /**
+   * Limit for supplementary results (tips, recent, meta, etc.).
+   * Used when building context for the supplementary briefing.
+   */
+  SUPPLEMENTARY_RESULTS_LIMIT: 5,
+  /**
+   * Max content length for supplementary items.
+   * Used when building context for the supplementary briefing.
+   */
+  SUPPLEMENTARY_CONTENT_LENGTH: 500,
+  /** @deprecated Use SUPPLEMENTARY_RESULTS_LIMIT instead */
+  RECENT_RESULTS_LIMIT: 5,
+  /** @deprecated Use SUPPLEMENTARY_CONTENT_LENGTH instead */
+  RECENT_CONTENT_LENGTH: 500,
   /** Minimum sources before warning */
   MIN_SOURCES_WARNING: 5,
   /** Minimum queries before warning */
