@@ -25,6 +25,7 @@
     "test:e2e:article-guide-zelda": "bash scripts/run-e2e.sh tests/article-generator/e2e/guide-zelda.e2e.test.ts",
     "test:e2e:article-guide-bg3": "bash scripts/run-e2e.sh tests/article-generator/e2e/guide-bg3.e2e.test.ts",
     "test:e2e:article-guide-eldenring": "bash scripts/run-e2e.sh tests/article-generator/e2e/guide-eldenring.e2e.test.ts",
+    "test:e2e:article-guide-clairobscur": "bash scripts/run-e2e.sh tests/article-generator/e2e/guide-clairobscur.e2e.test.ts",
     "test:e2e:game-import": "bash scripts/run-e2e.sh tests/game-fetcher/e2e/",
     "test:e2e:cleaner": "RUN_E2E_TESTS=true vitest run --config vitest.e2e.config.ts tests/cleaner/e2e/cleaner.e2e.test.ts",
     "test:all": "vitest run && bash scripts/run-e2e.sh",
