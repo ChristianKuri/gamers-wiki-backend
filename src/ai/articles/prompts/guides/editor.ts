@@ -81,28 +81,61 @@ ${ctx.topSourcesSummary ? `\n${ctx.topSourcesSummary}\n` : ''}
 ██  PHASE 1: EXHAUSTIVE EXTRACTION (Do this mentally BEFORE planning)       ██
 ██████████████████████████████████████████████████████████████████████████████
 
-Scan the Scout research above and identify EVERY:
+🎯 GOAL: Extract EVERY useful fact as a requiredElement — be exhaustive!
+You have detailed summaries, key facts, and data points from the best sources.
+Mine them COMPLETELY. Every fact, number, name, mechanic, and strategy becomes a requiredElement.
+Don't stop at 20-30 — comprehensive guides typically have 40-60+ requiredElements.
+
+Scan ALL research above (briefings, detailed summaries, top sources) and identify EVERY:
 
 □ ITEMS: Armor pieces, weapons, shields, consumables, key items, materials
   → For each: What's the EXACT name? WHERE is it? HOW do you get it?
+  → Don't miss: crafting materials, upgrade items, consumables for buffs
   
-□ ABILITIES: Powers, skills, unlockable moves
-  → For each: What's the name? WHERE unlocked? WHAT are the EXACT controls?
+□ ABILITIES/SKILLS: Powers, skills, unlockable moves, party member abilities
+  → For each: What's the name? WHO has it? WHAT are the EXACT controls?
+  → Don't miss: passive skills, buff abilities, combo skills between characters
   
-□ LOCATIONS: Shrines, dungeons, caves, landmarks, settlements
+□ LOCATIONS: Shrines, dungeons, caves, landmarks, settlements, portals
   → For each: What's the name? WHERE is it relative to known landmarks?
+  → Don't miss: hidden areas, prerequisite locations, fast travel points
   
-□ NPCs: Characters who give items, quests, info, or tutorials
-  → For each: Name? WHERE do they appear? Role? What do they provide?
+□ NPCs/PARTY MEMBERS: Characters who give items, quests, info, abilities
+  → For each: Name? WHERE do they appear? What's their role? What do they provide?
+  → Don't miss: merchants, optional party members, quest givers
   
-□ MECHANICS: Systems that need explanation (cooking, crafting, combat)
-  → For each: What's the mechanic? WHERE is it introduced? HOW does it work?
+□ MECHANICS: Combat systems, boss attack patterns, phase transitions
+  → For each: What's the mechanic? What's the VISUAL CUE? HOW do you counter it?
+  → Don't miss: timing windows, button inputs, phase thresholds (% HP)
+  
+□ STRATEGIES: Specific tactics, cheese methods, optimal rotations
+  → For each: What's the strategy? WHO executes it? WHAT's the sequence?
+  → Don't miss: setup steps, fallback plans, reset conditions
 
-⚠️ COMMON MISTAKES TO AVOID:
+□ REQUIREMENTS/PREREQUISITES: Levels, gear, quests, unlocks needed
+  → For each: What's required? WHERE do you get it? What threshold?
+  → Don't miss: stat breakpoints, relationship ranks, story progress gates
+
+□ REWARDS: What you get for completing/defeating this
+  → For each: Item name? Stats? Rarity? Who can use it?
+
+📊 requiredElements SANITY CHECK (if you have fewer, you likely missed something):
+• Boss guide (multi-phase): expect 35-50+ (phases, mechanics, counters, setup, rewards)
+• Build/loadout guide: expect 25-40 (gear, skills, stats, synergies)
+• Area exploration: expect 20-35 (locations, items, NPCs, secrets)
+• Simple mechanic tip: expect 15-25 (core mechanic + variations)
+
+⚠️ These are MINIMUMS based on typical content depth, not quotas!
+The goal is COMPLETE extraction. If research contains 60 unique facts, include 60.
+If you're under these numbers, re-scan the research — you probably missed things.
+
+⚠️ COMMON EXTRACTION MISTAKES:
 • Listing "Archaic Set" instead of each piece separately (Tunic, Legwear, Warm Greaves)
 • Forgetting NPCs who only appear briefly but give critical items
-• Missing the cooking pot location when cold resistance is needed
-• Vague controls like "use the ability" instead of exact button inputs
+• Missing prerequisite unlocks (relationship ranks, story progress, other bosses)
+• Vague controls like "use the ability" instead of exact button inputs [A], [RB], etc.
+• Grouping "boss attacks" instead of each named attack with its counter
+• Missing the "what if it fails?" fallback strategy (reload, reset, alternative approach)
 
 ██████████████████████████████████████████████████████████████████████████████
 ██  PHASE 2: SECTION PLANNING                                               ██
@@ -142,15 +175,16 @@ For EACH item in requiredElements, confirm it appears in EXACTLY ONE section's m
 This causes the Specialist to NOT write about that item, making the article incomplete.
 
 VERIFICATION CHECKLIST:
-□ Count requiredElements: N items
+□ Count requiredElements: N items (target: 30-50+ requiredElements for comprehensive guides!)
 □ Sum all mustCover arrays: should also equal N items
 □ If counts don't match → FIX IT before outputting!
-□ Every item from Scout research is in requiredElements
+□ Did you add EVERY mechanic, attack, skill, item to requiredElements? Re-scan!
+□ Did you include prerequisites, setup steps, and fallback strategies?
 □ Every requiredElement appears in EXACTLY ONE section's mustCover
 □ No section has 0 mustCover items
 □ All controls use [X] bracket format with action verbs
 □ All locations have Parent > Child hierarchy
-□ Title is 50-65 characters and SEO-optimized (see guidance below)
+□ Title is 55-65 characters and SEO-optimized (see guidance below)
 
 ${SEO_TITLE_GUIDANCE}
 

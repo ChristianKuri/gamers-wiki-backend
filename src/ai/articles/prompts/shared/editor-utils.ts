@@ -270,7 +270,8 @@ export function buildTopSourcesSummary(scoutOutput: ScoutOutput): string {
  */
 export function buildTopDetailedSummaries(scoutOutput: ScoutOutput, topN: number = 3): string {
   // Guard against missing or empty research pool
-  if (!scoutOutput.researchPool?.results) {
+  const findings = scoutOutput.researchPool?.scoutFindings;
+  if (!findings) {
     return '';
   }
 
@@ -291,9 +292,15 @@ export function buildTopDetailedSummaries(scoutOutput: ScoutOutput, topN: number
     combinedScore: number;
   }> = [];
 
-  // Iterate through all categorized results in the research pool
-  for (const result of scoutOutput.researchPool.results) {
-    for (const item of result.results) {
+  // Iterate through all categorized results in the research pool (overview, categorySpecific, recent)
+  const allCategorizedResults = [
+    ...findings.overview,
+    ...findings.categorySpecific,
+    ...findings.recent,
+  ];
+
+  for (const categorizedResult of allCategorizedResults) {
+    for (const item of categorizedResult.results) {
       // Skip sources already in topSourcesPerQuery (they get full content)
       if (topSourceUrls.has(item.url)) {
         continue;
