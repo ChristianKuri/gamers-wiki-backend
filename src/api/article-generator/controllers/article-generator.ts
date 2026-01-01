@@ -4,8 +4,114 @@ import { z } from 'zod';
 import type { DocumentQueryOptions, GameDocument } from '../../../types/strapi';
 import { isAIConfigured } from '../../../ai';
 import { generateGameArticleDraft } from '../../../ai/articles/generate-game-article';
+import type { GameArticleDraft } from '../../../ai/articles/types';
 import { importOrGetGameByIgdbId, GameImportError } from '../../game-fetcher/services/import-game-programmatic';
 import { resolveIGDBGameIdFromQuery } from '../../game-fetcher/services/game-resolver';
+
+/**
+ * Curated generation metadata stored in the database.
+ * Contains key metrics for analytics without the verbose debug data.
+ */
+interface StoredGenerationMetadata {
+  generationId: string;
+  duration: {
+    totalMs: number;
+    phases: {
+      scout: number;
+      editor: number;
+      specialist: number;
+      reviewer: number;
+      validation: number;
+      fixer?: number;
+    };
+  };
+  cost: {
+    totalUsd?: number;
+    llmUsd?: number;
+    searchUsd?: number;
+  };
+  research: {
+    queriesExecuted: number;
+    sourcesCollected: number;
+    confidence: string;
+    topDomains: string[];
+  };
+  tokens?: {
+    totalInput: number;
+    totalOutput: number;
+  };
+  models: {
+    scout: string;
+    editor: string;
+    specialist: string;
+    reviewer?: string;
+  };
+  quality: {
+    fixerIterations: number;
+    issuesFixed: number;
+    finalApproved: boolean;
+    remainingIssues: number;
+  };
+  generatedAt: string;
+}
+
+/**
+ * Extract curated metadata from a draft for database storage.
+ */
+function extractStoredMetadata(draft: GameArticleDraft): StoredGenerationMetadata {
+  const meta = draft.metadata;
+  const tokenUsage = meta.tokenUsage;
+  const searchCosts = meta.searchApiCosts;
+  
+  // Extract top domains from sources
+  const domainCounts: Record<string, number> = {};
+  for (const source of draft.sources) {
+    try {
+      const url = new URL(source);
+      const domain = url.hostname.replace(/^www\./, '');
+      domainCounts[domain] = (domainCounts[domain] || 0) + 1;
+    } catch {
+      // Invalid URL, skip
+    }
+  }
+  const topDomains = Object.entries(domainCounts)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 5)
+    .map(([domain]) => domain);
+
+  return {
+    generationId: meta.correlationId,
+    duration: {
+      totalMs: meta.totalDurationMs,
+      phases: meta.phaseDurations,
+    },
+    cost: {
+      totalUsd: meta.totalEstimatedCostUsd,
+      llmUsd: tokenUsage?.actualCostUsd ?? tokenUsage?.estimatedCostUsd,
+      searchUsd: searchCosts 
+        ? (searchCosts.tavily?.estimatedCostUsd ?? 0) + (searchCosts.exa?.costUsd ?? 0)
+        : undefined,
+    },
+    research: {
+      queriesExecuted: meta.queriesExecuted,
+      sourcesCollected: meta.sourcesCollected,
+      confidence: meta.researchConfidence,
+      topDomains,
+    },
+    tokens: tokenUsage?.total ? {
+      totalInput: tokenUsage.total.input,
+      totalOutput: tokenUsage.total.output,
+    } : undefined,
+    models: draft.models,
+    quality: {
+      fixerIterations: meta.recovery?.fixerIterations ?? 0,
+      issuesFixed: meta.recovery?.fixesApplied?.filter(f => f.success).length ?? 0,
+      finalApproved: draft.reviewerApproved ?? true,
+      remainingIssues: draft.reviewerIssues?.length ?? 0,
+    },
+    generatedAt: meta.generatedAt,
+  };
+}
 
 interface CategoryDocument {
   id: number;
@@ -198,6 +304,9 @@ export default ({ strapi }: { strapi: Core.Strapi }) => ({
       return ctx.internalServerError(`Category not found for slug: ${draft.categorySlug}`);
     }
 
+    // Extract curated metadata for DB storage
+    const generationMetadata = extractStoredMetadata(draft);
+
     // Create a draft post (Strapi draftAndPublish: true)
     const created = await postService.create({
       locale,
@@ -210,6 +319,7 @@ export default ({ strapi }: { strapi: Core.Strapi }) => ({
         aiModel: JSON.stringify(draft.models),
         aiGeneratedAt: new Date().toISOString(),
         aiWorkflow: 'deep-dive-v1',
+        generationMetadata,
         // Use Document Service relation syntax to avoid ambiguity between
         // numeric DB IDs vs document IDs (UUIDs).
         category: { connect: [categoryMatch.documentId] } as any,

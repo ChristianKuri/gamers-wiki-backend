@@ -132,6 +132,15 @@
           "localized": false
         }
       }
+    },
+    "generationMetadata": {
+      "type": "json",
+      "private": true,
+      "pluginOptions": {
+        "i18n": {
+          "localized": false
+        }
+      }
     }
   }
 }
