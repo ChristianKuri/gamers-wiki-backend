@@ -220,13 +220,17 @@ export interface ScoutOutput {
   
   readonly researchPool: ResearchPool;
   readonly sourceUrls: readonly string[];
-  /** Token usage for Scout phase LLM calls (excludes cleaning) */
+  /** Token usage for Scout query planning LLM calls */
+  readonly queryPlanningTokenUsage: TokenUsage;
+  /** Token usage for Scout briefing generation LLM calls */
+  readonly briefingTokenUsage: TokenUsage;
+  /** Combined token usage for Scout phase (queryPlanning + briefing) - for backwards compat */
   readonly tokenUsage: TokenUsage;
   /**
-   * Token usage for content cleaning (separate from Scout LLM calls).
+   * Token usage for content cleaning with sub-phase breakdown.
    * Only present when cleaning is enabled and content was cleaned.
    */
-  readonly cleaningTokenUsage?: TokenUsage;
+  readonly cleaningTokenUsage?: CleanerTokenUsage;
   /**
    * Confidence level based on research quality.
    * - 'high': Good source count and briefing quality
@@ -520,19 +524,46 @@ export interface TokenUsage {
 }
 
 /**
- * Aggregated token usage across all phases.
+ * Token usage with sub-phase breakdown for Scout.
+ */
+export interface ScoutTokenUsage {
+  /** Query planning LLM calls (generating search queries) */
+  readonly queryPlanning: TokenUsage;
+  /** Briefing generation LLM calls (synthesizing research into briefings) */
+  readonly briefing: TokenUsage;
+  /** Total Scout token usage (queryPlanning + briefing) */
+  readonly total: TokenUsage;
+}
+
+/**
+ * Token usage with sub-phase breakdown for Cleaner.
+ */
+export interface CleanerTokenUsage {
+  /** Pre-filter LLM calls (quick relevance check on snippets) */
+  readonly prefilter: TokenUsage;
+  /** Extraction LLM calls (full content cleaning and summary generation) */
+  readonly extraction: TokenUsage;
+  /** Total Cleaner token usage (prefilter + extraction) */
+  readonly total: TokenUsage;
+}
+
+/**
+ * Aggregated token usage across all phases with sub-phase breakdowns.
  */
 export interface AggregatedTokenUsage {
-  readonly scout: TokenUsage;
+  /** Scout token usage with queryPlanning vs briefing breakdown */
+  readonly scout: ScoutTokenUsage;
   readonly editor: TokenUsage;
   readonly specialist: TokenUsage;
   /** Reviewer token usage (may be empty if reviewer was disabled) */
   readonly reviewer?: TokenUsage;
+  /** Fixer token usage (separate from reviewer for cost visibility) */
+  readonly fixer?: TokenUsage;
   /**
-   * Cleaner token usage (may be empty if cleaning was disabled or no content was cleaned).
-   * Tracked separately from other phases for cost visibility.
+   * Cleaner token usage with prefilter vs extraction breakdown.
+   * May be empty if cleaning was disabled or no content was cleaned.
    */
-  readonly cleaner?: TokenUsage;
+  readonly cleaner?: CleanerTokenUsage;
   readonly total: TokenUsage;
   /**
    * Actual total LLM cost in USD from OpenRouter.

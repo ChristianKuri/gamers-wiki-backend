@@ -179,15 +179,6 @@ HEADLINE RULES:
 3. At least ONE H2 should start with "How to"
 4. NEVER use vague headers like "Essential Setup", "Combat Strategy", "The Fight"
 
-=== AT A GLANCE TABLE (REQUIRED FOR FIRST SECTION) ===
-
-The FIRST section's mustCover MUST include an "At a Glance" summary table requirement:
-
-Example mustCover item for first section:
-"At a Glance Table: Location, Unlock Requirement, Recommended Level, Difficulty, Key Mechanic, Best Strategy, Top Reward"
-
-The Specialist will render this as a quick-reference table with key stats.
-
 ${buildRequiredElementHints(ctx.instruction, ctx.genres)}
 
 === OUTPUT REQUIREMENTS ===

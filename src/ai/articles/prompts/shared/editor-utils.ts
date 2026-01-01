@@ -403,40 +403,76 @@ Your title is the FIRST thing users AND AI assistants see. Make it descriptive a
 4. SPECIFIC TOPIC: Name the boss, feature, mechanic, or subject clearly
 5. ARTICLE TYPE: Indicate what kind of content (Strategy, Guide, Tips, Build)
 
-✅ GREAT TITLE EXAMPLES (descriptive, natural flow):
-• "Beat Simon the Divergent Star in Clair Obscur Expedition 33" (60 chars)
-• "Malenia Boss Strategy Guide for Elden Ring Players" (51 chars)
-• "Best Early Game Armor Locations in Zelda Tears of the Kingdom" (62 chars)
-• "Complete Karlach Romance Guide for Baldur's Gate 3" (51 chars)
-• "How to Master Ultrahand in Zelda TotK: Essential Tips" (54 chars)
+🎯 TITLE PATTERNS BY ARTICLE TYPE:
 
-❌ BAD TITLE PATTERNS:
-• "Simon Boss Guide | Clair Obscur" → Too brief, pipe breaks natural flow
-• "Topic | Game Name" → Pipe separators feel robotic, not human
-• "Everything You Need to Know..." → Wastes chars, says nothing specific
-• Missing game name → Users AND AIs won't know what game it's for
-• Under 45 chars → Too vague, lacks context for AI retrieval
-• Over 65 chars → Gets truncated in search results
+**Boss/Enemy Guides:**
+- "How to Beat [Boss Name] in [Game Name]" ← PREFERRED
+- "How to Defeat [Boss] in [Game]: Strategy Guide"
+- "[Boss Name] Boss Strategy Guide for [Game Name]"
+Examples:
+- "How to Beat Simon Boss Fight in Clair Obscur Expedition 33" (59 chars) ✅
+- "How to Beat Malenia in Elden Ring Shadow of the Erdtree" (56 chars) ✅
 
-🧠 THINK LIKE A USER AND AN AI:
-What would someone ask Google OR ChatGPT? Match that natural phrasing!
-• User searches: "how to beat simon clair obscur"
-• AI query: "strategies for Simon boss in Clair Obscur Expedition 33"
-→ Good title: "Beat Simon the Divergent Star in Clair Obscur Expedition 33"
+**Build/Loadout Guides:**
+- "Best [Build Type] Build Guide for [Game Name]"
+- "Best [Character] Build and Loadout for [Game]"
+Examples:
+- "Best Bleed Build Guide for Elden Ring Shadow of the Erdtree" (60 chars) ✅
+- "Best Maelle Build and Loadout for Clair Obscur Expedition 33" (61 chars) ✅
 
-Write titles as natural sentences that answer the user's question:
-• "Best Starting Classes for New Elden Ring Players" ✅
-• "Elden Ring Classes Ranked | Best Starter" ❌ (pipe, keyword-stuffed)
+**Location/Collectible Guides:**
+- "All [Collectible] Locations in [Game Name]"
+- "Complete [Item] Location Guide for [Game Name]"
+Examples:
+- "All Korok Seed Locations in Zelda Tears of the Kingdom" (55 chars) ✅
+- "All Smithing Stone Locations in Elden Ring Shadow of the Erdtree" (65 chars) ✅
 
-⚡ AI/LLM OPTIMIZATION (IMPORTANT):
-Modern AI assistants (ChatGPT, Claude, Perplexity) use titles to:
-• Decide if your article answers a user's question
-• Extract meaning for RAG retrieval
-• Cite your content in responses
+**Quest/Story Guides:**
+- "[Quest Name] Walkthrough and Guide for [Game Name]"
+- "How to Complete [Quest] in [Game Name]"
+Examples:
+- "Complete Act 1 Walkthrough and Guide for Baldur's Gate 3" (57 chars) ✅
+- "How to Complete Karlach's Companion Quest in Baldur's Gate 3" (61 chars) ✅
 
-Make titles that AI can understand at a glance:
-• Descriptive and specific (not vague clickbait)
-• Natural language (complete phrases, not fragments)
-• Include the key entities (game name, boss name, feature name)
-• Sound like something a human would say, not SEO keyword soup
+**Tips/Beginner Guides:**
+- "[Topic] Tips and Tricks for [Game Name]"
+- "Beginner's Guide to [Mechanic] in [Game]"
+Examples:
+- "Parry Timing Tips and Tricks for Clair Obscur Expedition 33" (60 chars) ✅
+- "Beginner's Guide to Combat Mechanics and Tips in Lies of P" (59 chars) ✅
+
+**Tier Lists/Rankings:**
+- "Best [Category] Tier List for [Game Name]"
+- "Best [Category] Ranked and Tier List for [Game Name]"
+Examples:
+- "Best Weapons Tier List and Rankings for Genshin Impact 5.0" (59 chars) ✅
+- "Best Spirit Ashes Tier List and Rankings for Elden Ring" (56 chars) ✅
+
+🔑 KEY RULES:
+
+1. **"How to" for action guides** - Users search "how to beat", "how to find", "how to complete"
+2. **Full game name always** - Include subtitles/DLC names (not just "Elden Ring" if it's Shadow of the Erdtree)
+3. **Boss/item name always** - Both are essential for search matching
+4. **No pipes or brackets** - Write naturally, not "[Boss] | [Game]"
+5. **Avoid filler words** - "Ultimate", "Complete", "Everything You Need"
+6. **Be specific** - "Simon" not "Secret Boss", "Malenia" not "Hardest Boss"
+
+❌ BAD PATTERNS:
+- "Simon Guide | Clair Obscur" → Pipe, too short, no context
+- "The Ultimate Guide to Beating Simon" → Filler, missing game name
+- "Beat the Secret Superboss" → Missing boss name and game name
+- "Elden Ring Bleed Build Guide" → Missing DLC name if DLC content
+- "Clair Obscur Expedition 33 Simon Boss Fight Tips Guide" → Keyword stuffed
+
+✅ DECISION FLOW:
+1. What type of article is this? → Pick pattern above
+2. Does it include "How to" if it's an action guide? → Add if missing
+3. Is the FULL game name present and spelled correctly? → Verify (include DLC/subtitle)
+4. Is the specific topic named (boss, item, quest)? → Verify
+5. Is it 55-65 characters? → Adjust if needed (add context words if too short)
+
+🧠 SEARCH INTENT MATCHING:
+Users type: "how to beat simon clair obscur"
+AI asks: "What's the strategy for Simon in Clair Obscur?"
+→ Your title should match both: "How to Beat Simon Boss Fight in Clair Obscur Expedition 33"
 ` as const;
