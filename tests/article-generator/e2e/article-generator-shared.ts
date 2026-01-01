@@ -680,6 +680,7 @@ export async function setupArticleGeneratorTest(
   console.log(`[E2E Setup] IGDB ID: ${config.igdbId} (${config.gameName})`);
   const headerSecret = secret || mustGetEnv('AI_GENERATION_SECRET');
 
+  console.log('[E2E Setup] Making HTTP request to article generator...');
   state.response = await fetchWithExtendedTimeout(
     `${E2E_CONFIG.strapiUrl}/api/article-generator/generate`,
     {
@@ -697,8 +698,12 @@ export async function setupArticleGeneratorTest(
       timeoutMs: 900000,
     }
   );
+  console.log('[E2E Setup] HTTP response received');
 
+  console.log('[E2E Setup] Reading response body...');
   const responseText = await state.response.text();
+  console.log(`[E2E Setup] Response body length: ${responseText.length} chars`);
+  
   try {
     state.json = JSON.parse(responseText);
   } catch {
@@ -709,6 +714,7 @@ export async function setupArticleGeneratorTest(
   console.log(`[E2E Setup] ✓ Endpoint called in ${duration}s`);
   console.log(`[E2E Setup] Response status: ${state.response.status}`);
   console.log(`[E2E Setup] Success: ${state.json?.success}`);
+  console.log('[E2E Setup] Setup complete, running tests...');
 
   // Pre-extract data for result building
   if (state.json && !state.json.parseError) {
@@ -750,9 +756,19 @@ export async function teardownArticleGeneratorTest(
   state: TestState,
   config: GameTestConfig
 ): Promise<void> {
+  console.log('[E2E Teardown] Starting teardown...');
+  
   if (state.validationIssues.length > 0) {
     logValidationSummary(state.validationIssues);
   }
+
+  console.log('[E2E Teardown] Checking if results should be saved...');
+  console.log(`[E2E Teardown]   state.json: ${!!state.json}`);
+  console.log(`[E2E Teardown]   state.testStartTime: ${!!state.testStartTime}`);
+  console.log(`[E2E Teardown]   state.gameInfo: ${!!state.gameInfo}`);
+  console.log(`[E2E Teardown]   state.generationStats: ${!!state.generationStats}`);
+  console.log(`[E2E Teardown]   state.articleAnalysis: ${!!state.articleAnalysis}`);
+  console.log(`[E2E Teardown]   state.planAnalysis: ${!!state.planAnalysis}`);
 
   // Build and save final result
   if (
@@ -852,6 +868,7 @@ export async function teardownArticleGeneratorTest(
       : undefined;
 
     // Save all artifacts to a run-specific folder
+    console.log('[E2E Teardown] Saving test artifacts...');
     const artifacts = saveAllTestArtifacts(result, briefingsResult);
     console.log(`\n📁 Test artifacts saved to: ${artifacts.runFolder}`);
     console.log(`   ├── result.json`);
@@ -861,9 +878,13 @@ export async function teardownArticleGeneratorTest(
       console.log(`       ├── briefings.json`);
       console.log(`       └── briefings.md`);
     }
+  } else {
+    console.log('[E2E Teardown] ⚠️ Missing required state, skipping result save');
   }
 
+  console.log('[E2E Teardown] Closing database connection...');
   if (state.knex) {
     await state.knex.destroy();
   }
+  console.log('[E2E Teardown] ✓ Teardown complete');
 }
