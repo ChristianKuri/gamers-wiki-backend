@@ -153,15 +153,10 @@ Remember: Your goal is to help players succeed. Be precise with names and locati
     ctx: SpecialistSectionContext,
     plan: ArticlePlan,
     gameName: string,
-    maxScoutOverviewLength: number,
+    _maxScoutOverviewLength: number,
     minParagraphs: number,
     maxParagraphs: number
   ): string {
-    const truncatedOverview =
-      ctx.scoutOverview.length > maxScoutOverviewLength
-        ? `${ctx.scoutOverview.slice(0, maxScoutOverviewLength)}
-...(truncated)`
-        : ctx.scoutOverview;
 
     const mustCoverSection = ctx.mustCover.length > 0 ? `
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -200,12 +195,23 @@ All sections in this article:
 ${plan.sections.map((s, idx) => `${idx + 1}. ${s.headline}${idx === ctx.sectionIndex ? ' ← YOU ARE WRITING THIS ONE' : ''}`).join('\n')}
 `;
 
+    // Build query briefings section if available (NEW format)
+    const queryBriefingsSection = ctx.queryBriefings && ctx.queryBriefings.length > 0
+      ? ctx.queryBriefings.map((b, i) => 
+          `=== Research Query ${i + 1}: "${b.query}" ===
+Purpose: ${b.purpose}
+Findings: ${b.findings}
+Key Facts: ${b.keyFacts.length > 0 ? b.keyFacts.map(f => `• ${f}`).join('\n') : '(none)'}
+Gaps: ${b.gaps.length > 0 ? b.gaps.map(g => `⚠️ ${g}`).join('\n') : '(none)'}`
+        ).join('\n\n')
+      : null;
+
     const researchSection = `
 RESEARCH (Your Source of Truth):
 ${ctx.researchContext || '(Using general knowledge only)'}
 
-General Overview:
-${truncatedOverview}
+=== SCOUT BRIEFINGS (Synthesized Research) ===
+${queryBriefingsSection || '(No briefings available)'}
 `;
 
     const previouslyWritten = ctx.crossReferenceContext ? `

@@ -1,5 +1,5 @@
 import type { EditorPromptContext, EditorPrompts } from './editor';
-import { buildRequiredElementHints } from './editor-utils';
+import { buildRequiredElementHints, SEO_TITLE_GUIDANCE } from './editor-utils';
 
 export const genericEditorPrompts: EditorPrompts = {
   getSystemPrompt(localeInstruction: string): string {
@@ -24,13 +24,15 @@ ${localeInstruction}`;
 
     return `Design an article plan for "${ctx.gameName}".
 ${validationFeedbackSection}
+Suggested title from Scout (STARTING POINT ONLY): "${ctx.draftTitle}"
 
 === USER DIRECTIVE ===
 ${ctx.instruction?.trim() || '(No specific directive — determine best article type from context)'}
 
-=== COMPREHENSIVE SCOUT INTELLIGENCE ===
-${ctx.scoutBriefing.fullContext}
+=== RESEARCH BRIEFINGS ===
+${ctx.queryBriefingsSummary}
 
+${ctx.topDetailedSummaries ? `${ctx.topDetailedSummaries}\n` : ''}
 === ${ctx.existingResearchSummary}
 ${ctx.topSourcesSummary ? `\n${ctx.topSourcesSummary}\n` : ''}
 === GAME METADATA ===
@@ -46,8 +48,10 @@ Choose the categorySlug that delivers maximum reader value:
 
 ${ctx.categoryHintsSection}
 
+${SEO_TITLE_GUIDANCE}
+
 === STRUCTURAL REQUIREMENTS ===
-- title: Compelling headline
+- title: SEO-optimized (50-65 chars, game name + key topic)
 - excerpt: Meta description (120-160 chars)
 - tags: 3-8 topic tags
 - sections: Use as many sections as needed for completeness

@@ -2,7 +2,7 @@
  * Reviewer Agent Prompts - Facade
  */
 
-import { buildResearchSummaryForReview } from './shared/reviewer-utils';
+import { buildResearchSummaryWithBriefings } from './shared/reviewer-utils';
 import type { ReviewerPromptContext, ReviewerPrompts } from './shared/reviewer';
 import type { ArticleCategorySlug } from '../article-plan';
 
@@ -13,7 +13,7 @@ import { reviewerPrompts as newsPrompts } from './news/reviewer';
 import { reviewerPrompts as listsPrompts } from './lists/reviewer';
 
 // Re-export utils
-export { buildResearchSummaryForReview };
+export { buildResearchSummaryWithBriefings };
 export type { ReviewerPromptContext };
 
 const strategies: Record<ArticleCategorySlug, ReviewerPrompts> = {

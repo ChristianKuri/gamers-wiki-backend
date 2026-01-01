@@ -22,7 +22,9 @@ import { withRetry } from '../retry';
 import {
   buildCategoryHintsSection,
   buildExistingResearchSummary,
+  buildQueryBriefingsSummary,
   buildTopSourcesSummary,
+  buildTopDetailedSummaries,
   detectArticleIntent,
   getEditorSystemPrompt,
   getEditorUserPrompt,
@@ -104,6 +106,12 @@ export async function runEditor(
     EDITOR_CONFIG.OVERVIEW_LINES_IN_PROMPT
   );
   const topSourcesSummary = buildTopSourcesSummary(scoutOutput);
+  
+  // Build query briefings summary when available
+  const queryBriefingsSummary = buildQueryBriefingsSummary(scoutOutput.queryBriefings);
+  
+  // Build top detailed summaries from best sources (top 3 by quality + relevance)
+  const topDetailedSummaries = buildTopDetailedSummaries(scoutOutput, 3);
 
   const targetWordCount = deps.targetWordCount ?? context.targetWordCount;
 
@@ -116,13 +124,15 @@ export async function runEditor(
     publisher: context.publisher,
     instruction: context.instruction,
     localeInstruction,
-    scoutBriefing: scoutOutput.briefing,
     existingResearchSummary,
     categoryHintsSection,
     targetWordCount,
     validationFeedback: deps.validationFeedback,
     categorySlug: effectiveCategorySlug,
     topSourcesSummary,
+    queryBriefingsSummary,
+    topDetailedSummaries,
+    draftTitle: scoutOutput.queryPlan.draftTitle,
   };
 
   // Build prompts and log sizes for debugging

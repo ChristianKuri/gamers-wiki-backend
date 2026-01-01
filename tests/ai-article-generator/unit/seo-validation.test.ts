@@ -294,7 +294,7 @@ This guide concludes the guide.
   describe('SEO constraint values', () => {
     it('should use SEO_CONSTRAINTS from config', () => {
       expect(SEO_CONSTRAINTS.TITLE_OPTIMAL_MIN).toBe(30);
-      expect(SEO_CONSTRAINTS.TITLE_OPTIMAL_MAX).toBe(60);
+      expect(SEO_CONSTRAINTS.TITLE_OPTIMAL_MAX).toBe(65);
       expect(SEO_CONSTRAINTS.EXCERPT_OPTIMAL_MIN).toBe(120);
       expect(SEO_CONSTRAINTS.EXCERPT_OPTIMAL_MAX).toBe(160);
       expect(SEO_CONSTRAINTS.MIN_KEYWORD_OCCURRENCES).toBe(2);

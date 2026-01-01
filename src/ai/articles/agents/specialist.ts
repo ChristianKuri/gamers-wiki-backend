@@ -754,9 +754,10 @@ async function writeSection(
 
   // Guard: Check if we have any meaningful research
   const hasAnyResearch = sectionResearch.some((r) => r.results.length > 0);
-  if (!hasAnyResearch && !scoutOutput.briefing.overview) {
+  const hasBriefings = scoutOutput.queryBriefings.length > 0;
+  if (!hasAnyResearch && !hasBriefings) {
     log.warn(
-      `Section "${section.headline}" has no research and no Scout overview - quality may be compromised`
+      `Section "${section.headline}" has no research and no query briefings - quality may be compromised`
     );
   }
 
@@ -778,12 +779,12 @@ async function writeSection(
     isLast,
     previousContext,
     researchContext: researchResult.context,
-    scoutOverview: scoutOutput.briefing.overview,
-    categoryInsights: scoutOutput.briefing.categoryInsights,
     isThinResearch,
     researchContentLength,
     crossReferenceContext: options.crossReferenceContext,
     mustCover: section.mustCover,
+    queryBriefings: scoutOutput.queryBriefings,
+    sourceSummaries: scoutOutput.sourceSummaries,
   };
 
   log.debug(`Writing section ${sectionIndex + 1}/${plan.sections.length}: ${section.headline}`);

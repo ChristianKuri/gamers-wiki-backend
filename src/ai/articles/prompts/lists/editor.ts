@@ -1,5 +1,5 @@
 import type { EditorPromptContext, EditorPrompts } from '../shared/editor';
-import { buildRequiredElementHints } from '../shared/editor-utils';
+import { buildRequiredElementHints, SEO_TITLE_GUIDANCE } from '../shared/editor-utils';
 
 export const editorPrompts: EditorPrompts = {
   getSystemPrompt(localeInstruction: string): string {
@@ -26,12 +26,16 @@ ${ctx.validationFeedback.map((msg, i) => `${i + 1}. ${msg}`).join('\n')}
 
     return `Design a LIST article plan for "${ctx.gameName}".
 ${validationFeedbackSection}
+Suggested title from Scout (STARTING POINT ONLY): "${ctx.draftTitle}"
 
-=== SCOUT INTELLIGENCE ===
-${ctx.scoutBriefing.fullContext}
+=== RESEARCH BRIEFINGS ===
+${ctx.queryBriefingsSummary}
 
+${ctx.topDetailedSummaries ? `${ctx.topDetailedSummaries}\n` : ''}
 === ${ctx.existingResearchSummary}
 ${ctx.topSourcesSummary ? `\n${ctx.topSourcesSummary}\n` : ''}
+${SEO_TITLE_GUIDANCE}
+
 === LIST STRUCTURE ===
 The article MUST be a 'lists' category.
 Structure:

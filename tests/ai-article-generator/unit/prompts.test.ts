@@ -1,15 +1,6 @@
 import { describe, it, expect } from 'vitest';
 
 import {
-  // Scout prompts
-  buildScoutQueries,
-  getScoutOverviewSystemPrompt,
-  getScoutOverviewUserPrompt,
-  getScoutCategorySystemPrompt,
-  getScoutCategoryUserPrompt,
-  getScoutSupplementarySystemPrompt,
-  getScoutSupplementaryUserPrompt,
-  type ScoutPromptContext,
   // Editor prompts
   buildCategoryHintsSection,
   buildExistingResearchSummary,
@@ -46,12 +37,27 @@ const createMockGameContext = (overrides: Partial<GameArticleContext> = {}): Gam
 });
 
 const createMockScoutOutput = (): ScoutOutput => ({
-  briefing: {
-    overview: 'Elden Ring is an action RPG developed by FromSoftware...',
-    categoryInsights: 'Guide content would be most valuable...',
-    recentDevelopments: 'DLC announced...',
-    fullContext: 'Full context document...',
+  queryPlan: {
+    draftTitle: 'Elden Ring: Complete Beginner Guide',
+    queries: [
+      { query: '"Elden Ring" beginner guide', engine: 'tavily', purpose: 'General overview', expectedFindings: ['Core mechanics'] },
+    ],
   },
+  discoveryCheck: {
+    needsDiscovery: false,
+    discoveryReason: 'none',
+  },
+  queryBriefings: [
+    {
+      query: '"Elden Ring" beginner guide',
+      engine: 'tavily',
+      purpose: 'General overview',
+      findings: 'Elden Ring is an action RPG developed by FromSoftware with open world exploration.',
+      keyFacts: ['Open world', 'Challenging combat'],
+      gaps: [],
+      sourceCount: 3,
+    },
+  ],
   researchPool: {
     scoutFindings: {
       overview: [
@@ -80,6 +86,8 @@ const createMockScoutOutput = (): ScoutOutput => ({
   sourceUrls: ['https://ign.com', 'https://guide.com'],
   tokenUsage: createEmptyTokenUsage(),
   confidence: 'high',
+  searchApiCosts: { totalUsd: 0, exaSearchCount: 0, tavilySearchCount: 1, exaCostUsd: 0, tavilyCostUsd: 0.008, tavilyCredits: 1 },
+  filteredSources: [],
 });
 
 const createMockArticlePlan = (): ArticlePlan => ({
@@ -109,219 +117,6 @@ const createMockSearchResult = (
   ],
   category,
   timestamp: Date.now(),
-});
-
-// ============================================================================
-// Scout Prompts Tests
-// ============================================================================
-
-describe('Scout Prompts', () => {
-  describe('buildScoutQueries', () => {
-    it('generates slots with overview query containing game name', () => {
-      const context = createMockGameContext();
-      const config = buildScoutQueries(context);
-
-      // New slot-based structure
-      expect(config.slots).toBeDefined();
-      expect(config.slots.length).toBeGreaterThan(0);
-
-      // Find overview slot
-      const overviewSlot = config.slots.find(s => s.category === 'overview');
-      expect(overviewSlot).toBeDefined();
-      expect(overviewSlot!.query).toContain('Elden Ring');
-      // Guides strategy includes gameplay/mechanics keywords
-      expect(overviewSlot!.query).toMatch(/gameplay|mechanics|guide|walkthrough/i);
-    });
-
-    it('generates category-specific slot based on instruction', () => {
-      const context = createMockGameContext({ instruction: 'how to defeat boss' });
-      const config = buildScoutQueries(context);
-
-      // Find category-specific slot
-      const categorySlot = config.slots.find(s => s.category === 'category-specific');
-      expect(categorySlot).toBeDefined();
-      // Guides strategy includes instruction in category queries
-      expect(categorySlot!.query.toLowerCase()).toMatch(/boss|defeat|guide/i);
-    });
-
-    it('generates default category slot when no instruction provided', () => {
-      const context = createMockGameContext({ instruction: null });
-      const config = buildScoutQueries(context);
-
-      const categorySlot = config.slots.find(s => s.category === 'category-specific');
-      expect(categorySlot).toBeDefined();
-      expect(categorySlot!.query.toLowerCase()).toMatch(/guide|walkthrough|beginner/i);
-    });
-
-    it('generates supplementary slot (tips for guides)', () => {
-      const context = createMockGameContext();
-      const config = buildScoutQueries(context);
-
-      // For guides, should have 'tips' slot instead of 'recent'
-      const tipsSlot = config.slots.find(s => s.category === 'tips');
-      expect(tipsSlot).toBeDefined();
-      expect(tipsSlot!.query).toContain('Elden Ring');
-      expect(tipsSlot!.query.toLowerCase()).toMatch(/tips|tricks|secrets/i);
-    });
-
-    it('each slot has required configuration', () => {
-      const context = createMockGameContext();
-      const config = buildScoutQueries(context);
-
-      for (const slot of config.slots) {
-        expect(slot.query).toBeDefined();
-        expect(slot.category).toBeDefined();
-        // maxResults and searchDepth are optional with defaults
-      }
-    });
-
-    it('handles missing genres gracefully', () => {
-      const context = createMockGameContext({ genres: undefined });
-      const config = buildScoutQueries(context);
-
-      const overviewSlot = config.slots.find(s => s.category === 'overview');
-      expect(overviewSlot).toBeDefined();
-      expect(overviewSlot!.query).toContain('Elden Ring');
-      expect(overviewSlot!.query).not.toContain('undefined');
-    });
-  });
-
-  describe('getScoutOverviewSystemPrompt', () => {
-    it('includes locale instruction', () => {
-      const prompt = getScoutOverviewSystemPrompt('Write in English.');
-
-      expect(prompt).toContain('Write in English.');
-    });
-
-    it('contains Scout agent identity for guides', () => {
-      const prompt = getScoutOverviewSystemPrompt('Write in English.');
-
-      expect(prompt).toContain('Scout agent');
-      // Guides strategy focuses on guides and walkthroughs
-      expect(prompt).toMatch(/GUIDE|WALKTHROUGH/i);
-    });
-
-    it('emphasizes practical information for guides', () => {
-      const prompt = getScoutOverviewSystemPrompt('Write in English.');
-
-      // Guides strategy focuses on mechanics, solutions, locations
-      expect(prompt).toMatch(/MECHANICS|SOLUTIONS|LOCATIONS/);
-    });
-  });
-
-  describe('getScoutOverviewUserPrompt', () => {
-    it('includes game metadata', () => {
-      const ctx: ScoutPromptContext = {
-        gameName: 'Elden Ring',
-        releaseDate: '2022-02-25',
-        genres: ['Action RPG'],
-        platforms: ['PC'],
-        developer: 'FromSoftware',
-        publisher: 'Bandai Namco',
-        igdbDescription: 'Epic adventure',
-        instruction: 'Write a guide',
-        localeInstruction: 'Write in English.',
-        searchContext: 'Search context here',
-        categoryContext: 'Category context',
-        recentContext: 'Recent context',
-      };
-
-      const prompt = getScoutOverviewUserPrompt(ctx);
-
-      expect(prompt).toContain('Elden Ring');
-      expect(prompt).toContain('Action RPG');
-      // Guides strategy includes game metadata section
-      expect(prompt).toContain('GAME METADATA');
-    });
-
-    it('includes search context in prompt', () => {
-      const ctx: ScoutPromptContext = {
-        gameName: 'Test Game',
-        localeInstruction: 'Write in English.',
-        searchContext: 'Detailed search results here',
-        categoryContext: '',
-        recentContext: '',
-      };
-
-      const prompt = getScoutOverviewUserPrompt(ctx);
-
-      expect(prompt).toContain('Detailed search results here');
-    });
-
-    it('handles missing optional fields gracefully', () => {
-      const ctx: ScoutPromptContext = {
-        gameName: 'Test Game',
-        localeInstruction: 'Write in English.',
-        searchContext: '',
-        categoryContext: '',
-        recentContext: '',
-      };
-
-      const prompt = getScoutOverviewUserPrompt(ctx);
-
-      expect(prompt).toContain('Test Game');
-      expect(prompt).toContain('unknown'); // For missing fields
-    });
-  });
-
-  describe('getScoutCategorySystemPrompt', () => {
-    it('includes locale instruction', () => {
-      const prompt = getScoutCategorySystemPrompt('Write in English.');
-
-      expect(prompt).toContain('Write in English.');
-      expect(prompt).toContain('Scout agent');
-    });
-  });
-
-  describe('getScoutCategoryUserPrompt', () => {
-    it('includes game name and instruction', () => {
-      const prompt = getScoutCategoryUserPrompt('Elden Ring', 'Write a guide', 'Category context');
-
-      expect(prompt).toContain('Elden Ring');
-      expect(prompt).toContain('Write a guide');
-    });
-
-    it('indicates general guide coverage when no instruction', () => {
-      const prompt = getScoutCategoryUserPrompt('Elden Ring', null, 'Category context');
-
-      // Guides strategy uses "General guide coverage" for no instruction
-      expect(prompt).toContain('General guide coverage');
-    });
-
-    it('handles empty category context gracefully', () => {
-      const prompt = getScoutCategoryUserPrompt('Elden Ring', 'Guide', '');
-
-      // Should still produce valid prompt even with empty context
-      expect(prompt).toContain('Elden Ring');
-      expect(prompt).toContain('RESEARCH');
-    });
-  });
-
-  describe('getScoutSupplementarySystemPrompt', () => {
-    it('includes locale instruction', () => {
-      const prompt = getScoutSupplementarySystemPrompt('Write in English.');
-
-      expect(prompt).toContain('Write in English.');
-    });
-  });
-
-  describe('getScoutSupplementaryUserPrompt', () => {
-    it('includes game name and supplementary context', () => {
-      const prompt = getScoutSupplementaryUserPrompt('Elden Ring', 'Tips and tricks here');
-
-      expect(prompt).toContain('Elden Ring');
-      expect(prompt).toContain('Tips and tricks here');
-    });
-
-    it('handles empty supplementary context gracefully', () => {
-      const prompt = getScoutSupplementaryUserPrompt('Elden Ring', '');
-
-      // Should still produce valid prompt structure even with empty context
-      expect(prompt).toContain('Elden Ring');
-      // For guides, this will contain TIPS & TRICKS section
-      expect(prompt.length).toBeGreaterThan(0);
-    });
-  });
 });
 
 // ============================================================================
@@ -384,16 +179,13 @@ describe('Editor Prompts', () => {
       expect(summary).toContain('Total sources: 2');
     });
 
-    it('truncates overview preview to specified lines', () => {
+    it('includes briefing overview in summary', () => {
       const scoutOutput = createMockScoutOutput();
-      scoutOutput.briefing.overview = 'Line 1\nLine 2\nLine 3\nLine 4\nLine 5\nLine 6';
 
       const summary = buildExistingResearchSummary(scoutOutput, 3);
 
-      expect(summary).toContain('Line 1');
-      expect(summary).toContain('Line 2');
-      expect(summary).toContain('Line 3');
-      expect(summary).toContain('...');
+      // Should include research summary from query briefings
+      expect(summary).toContain('Research summary');
     });
 
     it('includes guidance about avoiding duplicate queries', () => {
@@ -675,11 +467,20 @@ describe('Specialist Prompts', () => {
       isLast: false,
       previousContext: '',
       researchContext: 'Research context here',
-      scoutOverview: 'Scout overview content',
-      categoryInsights: 'Category insights',
       isThinResearch: false,
       researchContentLength: 1000,
       mustCover: ['Game basics', 'Starting tips'],
+      queryBriefings: [
+        {
+          query: '"Elden Ring" guide',
+          engine: 'tavily',
+          purpose: 'General overview',
+          findings: 'Found comprehensive guide information.',
+          keyFacts: ['Key fact 1', 'Key fact 2'],
+          gaps: [],
+          sourceCount: 3,
+        },
+      ],
       ...overrides,
     });
 
@@ -790,15 +591,26 @@ describe('Specialist Prompts', () => {
       expect(prompt).toContain('FIRST mention');
     });
 
-    it('truncates long scout overview', () => {
+    it('includes query briefings in prompt', () => {
       const plan = createMockArticlePlan();
-      const longOverview = 'A'.repeat(5000);
-      const ctx = createSectionContext({ scoutOverview: longOverview });
+      const ctx = createSectionContext({
+        queryBriefings: [
+          {
+            query: 'test query',
+            engine: 'tavily',
+            purpose: 'Test purpose',
+            findings: 'Test findings',
+            keyFacts: ['Fact A', 'Fact B'],
+            gaps: [],
+            sourceCount: 2,
+          },
+        ],
+      });
 
       const prompt = getSpecialistSectionUserPrompt(ctx, plan, 'Elden Ring', 100, 2, 5);
 
-      expect(prompt).toContain('truncated');
-      expect(prompt).not.toContain('A'.repeat(200));
+      expect(prompt).toContain('test query');
+      expect(prompt).toContain('Test findings');
     });
 
     it('includes section information and headline in prompt', () => {

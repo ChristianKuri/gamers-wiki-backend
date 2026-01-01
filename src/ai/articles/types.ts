@@ -101,6 +101,21 @@ export interface SearchResultItem {
    * @see https://docs.exa.ai/reference/contents-retrieval#summary-summary-true
    */
   readonly summary?: string;
+  /**
+   * Detailed summary with specific facts, numbers, and names (from Cleaner).
+   * Available when content has been cleaned and summarized.
+   */
+  readonly detailedSummary?: string;
+  /**
+   * Key facts extracted as bullet points (from Cleaner).
+   * Available when content has been cleaned and summarized.
+   */
+  readonly keyFacts?: readonly string[];
+  /**
+   * Specific data points: stats, dates, names, numbers (from Cleaner).
+   * Available when content has been cleaned and summarized.
+   */
+  readonly dataPoints?: readonly string[];
   readonly score?: number;
   /** Quality score (0-100) from cleaner, if cleaned */
   readonly qualityScore?: number;
@@ -174,12 +189,35 @@ export type ResearchConfidence = 'high' | 'medium' | 'low';
  * Output from the Scout agent containing research briefings and sources.
  */
 export interface ScoutOutput {
-  readonly briefing: {
-    readonly overview: string;
-    readonly categoryInsights: string;
-    readonly recentDevelopments: string;
-    readonly fullContext: string;
-  };
+  /**
+   * Query plan from Phase 1 (includes draft title).
+   */
+  readonly queryPlan: QueryPlan;
+  
+  /**
+   * Discovery check result from Phase 0.
+   * Shows whether discovery was needed and why.
+   */
+  readonly discoveryCheck: DiscoveryCheck;
+  
+  /**
+   * Discovery query result (if discovery was executed).
+   * Contains the search result from the discovery query.
+   */
+  readonly discoveryResult?: CategorizedSearchResult;
+  
+  /**
+   * Per-query briefings for the Editor agent.
+   * Cross-source synthesis with patterns and gaps.
+   */
+  readonly queryBriefings: readonly QueryBriefing[];
+  
+  /**
+   * Detailed per-source summaries for the Specialist agent.
+   * Rich, specific content for writing with specificity.
+   */
+  readonly sourceSummaries?: readonly SourceSummary[];
+  
   readonly researchPool: ResearchPool;
   readonly sourceUrls: readonly string[];
   /** Token usage for Scout phase LLM calls (excludes cleaning) */
@@ -221,6 +259,116 @@ export interface ScoutOutput {
    * Used by the Editor to see actual content when planning the article.
    */
   readonly topSourcesPerQuery?: readonly TopSourceForQuery[];
+}
+
+// ============================================================================
+// Scout Query Planning Types (Phase 0 & 1)
+// ============================================================================
+
+/**
+ * Reason why the Scout needs a discovery query.
+ */
+export type DiscoveryReason =
+  | 'unknown_game'    // Don't know enough about the game itself
+  | 'specific_topic'  // Know game, but need depth on specific topic
+  | 'recent_changes'  // Need to check for patches/updates
+  | 'none';           // Have sufficient knowledge to plan queries
+
+/**
+ * Result of the discovery check (Phase 0).
+ * Scout evaluates if it needs initial research before planning queries.
+ */
+export interface DiscoveryCheck {
+  /** Whether discovery is needed */
+  readonly needsDiscovery: boolean;
+  /** Why discovery is needed */
+  readonly discoveryReason: DiscoveryReason;
+  /** The discovery query to execute (if needsDiscovery) */
+  readonly discoveryQuery?: string;
+  /** Which engine to use for discovery (default: tavily) */
+  readonly discoveryEngine?: SearchSource;
+}
+
+/**
+ * A single planned query with engine selection and expected findings.
+ */
+export interface PlannedQuery {
+  /** The search query string */
+  readonly query: string;
+  /** Which search engine to use */
+  readonly engine: SearchSource;
+  /** Why this query is needed */
+  readonly purpose: string;
+  /** What information this query should provide */
+  readonly expectedFindings: readonly string[];
+}
+
+/**
+ * Complete query plan output from the Scout Query Planner (Phase 1).
+ */
+export interface QueryPlan {
+  /** Working title for the article */
+  readonly draftTitle: string;
+  /** Strategic queries to execute (3-6) */
+  readonly queries: readonly PlannedQuery[];
+}
+
+/**
+ * Per-query briefing for the Editor agent (synthesized from multiple sources).
+ * Contains cross-source synthesis and patterns.
+ */
+export interface QueryBriefing {
+  /** The search query this briefing is for */
+  readonly query: string;
+  /** Which engine was used */
+  readonly engine: SearchSource;
+  /** Why this query was executed */
+  readonly purpose: string;
+  /** LLM-synthesized findings from multiple sources */
+  readonly findings: string;
+  /** Aggregated key facts from sources */
+  readonly keyFacts: readonly string[];
+  /** What information was NOT found (gaps) */
+  readonly gaps: readonly string[];
+  /** Number of sources used for this briefing */
+  readonly sourceCount: number;
+}
+
+/**
+ * Content type classification for source summaries.
+ */
+export type SourceContentType =
+  | 'guide'
+  | 'wiki'
+  | 'news'
+  | 'review'
+  | 'forum'
+  | 'official'
+  | 'other';
+
+/**
+ * Detailed per-source summary for the Specialist agent.
+ * Rich, specific content for writing with specificity.
+ */
+export interface SourceSummary {
+  /** URL of the source */
+  readonly url: string;
+  /** Title of the source page */
+  readonly title: string;
+  /** Detailed summary with specific facts, numbers, names */
+  readonly detailedSummary: string;
+  /** Key facts extracted (bullet points) */
+  readonly keyFacts: readonly string[];
+  /** What type of content this is */
+  readonly contentType: SourceContentType;
+  /** Specific data points (stats, dates, names) */
+  readonly dataPoints: readonly string[];
+  /** Which query found this source */
+  readonly query: string;
+  /** Quality score from cleaner (0-100) */
+  readonly qualityScore: number;
+  /** Relevance score from cleaner (0-100) */
+  readonly relevanceScore: number;
 }
 
 // ============================================================================
@@ -745,6 +893,11 @@ export interface ArticleGenerationMetadata {
    * Helps understand where results were lost to deduplication or filtering.
    */
   readonly queryStats?: readonly SearchQueryStats[];
+  /**
+   * Query briefings generated by Scout.
+   * Contains per-query synthesis of findings for debugging/analysis.
+   */
+  readonly queryBriefings?: readonly QueryBriefing[];
 }
 
 /**
@@ -1133,6 +1286,12 @@ export interface RawSourceInput {
   readonly title: string;
   readonly content: string;
   readonly searchSource: SearchSource;
+  /**
+   * Optional clean snippet for pre-filtering (Tavily's extracted content).
+   * Tavily provides ~800c clean snippet that's better for pre-filtering
+   * than taking the first N chars of raw_content (which may have navigation).
+   */
+  readonly snippet?: string;
 }
 
 /**
@@ -1142,8 +1301,14 @@ export interface CleanedSource {
   readonly url: string;
   readonly domain: string;
   readonly title: string;
-  /** Short summary for quick reference (future: use for cache-only article generation) */
+  /** Short summary for quick reference (1-2 sentences) */
   readonly summary: string | null;
+  /** Detailed summary with specific facts, numbers, and names (paragraph form) */
+  readonly detailedSummary: string | null;
+  /** Key facts extracted as bullet points */
+  readonly keyFacts: readonly string[] | null;
+  /** Specific data points: stats, dates, names, numbers */
+  readonly dataPoints: readonly string[] | null;
   readonly cleanedContent: string;
   readonly originalContentLength: number;
   /** Content quality score (0-100): structure, depth, authority */
@@ -1196,8 +1361,14 @@ export interface StoredSourceContent {
   readonly url: string;
   readonly domain: string;
   readonly title: string;
-  /** Short summary for quick reference */
+  /** Short summary for quick reference (1-2 sentences) */
   readonly summary: string | null;
+  /** Detailed summary with specific facts, numbers, and names (paragraph form) */
+  readonly detailedSummary: string | null;
+  /** Key facts extracted as bullet points */
+  readonly keyFacts: readonly string[] | null;
+  /** Specific data points: stats, dates, names, numbers */
+  readonly dataPoints: readonly string[] | null;
   readonly cleanedContent: string;
   readonly originalContentLength: number;
   /** Quality score (0-100), null for scrape failures */
@@ -1305,6 +1476,12 @@ export interface CleanerLLMOutput {
   readonly cleanedContent: string;
   /** Short 1-2 sentence summary for quick reference */
   readonly summary: string;
+  /** Detailed summary with specific facts, numbers, and names (paragraph form) */
+  readonly detailedSummary: string;
+  /** Key facts extracted as bullet points (3-7 items) */
+  readonly keyFacts: readonly string[];
+  /** Specific data points: stats, dates, names, numbers (3-10 items) */
+  readonly dataPoints: readonly string[];
   /** Content quality score (0-100): depth, structure, authority */
   readonly qualityScore: number;
   /** Gaming relevance score (0-100): Is this about video games? */

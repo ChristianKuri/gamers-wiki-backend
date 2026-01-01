@@ -192,10 +192,12 @@ function validateTemperature(value: number, name: string): void {
  * ALL validation constants should live here - no magic numbers elsewhere.
  */
 export const ARTICLE_PLAN_CONSTRAINTS = {
-  // Title constraints
-  TITLE_MIN_LENGTH: 10,
-  TITLE_MAX_LENGTH: 100,
-  TITLE_RECOMMENDED_MAX_LENGTH: 70,
+  // Title constraints - optimized for SEO visibility
+  // Google truncates at ~60 chars, so we target 50-65 for full visibility
+  TITLE_MIN_LENGTH: 30,
+  TITLE_MAX_LENGTH: 65,
+  /** @deprecated Use TITLE_MAX_LENGTH (65) - this was too generous for SEO */
+  TITLE_RECOMMENDED_MAX_LENGTH: 65,
 
   // Excerpt constraints (for SEO meta description)
   // Google typically shows 150-160 chars, but can display up to 300
@@ -398,6 +400,23 @@ export const SCOUT_CONFIG = {
   MIN_QUERIES_WARNING: 3,
   /** Minimum overview length to consider valid */
   MIN_OVERVIEW_LENGTH: 50,
+  /**
+   * Whether to use pre-extracted summaries (detailedSummary, keyFacts, dataPoints)
+   * from the Cleaner when generating QueryBriefings.
+   * 
+   * When TRUE (optimized mode, default):
+   * - Uses Cleaner's detailedSummary + keyFacts instead of raw cleanedContent
+   * - No extra tokens - Cleaner already extracted this in ONE LLM call
+   * - Best for production use
+   * 
+   * When FALSE (classic mode):
+   * - Reads raw cleanedContent (truncated to 800 chars) per source
+   * - Wasteful since Cleaner already has better summaries
+   * - Only for A/B testing comparison
+   * 
+   * @default true - Use Cleaner's already-extracted summaries
+   */
+  USE_SUMMARIES_FOR_BRIEFINGS: true,
 } as const;
 
 // ============================================================================
@@ -442,10 +461,13 @@ export const SPECIALIST_CONFIG = {
   MAX_SCOUT_OVERVIEW_LENGTH: 2500,
   /**
    * Characters of research context per result.
-   * INCREASED: Now that Exa returns 20,000c per result, use more of it.
-   * 10,000c × 5 results = 50,000c max per section (reasonable for 1M token LLM).
+   * INCREASED: Use full cleaned content without truncation.
+   * Database stats show: avg 3.8K, P99 17K, max 36K chars.
+   * 50,000c covers 100% of sources (max is 36K).
+   * 50,000c × 5 results = 250,000c max per section.
+   * That's ~62K tokens - well within Gemini 3 Flash's 1M context.
    */
-  RESEARCH_CONTEXT_PER_RESULT: 10000,
+  RESEARCH_CONTEXT_PER_RESULT: 50000,
   /**
    * Threshold for "thin research" warning.
    * INCREASED: With larger content per result, threshold should be higher.
@@ -526,8 +548,8 @@ export const SPECIALIST_CONFIG = {
 export const SEO_CONSTRAINTS = {
   /** Optimal minimum title length for SERP display */
   TITLE_OPTIMAL_MIN: 30,
-  /** Optimal maximum title length before truncation */
-  TITLE_OPTIMAL_MAX: 60,
+  /** Optimal maximum title length before truncation (Google cuts at ~60) */
+  TITLE_OPTIMAL_MAX: 65,
   /** Optimal minimum excerpt/meta description length */
   EXCERPT_OPTIMAL_MIN: 120,
   /** Optimal maximum excerpt/meta description length */
@@ -760,7 +782,7 @@ export const CLEANER_CONFIG = {
   },
   /**
    * Whether to use LLM pre-filter before full cleaning.
-   * Pre-filter uses title + 500 char snippet to check relevance.
+   * Pre-filter uses title + snippet to check relevance.
    * Costs ~$0.0001-0.0005 per source, can save full cleaning cost on irrelevant content.
    * Override with env var ARTICLE_PREFILTER_ENABLED=false
    */
@@ -771,6 +793,14 @@ export const CLEANER_CONFIG = {
     }
     return true; // Enabled by default
   },
+  /**
+   * Character length of content snippet for pre-filter.
+   * INCREASED from 500 to 2000: Many pages have navigation/breadcrumbs at the
+   * start, so 500 chars often only captures "Home > Games > Guide > ..." junk.
+   * 1500 chars gets past navigation to actual article content.
+   * Cost impact: minimal (pre-filter uses cheap gemini-2.5-flash-lite).
+   */
+  PREFILTER_SNIPPET_LENGTH: 2000,
   /**
    * Timeout for pre-filter LLM call (ms).
    * Short timeout since it's a simple relevance check.
@@ -880,6 +910,10 @@ export const MODEL_PRICING: Record<string, ModelPricing> = {
   'google/gemini-pro': { inputPer1k: 0.00025, outputPer1k: 0.0005 },
   'google/gemini-pro-1.5': { inputPer1k: 0.00125, outputPer1k: 0.005 },
   'google/gemini-flash-2.0': { inputPer1k: 0.0001, outputPer1k: 0.0004 },
+  // Gemini 2.5 Flash: $0.30/1M input, $2.50/1M output
+  'google/gemini-2.5-flash': { inputPer1k: 0.0003, outputPer1k: 0.0025 },
+  // Gemini 2.5 Flash Lite: $0.10/1M input, $0.40/1M output (same as 2.0, optimized for speed)
+  'google/gemini-2.5-flash-lite': { inputPer1k: 0.0001, outputPer1k: 0.0004 },
   // Gemini 3 Flash: $0.50/1M input, $3/1M output (per OpenRouter Dec 2025)
   'google/gemini-3-flash-preview': { inputPer1k: 0.0005, outputPer1k: 0.003 },
 } as const;

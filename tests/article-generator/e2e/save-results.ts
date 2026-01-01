@@ -19,8 +19,8 @@
 import { mkdirSync, writeFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 
-/** Directory for storing E2E test results */
-const E2E_RESULTS_DIR = join(__dirname, '..', '..', 'e2e-results', 'article-generator');
+/** Base directory for storing E2E test results */
+const E2E_RESULTS_BASE_DIR = join(__dirname, '..', '..', 'e2e-results', 'article-generator');
 
 // ============================================================================
 // Result Structure Types
@@ -440,18 +440,9 @@ export type E2EValidationIssue = ValidationIssue;
 // ============================================================================
 
 /**
- * Ensures the results directory exists.
+ * Generates a sanitized folder name for a test run.
  */
-function ensureResultsDir(): void {
-  if (!existsSync(E2E_RESULTS_DIR)) {
-    mkdirSync(E2E_RESULTS_DIR, { recursive: true });
-  }
-}
-
-/**
- * Generates a filename for the test result.
- */
-function generateFilename(testName: string, timestamp: string): string {
+function generateRunFolderName(testName: string, timestamp: string): string {
   const sanitized = testName
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, '-')
@@ -459,17 +450,203 @@ function generateFilename(testName: string, timestamp: string): string {
     .slice(0, 50);
 
   const formattedTime = timestamp.replace(/[:.]/g, '-').slice(0, 19);
-  return `${sanitized}-${formattedTime}.json`;
+  return `${sanitized}-${formattedTime}`;
 }
 
 /**
- * Saves E2E test result to a JSON file.
+ * Creates and returns the path to a run-specific folder.
+ * Structure: tests/e2e-results/article-generator/{test-name}-{timestamp}/
+ */
+function createRunFolder(testName: string, timestamp: string): string {
+  const folderName = generateRunFolderName(testName, timestamp);
+  const runDir = join(E2E_RESULTS_BASE_DIR, folderName);
+  
+  if (!existsSync(runDir)) {
+    mkdirSync(runDir, { recursive: true });
+  }
+  
+  return runDir;
+}
+
+/**
+ * Result of saving all test artifacts.
+ */
+export interface SavedTestArtifacts {
+  /** Path to the run folder */
+  runFolder: string;
+  /** Path to the result JSON file */
+  resultJson: string;
+  /** Path to the article markdown file */
+  articleMd: string;
+  /** Path to the briefings folder (if briefings exist) */
+  briefingsFolder?: string;
+  /** Path to the briefings JSON file (if briefings exist) */
+  briefingsJson?: string;
+  /** Path to the briefings markdown file (if briefings exist) */
+  briefingsMd?: string;
+}
+
+/**
+ * Saves all E2E test artifacts to a run-specific folder.
+ * 
+ * Structure:
+ * tests/e2e-results/article-generator/{test-name}-{timestamp}/
+ * ├── result.json           # Full test results
+ * ├── article.md            # Generated article markdown
+ * └── briefings/            # (if briefings exist)
+ *     ├── briefings.json    # Query briefings as JSON
+ *     └── briefings.md      # Query briefings as readable markdown
+ */
+export function saveAllTestArtifacts(
+  result: E2ETestResult,
+  briefings?: BriefingsTestResult
+): SavedTestArtifacts {
+  const runDir = createRunFolder(result.metadata.testName, result.metadata.timestamp);
+  
+  // Save result.json
+  const resultJsonPath = join(runDir, 'result.json');
+  writeFileSync(resultJsonPath, JSON.stringify(result, null, 2), 'utf-8');
+  
+  // Save article.md
+  const articleMdPath = join(runDir, 'article.md');
+  const articleContent = buildArticleMarkdown(result);
+  writeFileSync(articleMdPath, articleContent, 'utf-8');
+  
+  const artifacts: SavedTestArtifacts = {
+    runFolder: runDir,
+    resultJson: resultJsonPath,
+    articleMd: articleMdPath,
+  };
+  
+  // Save briefings if provided
+  if (briefings && briefings.briefings.length > 0) {
+    const briefingsDir = join(runDir, 'briefings');
+    if (!existsSync(briefingsDir)) {
+      mkdirSync(briefingsDir, { recursive: true });
+    }
+    
+    // Save briefings.json
+    const briefingsJsonPath = join(briefingsDir, 'briefings.json');
+    writeFileSync(briefingsJsonPath, JSON.stringify(briefings, null, 2), 'utf-8');
+    
+    // Save briefings.md
+    const briefingsMdPath = join(briefingsDir, 'briefings.md');
+    const briefingsMdContent = buildBriefingsMarkdown(briefings);
+    writeFileSync(briefingsMdPath, briefingsMdContent, 'utf-8');
+    
+    artifacts.briefingsFolder = briefingsDir;
+    artifacts.briefingsJson = briefingsJsonPath;
+    artifacts.briefingsMd = briefingsMdPath;
+  }
+  
+  return artifacts;
+}
+
+/**
+ * Builds the article markdown content with metadata header.
+ */
+function buildArticleMarkdown(result: E2ETestResult): string {
+  const lines: string[] = [
+    '---',
+    `title: "${result.article.title.value}"`,
+    `category: ${result.article.categorySlug}`,
+    `tags: [${result.article.tags.map(t => `"${t}"`).join(', ')}]`,
+    `game: ${result.game.name}`,
+    `generated: ${result.metadata.timestamp}`,
+    `correlation_id: ${result.generation.correlationId}`,
+    '---',
+    '',
+    `# ${result.article.title.value}`,
+    '',
+    `> ${result.article.excerpt.value}`,
+    '',
+    '---',
+    '',
+    result.rawContent.markdown,
+  ];
+  
+  return lines.join('\n');
+}
+
+/**
+ * Builds the briefings markdown content.
+ */
+function buildBriefingsMarkdown(briefings: BriefingsTestResult): string {
+  const lines: string[] = [
+    `# Query Briefings: ${briefings.metadata.gameName}`,
+    '',
+    `**Test:** ${briefings.metadata.testName}`,
+    `**Timestamp:** ${briefings.metadata.timestamp}`,
+    `**Correlation ID:** ${briefings.metadata.correlationId}`,
+    '',
+  ];
+
+  if (briefings.queryPlan) {
+    lines.push(`## Query Plan`);
+    lines.push('');
+    lines.push(`**Draft Title:** ${briefings.queryPlan.draftTitle}`);
+    lines.push(`**Total Queries:** ${briefings.queryPlan.totalQueries}`);
+    lines.push('');
+  }
+
+  if (briefings.inputContext) {
+    lines.push(`## Input Context`);
+    lines.push('');
+    lines.push(`**Game:** ${briefings.inputContext.gameName}`);
+    if (briefings.inputContext.gameDescription) {
+      lines.push(`**Description:** ${briefings.inputContext.gameDescription}`);
+    }
+    lines.push(`**Instruction:** ${briefings.inputContext.articleInstruction}`);
+    lines.push('');
+  }
+
+  lines.push(`## Briefings (${briefings.briefings.length} queries)`);
+  lines.push('');
+
+  for (let i = 0; i < briefings.briefings.length; i++) {
+    const b = briefings.briefings[i];
+    lines.push(`### ${i + 1}. ${b.query}`);
+    lines.push('');
+    lines.push(`**Engine:** ${b.engine} | **Sources:** ${b.sourceCount}`);
+    lines.push(`**Purpose:** ${b.purpose}`);
+    lines.push('');
+    lines.push(`#### Findings`);
+    lines.push('');
+    lines.push(b.findings);
+    lines.push('');
+
+    if (b.keyFacts.length > 0) {
+      lines.push(`#### Key Facts`);
+      lines.push('');
+      for (const fact of b.keyFacts) {
+        lines.push(`- ${fact}`);
+      }
+      lines.push('');
+    }
+
+    if (b.gaps.length > 0) {
+      lines.push(`#### Gaps (missing info)`);
+      lines.push('');
+      for (const gap of b.gaps) {
+        lines.push(`- ${gap}`);
+      }
+      lines.push('');
+    }
+
+    lines.push('---');
+    lines.push('');
+  }
+
+  return lines.join('\n');
+}
+
+/**
+ * @deprecated Use saveAllTestArtifacts instead.
+ * Saves E2E test result to a JSON file (legacy function for backward compatibility).
  */
 export function saveTestResult(result: E2ETestResult): string {
-  ensureResultsDir();
-
-  const filename = generateFilename(result.metadata.testName, result.metadata.timestamp);
-  const filePath = join(E2E_RESULTS_DIR, filename);
+  const runDir = createRunFolder(result.metadata.testName, result.metadata.timestamp);
+  const filePath = join(runDir, 'result.json');
 
   const json = JSON.stringify(result, null, 2);
   writeFileSync(filePath, json, 'utf-8');
@@ -514,4 +691,40 @@ export function logValidationSummary(issues: readonly ValidationIssue[]): void {
   } else {
     console.log(`\n📊 Summary: ${errors.length} error(s), ${warnings.length} warning(s)`);
   }
+}
+
+// ============================================================================
+// Briefings Types
+// ============================================================================
+
+/** Query briefing for storage (matches QueryBriefing from types.ts) */
+export interface StoredQueryBriefing {
+  readonly query: string;
+  readonly engine: 'tavily' | 'exa';
+  readonly purpose: string;
+  readonly findings: string;
+  readonly keyFacts: readonly string[];
+  readonly gaps: readonly string[];
+  readonly sourceCount: number;
+}
+
+/** Complete briefings from a test run */
+export interface BriefingsTestResult {
+  readonly metadata: {
+    readonly testName: string;
+    readonly gameName: string;
+    readonly timestamp: string;
+    readonly correlationId: string;
+  };
+  readonly queryPlan?: {
+    readonly draftTitle: string;
+    readonly totalQueries: number;
+  };
+  readonly briefings: readonly StoredQueryBriefing[];
+  /** Optional: raw input context that Scout had */
+  readonly inputContext?: {
+    readonly gameName: string;
+    readonly gameDescription?: string;
+    readonly articleInstruction: string;
+  };
 }

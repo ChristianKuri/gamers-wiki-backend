@@ -1,5 +1,4 @@
 import type { ArticleCategorySlug } from '../../article-plan';
-import type { ScoutOutput } from '../../types';
 
 export interface EditorPromptContext {
   readonly gameName: string;
@@ -10,7 +9,6 @@ export interface EditorPromptContext {
   readonly publisher?: string | null;
   readonly instruction?: string | null;
   readonly localeInstruction: string;
-  readonly scoutBriefing: ScoutOutput['briefing'];
   readonly existingResearchSummary: string;
   readonly categoryHintsSection: string;
   readonly targetWordCount?: number;
@@ -21,6 +19,21 @@ export interface EditorPromptContext {
    * Contains actual cleaned content to help the Editor plan better.
    */
   readonly topSourcesSummary?: string;
+  /**
+   * Formatted summary of per-query briefings from Scout.
+   * Contains synthesized findings, key facts, and gaps for each query.
+   */
+  readonly queryBriefingsSummary: string;
+  /**
+   * Top detailed summaries from best sources (ranked by quality + relevance).
+   * Contains comprehensive source-level summaries with key facts and data points.
+   */
+  readonly topDetailedSummaries?: string;
+  /**
+   * Draft title suggested by the Scout Query Planner.
+   * Editor can use this as a starting point or create a new one.
+   */
+  readonly draftTitle: string;
 }
 
 export interface EditorPrompts {

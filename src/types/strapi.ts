@@ -206,7 +206,14 @@ export interface SourceContentDocument extends StrapiDocument {
   url: string;
   domain: string;
   title: string;
+  /** Short 1-2 sentence summary */
   summary: string | null;
+  /** Detailed summary with specific facts, numbers, and names (paragraph form) */
+  detailedSummary: string | null;
+  /** Key facts extracted as bullet points */
+  keyFacts: readonly string[] | null;
+  /** Specific data points: stats, dates, names, numbers */
+  dataPoints: readonly string[] | null;
   cleanedContent: string;
   originalContentLength: number;
   /** Quality score (0-100), null for scrape failures */

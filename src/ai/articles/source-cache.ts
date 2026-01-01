@@ -39,6 +39,9 @@ interface SourceContentRow {
   domain: string;
   title: string;
   summary: string | null;
+  detailed_summary: string | null;
+  key_facts: string | null; // JSON string stored in DB
+  data_points: string | null; // JSON string stored in DB
   cleaned_content: string;
   original_content_length: number;
   quality_score: number | null; // null for scrape failures
@@ -51,6 +54,24 @@ interface SourceContentRow {
   search_source: 'tavily' | 'exa';
   scrape_succeeded: boolean;
   published_at: string | null;
+}
+
+/**
+ * Safely parse JSON array from database.
+ * Handles both already-parsed arrays and JSON strings.
+ */
+function parseJsonArray(value: unknown): readonly string[] | null {
+  if (!value) return null;
+  if (Array.isArray(value)) return value;
+  if (typeof value === 'string') {
+    try {
+      const parsed = JSON.parse(value);
+      return Array.isArray(parsed) ? parsed : null;
+    } catch {
+      return null;
+    }
+  }
+  return null;
 }
 
 /**
@@ -385,6 +406,10 @@ export async function checkSourceCache(
       domain: row.domain,
       title: row.title,
       summary: row.summary,
+      detailedSummary: row.detailed_summary,
+      // Parse JSON arrays from database strings
+      keyFacts: parseJsonArray(row.key_facts),
+      dataPoints: parseJsonArray(row.data_points),
       cleanedContent: row.cleaned_content,
       originalContentLength: row.original_content_length,
       qualityScore: row.quality_score,
@@ -437,10 +462,16 @@ export async function checkSourceCache(
       // Detect legacy data that needs reprocessing:
       // - Has valid quality score (was cleaned) but NULL relevance score
       // - Scrape was successful (not a failure that intentionally has NULL scores)
+      // - Missing new summary fields (detailedSummary, keyFacts, dataPoints)
       const wasCleanedButMissingRelevance = 
         cached.qualityScore !== null && 
         cached.relevanceScore === null &&
         cached.scrapeSucceeded !== false;
+      
+      const missingDetailedSummary = 
+        cached.scrapeSucceeded !== false &&
+        cached.qualityScore !== null &&
+        !cached.detailedSummary;
       
       return {
         url: raw.url,
@@ -450,6 +481,9 @@ export async function checkSourceCache(
           domain: cached.domain,
           title: cached.title,
           summary: cached.summary ?? '',
+          detailedSummary: cached.detailedSummary,
+          keyFacts: cached.keyFacts,
+          dataPoints: cached.dataPoints,
           cleanedContent: cached.cleanedContent,
           originalContentLength: cached.originalContentLength,
           qualityScore: cached.qualityScore ?? 0,
@@ -462,7 +496,7 @@ export async function checkSourceCache(
           junkRatio: cached.junkRatio,
           searchSource: cached.searchSource,
           scrapeSucceeded: cached.scrapeSucceeded,
-          needsReprocessing: wasCleanedButMissingRelevance,
+          needsReprocessing: wasCleanedButMissingRelevance || missingDetailedSummary,
         },
       };
     }
@@ -585,6 +619,9 @@ export async function updateScrapeFailureToSuccess(
       .update({
         title: cleanedSource.title,
         summary: cleanedSource.summary ?? null,
+        detailed_summary: cleanedSource.detailedSummary ?? null,
+        key_facts: cleanedSource.keyFacts ? JSON.stringify(cleanedSource.keyFacts) : null,
+        data_points: cleanedSource.dataPoints ? JSON.stringify(cleanedSource.dataPoints) : null,
         cleaned_content: cleanedSource.cleanedContent,
         original_content_length: cleanedSource.originalContentLength,
         quality_score: cleanedSource.qualityScore,
@@ -639,12 +676,15 @@ export async function updateLegacySourceRelevance(
       return;
     }
 
-    // Update with newly calculated scores
+    // Update with newly calculated scores and detailed summaries
     await knex('source_contents')
       .where('id', existing.id)
       .update({
         title: cleanedSource.title,
         summary: cleanedSource.summary ?? null,
+        detailed_summary: cleanedSource.detailedSummary ?? null,
+        key_facts: cleanedSource.keyFacts ? JSON.stringify(cleanedSource.keyFacts) : null,
+        data_points: cleanedSource.dataPoints ? JSON.stringify(cleanedSource.dataPoints) : null,
         cleaned_content: cleanedSource.cleanedContent,
         original_content_length: cleanedSource.originalContentLength,
         quality_score: cleanedSource.qualityScore,
@@ -666,6 +706,59 @@ export async function updateLegacySourceRelevance(
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     strapi.log.warn(`[SourceCache] Failed to update legacy source relevance ${url}: ${message}`);
+  }
+}
+
+/**
+ * Update summaries for a cached source that has cleanedContent but missing summaries.
+ * This is a lightweight backfill operation - only updates summary fields, not content.
+ * 
+ * @param strapi - Strapi instance
+ * @param url - URL of the source to update
+ * @param summaries - Extracted summaries to store
+ */
+export async function updateSourceSummaries(
+  strapi: Core.Strapi,
+  url: string,
+  summaries: {
+    readonly summary: string;
+    readonly detailedSummary: string;
+    readonly keyFacts: readonly string[];
+    readonly dataPoints: readonly string[];
+  }
+): Promise<void> {
+  const knex = strapi.db.connection;
+  const normalizedUrl = normalizeUrl(url);
+  if (!normalizedUrl) return;
+
+  try {
+    // Find the existing record
+    const existing = await knex<SourceContentRow>('source_contents')
+      .where('url', normalizedUrl)
+      .first();
+
+    if (!existing) {
+      strapi.log.debug(`[SourceCache] No source found for summary update: ${normalizedUrl}`);
+      return;
+    }
+
+    // Update only the summary fields
+    await knex('source_contents')
+      .where('id', existing.id)
+      .update({
+        summary: summaries.summary,
+        detailed_summary: summaries.detailedSummary,
+        key_facts: JSON.stringify(summaries.keyFacts),
+        data_points: JSON.stringify(summaries.dataPoints),
+        updated_at: new Date().toISOString(),
+      });
+
+    strapi.log.info(
+      `[SourceCache] Backfilled summaries for: ${normalizedUrl}`
+    );
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    strapi.log.warn(`[SourceCache] Failed to update summaries for ${url}: ${message}`);
   }
 }
 
@@ -876,6 +969,9 @@ export async function storeCleanedSources(
         domain: source.domain,
         title: source.title,
         summary: source.summary ?? null,
+        detailedSummary: source.detailedSummary ?? null,
+        keyFacts: source.keyFacts ?? null,
+        dataPoints: source.dataPoints ?? null,
         cleanedContent: source.cleanedContent,
         originalContentLength: source.originalContentLength,
         qualityScore: source.qualityScore,

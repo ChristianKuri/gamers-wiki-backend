@@ -31,6 +31,15 @@
     "summary": {
       "type": "text"
     },
+    "detailedSummary": {
+      "type": "text"
+    },
+    "keyFacts": {
+      "type": "json"
+    },
+    "dataPoints": {
+      "type": "json"
+    },
     "cleanedContent": {
       "type": "richtext",
       "required": true

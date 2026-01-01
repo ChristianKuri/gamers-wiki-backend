@@ -8,12 +8,12 @@
  *
  * @example
  * // In a test file:
- * import { buildSearchContext, validateScoutOutput } from './scout.internals';
+ * import { assembleScoutOutput, calculateResearchConfidence } from './scout.internals';
  *
- * describe('buildSearchContext', () => {
- *   it('should format results correctly', () => {
- *     const result = buildSearchContext(mockResults);
- *     expect(result).toContain('Query:');
+ * describe('assembleScoutOutput', () => {
+ *   it('should build correct output structure', () => {
+ *     const result = assembleScoutOutput(...);
+ *     expect(result.queryBriefings).toBeDefined();
  *   });
  * });
  */
@@ -24,19 +24,11 @@ export {
   executeSearch,
   type ExecuteSearchOptions,
 
-  // Context building
-  buildSearchContext,
-  buildCategoryContext,
-  buildSupplementaryContext,
-  buildRecentContext, // Backwards compatibility alias for buildSupplementaryContext
-  buildFullContext,
-  type SupplementaryContextConfig,
-
-  // Validation
-  validateScoutOutput,
-
   // Output assembly
   assembleScoutOutput,
   calculateResearchConfidence,
+  
+  // Per-query briefing generation
+  generateQueryBriefing,
+  generateAllQueryBriefings,
 } from './scout';
-

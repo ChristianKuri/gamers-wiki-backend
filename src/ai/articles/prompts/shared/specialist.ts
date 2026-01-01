@@ -1,4 +1,5 @@
 import type { ArticlePlan } from '../../article-plan';
+import type { QueryBriefing, SourceSummary } from '../../types';
 
 export interface SpecialistSectionContext {
   readonly sectionIndex: number;
@@ -9,8 +10,6 @@ export interface SpecialistSectionContext {
   readonly isLast: boolean;
   readonly previousContext: string;
   readonly researchContext: string;
-  readonly scoutOverview: string;
-  readonly categoryInsights: string;
   readonly isThinResearch: boolean;
   readonly researchContentLength: number;
   readonly crossReferenceContext?: string;
@@ -22,6 +21,17 @@ export interface SpecialistSectionContext {
    * Required since ArticleSectionPlanSchema enforces mustCover.
    */
   readonly mustCover: readonly string[];
+  /**
+   * Per-query briefings from Scout.
+   * Contains synthesized findings, key facts, and gaps for each research query.
+   */
+  readonly queryBriefings: readonly QueryBriefing[];
+  /**
+   * Detailed per-source summaries from Scout (via Cleaner).
+   * Contains specific facts, numbers, and data points from each source.
+   * Used for writing with high specificity.
+   */
+  readonly sourceSummaries?: readonly SourceSummary[];
 }
 
 export interface SpecialistPrompts {

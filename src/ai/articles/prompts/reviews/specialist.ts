@@ -36,15 +36,18 @@ ${TONE_GUIDE}`;
     ctx: SpecialistSectionContext,
     plan: ArticlePlan,
     gameName: string,
-    maxScoutOverviewLength: number,
+    _maxScoutOverviewLength: number,
     minParagraphs: number,
     maxParagraphs: number
   ): string {
-    const truncatedOverview =
-      ctx.scoutOverview.length > maxScoutOverviewLength
-        ? `${ctx.scoutOverview.slice(0, maxScoutOverviewLength)}
-...(truncated)`
-        : ctx.scoutOverview;
+    // Build query briefings section
+    const queryBriefingsSection = ctx.queryBriefings.length > 0
+      ? ctx.queryBriefings.map((b, i) => 
+          `Query ${i + 1}: "${b.query}"
+Findings: ${b.findings}
+Key Facts: ${b.keyFacts.length > 0 ? b.keyFacts.join('; ') : '(none)'}`
+        ).join('\n\n')
+      : '(No briefings available)';
 
     // Build awareness of what OTHER sections will cover
     const otherSectionsCoverage = plan.sections
@@ -73,8 +76,8 @@ ${otherSectionsCoverage}
 === RESEARCH ===
 ${ctx.researchContext || '(Using general context only)'}
 
-General Overview:
-${truncatedOverview}
+=== SCOUT BRIEFINGS ===
+${queryBriefingsSection}
 
 === WRITING INSTRUCTIONS ===
 - You MUST cover everything in "MUST COVER" above

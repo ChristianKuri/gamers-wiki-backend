@@ -11,6 +11,7 @@ import { readFileSync } from 'node:fs';
 import { isStrapiRunning, createDbConnection, E2E_CONFIG } from '../../game-fetcher/e2e/setup';
 import {
   saveTestResult,
+  saveAllTestArtifacts,
   logValidationSummary,
   type E2ETestResult,
   type ValidationIssue,
@@ -21,6 +22,9 @@ import {
   type DatabaseVerification,
   type GameInfo,
   type DuplicateTrackingStats,
+  type BriefingsTestResult,
+  type StoredQueryBriefing,
+  type SavedTestArtifacts,
 } from './save-results';
 
 // Re-export for convenience
@@ -29,6 +33,7 @@ export {
   createDbConnection,
   E2E_CONFIG,
   saveTestResult,
+  saveAllTestArtifacts,
   logValidationSummary,
   type E2ETestResult,
   type ValidationIssue,
@@ -38,6 +43,9 @@ export {
   type ArticlePlanAnalysis,
   type DatabaseVerification,
   type GameInfo,
+  type BriefingsTestResult,
+  type StoredQueryBriefing,
+  type SavedTestArtifacts,
 };
 
 // ============================================================================
@@ -811,8 +819,48 @@ export async function teardownArticleGeneratorTest(
       },
     };
 
-    const savedPath = saveTestResult(result);
-    console.log(`\n📄 Test results saved to: ${savedPath}`);
+    // Build briefings if available
+    const queryBriefings = state.json?.draft?.metadata?.queryBriefings ?? [];
+    const briefingsResult: BriefingsTestResult | undefined = queryBriefings.length > 0
+      ? {
+          metadata: {
+            testName: `guide-${config.gameSlug}`,
+            gameName: config.gameName,
+            timestamp: new Date().toISOString(),
+            correlationId: state.json?.draft?.metadata?.correlationId ?? 'unknown',
+          },
+          queryPlan: state.json?.draft?.plan
+            ? {
+                draftTitle: state.json.draft.plan.title ?? '',
+                totalQueries: queryBriefings.length,
+              }
+            : undefined,
+          briefings: queryBriefings.map((b: any) => ({
+            query: b.query ?? '',
+            engine: b.engine ?? 'tavily',
+            purpose: b.purpose ?? '',
+            findings: b.findings ?? '',
+            keyFacts: b.keyFacts ?? [],
+            gaps: b.gaps ?? [],
+            sourceCount: b.sourceCount ?? 0,
+          })),
+          inputContext: {
+            gameName: config.gameName,
+            articleInstruction: config.instruction,
+          },
+        }
+      : undefined;
+
+    // Save all artifacts to a run-specific folder
+    const artifacts = saveAllTestArtifacts(result, briefingsResult);
+    console.log(`\n📁 Test artifacts saved to: ${artifacts.runFolder}`);
+    console.log(`   ├── result.json`);
+    console.log(`   ├── article.md`);
+    if (artifacts.briefingsFolder) {
+      console.log(`   └── briefings/`);
+      console.log(`       ├── briefings.json`);
+      console.log(`       └── briefings.md`);
+    }
   }
 
   if (state.knex) {
