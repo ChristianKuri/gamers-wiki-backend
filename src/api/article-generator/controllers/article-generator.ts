@@ -135,16 +135,16 @@ function extractStoredCosts(draft: GameArticleDraft): StoredCosts {
 
   // Build search costs
   const search = searchCosts ? {
-    ...(searchCosts.tavily && { 
+    ...(searchCosts.tavilySearchCount > 0 && { 
       tavily: { 
-        queries: searchCosts.tavily.queriesUsed, 
-        estimatedCostUsd: searchCosts.tavily.estimatedCostUsd 
+        queries: searchCosts.tavilySearchCount, 
+        estimatedCostUsd: searchCosts.tavilyCostUsd 
       } 
     }),
-    ...(searchCosts.exa && { 
+    ...(searchCosts.exaSearchCount > 0 && { 
       exa: { 
-        queries: searchCosts.exa.queriesUsed, 
-        costUsd: searchCosts.exa.costUsd 
+        queries: searchCosts.exaSearchCount, 
+        costUsd: searchCosts.exaCostUsd 
       } 
     }),
   } : undefined;
