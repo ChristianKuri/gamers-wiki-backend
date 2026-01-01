@@ -680,6 +680,7 @@ export async function setupArticleGeneratorTest(
   console.log(`[E2E Setup] IGDB ID: ${config.igdbId} (${config.gameName})`);
   const headerSecret = secret || mustGetEnv('AI_GENERATION_SECRET');
 
+  console.log('[E2E Setup] Making HTTP request to article generator...');
   state.response = await fetchWithExtendedTimeout(
     `${E2E_CONFIG.strapiUrl}/api/article-generator/generate`,
     {
@@ -697,8 +698,12 @@ export async function setupArticleGeneratorTest(
       timeoutMs: 900000,
     }
   );
+  console.log('[E2E Setup] HTTP response received');
 
+  console.log('[E2E Setup] Reading response body...');
   const responseText = await state.response.text();
+  console.log(`[E2E Setup] Response body length: ${responseText.length} chars`);
+  
   try {
     state.json = JSON.parse(responseText);
   } catch {
@@ -709,6 +714,7 @@ export async function setupArticleGeneratorTest(
   console.log(`[E2E Setup] ✓ Endpoint called in ${duration}s`);
   console.log(`[E2E Setup] Response status: ${state.response.status}`);
   console.log(`[E2E Setup] Success: ${state.json?.success}`);
+  console.log('[E2E Setup] Setup complete, running tests...');
 
   // Pre-extract data for result building
   if (state.json && !state.json.parseError) {
@@ -750,120 +756,145 @@ export async function teardownArticleGeneratorTest(
   state: TestState,
   config: GameTestConfig
 ): Promise<void> {
-  if (state.validationIssues.length > 0) {
-    logValidationSummary(state.validationIssues);
-  }
-
-  // Build and save final result
-  if (
-    state.json &&
-    state.testStartTime &&
-    state.gameInfo &&
-    state.generationStats &&
-    state.articleAnalysis &&
-    state.planAnalysis
-  ) {
-    const errors = state.validationIssues.filter((i) => i.severity === 'error');
-    const reviewerBySeverity = {
-      critical: state.reviewerData.issues.filter((i) => i.severity === 'critical').length,
-      major: state.reviewerData.issues.filter((i) => i.severity === 'major').length,
-      minor: state.reviewerData.issues.filter((i) => i.severity === 'minor').length,
-    };
-
-    const result: E2ETestResult = {
-      metadata: {
-        testName: `guide-${config.gameSlug}`,
-        timestamp: new Date().toISOString(),
-        durationMs: Date.now() - state.testStartTime,
-        passed: errors.length === 0,
-      },
-      input: {
-        igdbId: config.igdbId,
-        instruction: config.instruction,
-        publish: false,
-      },
-      game: state.gameInfo,
-      generation: state.generationStats,
-      article: state.articleAnalysis,
-      plan: state.planAnalysis,
-      quality: {
-        passed: errors.length === 0,
-        issues: state.validationIssues,
-        reviewer: {
-          ran: state.reviewerData.ran,
-          approved: state.reviewerData.approved,
-          issues: state.reviewerData.issues,
-          ...(state.reviewerData.initialIssues &&
-            state.reviewerData.initialIssues.length !== state.reviewerData.issues.length && {
-              initialIssues: state.reviewerData.initialIssues,
-              issuesFixed: state.reviewerData.initialIssues.length - state.reviewerData.issues.length,
-            }),
-          bySeverity: reviewerBySeverity,
-        },
-        recovery: state.recoveryData,
-        checks: {
-          placeholders: {
-            passed: state.qualityChecks.placeholders.length === 0,
-            found: state.qualityChecks.placeholders,
-          },
-          aiCliches: {
-            passed: state.qualityChecks.cliches.found.length < 5,
-            found: state.qualityChecks.cliches.found,
-            totalOccurrences: state.qualityChecks.cliches.total,
-          },
-        },
-      },
-      database: state.dbVerification,
-      rawContent: {
-        markdown: state.json?.draft?.markdown ?? '',
-      },
-    };
-
-    // Build briefings if available
-    const queryBriefings = state.json?.draft?.metadata?.queryBriefings ?? [];
-    const briefingsResult: BriefingsTestResult | undefined = queryBriefings.length > 0
-      ? {
-          metadata: {
-            testName: `guide-${config.gameSlug}`,
-            gameName: config.gameName,
-            timestamp: new Date().toISOString(),
-            correlationId: state.json?.draft?.metadata?.correlationId ?? 'unknown',
-          },
-          queryPlan: state.json?.draft?.plan
-            ? {
-                draftTitle: state.json.draft.plan.title ?? '',
-                totalQueries: queryBriefings.length,
-              }
-            : undefined,
-          briefings: queryBriefings.map((b: any) => ({
-            query: b.query ?? '',
-            engine: b.engine ?? 'tavily',
-            purpose: b.purpose ?? '',
-            findings: b.findings ?? '',
-            keyFacts: b.keyFacts ?? [],
-            gaps: b.gaps ?? [],
-            sourceCount: b.sourceCount ?? 0,
-          })),
-          inputContext: {
-            gameName: config.gameName,
-            articleInstruction: config.instruction,
-          },
-        }
-      : undefined;
-
-    // Save all artifacts to a run-specific folder
-    const artifacts = saveAllTestArtifacts(result, briefingsResult);
-    console.log(`\n📁 Test artifacts saved to: ${artifacts.runFolder}`);
-    console.log(`   ├── result.json`);
-    console.log(`   ├── article.md`);
-    if (artifacts.briefingsFolder) {
-      console.log(`   └── briefings/`);
-      console.log(`       ├── briefings.json`);
-      console.log(`       └── briefings.md`);
+  console.log('[E2E Teardown] Starting teardown...');
+  
+  // Watchdog timer to force exit if teardown hangs (2 minutes max)
+  const watchdog = setTimeout(() => {
+    console.error('[E2E Teardown] ⚠️ Watchdog timeout - forcing process exit');
+    process.exit(1);
+  }, 120000);
+  
+  try {
+    if (state.validationIssues.length > 0) {
+      logValidationSummary(state.validationIssues);
     }
-  }
 
-  if (state.knex) {
-    await state.knex.destroy();
+    console.log('[E2E Teardown] Checking if results should be saved...');
+    console.log(`[E2E Teardown]   state.json: ${!!state.json}`);
+    console.log(`[E2E Teardown]   state.testStartTime: ${!!state.testStartTime}`);
+    console.log(`[E2E Teardown]   state.gameInfo: ${!!state.gameInfo}`);
+    console.log(`[E2E Teardown]   state.generationStats: ${!!state.generationStats}`);
+    console.log(`[E2E Teardown]   state.articleAnalysis: ${!!state.articleAnalysis}`);
+    console.log(`[E2E Teardown]   state.planAnalysis: ${!!state.planAnalysis}`);
+
+    // Build and save final result
+    if (
+      state.json &&
+      state.testStartTime &&
+      state.gameInfo &&
+      state.generationStats &&
+      state.articleAnalysis &&
+      state.planAnalysis
+    ) {
+      const errors = state.validationIssues.filter((i) => i.severity === 'error');
+      const reviewerBySeverity = {
+        critical: state.reviewerData.issues.filter((i) => i.severity === 'critical').length,
+        major: state.reviewerData.issues.filter((i) => i.severity === 'major').length,
+        minor: state.reviewerData.issues.filter((i) => i.severity === 'minor').length,
+      };
+
+      const result: E2ETestResult = {
+        metadata: {
+          testName: `guide-${config.gameSlug}`,
+          timestamp: new Date().toISOString(),
+          durationMs: Date.now() - state.testStartTime,
+          passed: errors.length === 0,
+        },
+        input: {
+          igdbId: config.igdbId,
+          instruction: config.instruction,
+          publish: false,
+        },
+        game: state.gameInfo,
+        generation: state.generationStats,
+        article: state.articleAnalysis,
+        plan: state.planAnalysis,
+        quality: {
+          passed: errors.length === 0,
+          issues: state.validationIssues,
+          reviewer: {
+            ran: state.reviewerData.ran,
+            approved: state.reviewerData.approved,
+            issues: state.reviewerData.issues,
+            ...(state.reviewerData.initialIssues &&
+              state.reviewerData.initialIssues.length !== state.reviewerData.issues.length && {
+                initialIssues: state.reviewerData.initialIssues,
+                issuesFixed: state.reviewerData.initialIssues.length - state.reviewerData.issues.length,
+              }),
+            bySeverity: reviewerBySeverity,
+          },
+          recovery: state.recoveryData,
+          checks: {
+            placeholders: {
+              passed: state.qualityChecks.placeholders.length === 0,
+              found: state.qualityChecks.placeholders,
+            },
+            aiCliches: {
+              passed: state.qualityChecks.cliches.found.length < 5,
+              found: state.qualityChecks.cliches.found,
+              totalOccurrences: state.qualityChecks.cliches.total,
+            },
+          },
+        },
+        database: state.dbVerification,
+        rawContent: {
+          markdown: state.json?.draft?.markdown ?? '',
+        },
+      };
+
+      // Build briefings if available
+      const queryBriefings = state.json?.draft?.metadata?.queryBriefings ?? [];
+      const briefingsResult: BriefingsTestResult | undefined = queryBriefings.length > 0
+        ? {
+            metadata: {
+              testName: `guide-${config.gameSlug}`,
+              gameName: config.gameName,
+              timestamp: new Date().toISOString(),
+              correlationId: state.json?.draft?.metadata?.correlationId ?? 'unknown',
+            },
+            queryPlan: state.json?.draft?.plan
+              ? {
+                  draftTitle: state.json.draft.plan.title ?? '',
+                  totalQueries: queryBriefings.length,
+                }
+              : undefined,
+            briefings: queryBriefings.map((b: any) => ({
+              query: b.query ?? '',
+              engine: b.engine ?? 'tavily',
+              purpose: b.purpose ?? '',
+              findings: b.findings ?? '',
+              keyFacts: b.keyFacts ?? [],
+              gaps: b.gaps ?? [],
+              sourceCount: b.sourceCount ?? 0,
+            })),
+            inputContext: {
+              gameName: config.gameName,
+              articleInstruction: config.instruction,
+            },
+          }
+        : undefined;
+
+      // Save all artifacts to a run-specific folder
+      console.log('[E2E Teardown] Saving test artifacts...');
+      const artifacts = saveAllTestArtifacts(result, briefingsResult);
+      console.log(`\n📁 Test artifacts saved to: ${artifacts.runFolder}`);
+      console.log(`   ├── result.json`);
+      console.log(`   ├── article.md`);
+      if (artifacts.briefingsFolder) {
+        console.log(`   └── briefings/`);
+        console.log(`       ├── briefings.json`);
+        console.log(`       └── briefings.md`);
+      }
+    } else {
+      console.log('[E2E Teardown] ⚠️ Missing required state, skipping result save');
+    }
+
+    console.log('[E2E Teardown] Closing database connection...');
+    if (state.knex) {
+      await state.knex.destroy();
+    }
+    console.log('[E2E Teardown] ✓ Teardown complete');
+  } finally {
+    clearTimeout(watchdog);
   }
 }

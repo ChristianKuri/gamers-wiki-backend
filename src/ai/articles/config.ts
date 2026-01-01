@@ -916,6 +916,12 @@ export const MODEL_PRICING: Record<string, ModelPricing> = {
   'google/gemini-2.5-flash-lite': { inputPer1k: 0.0001, outputPer1k: 0.0004 },
   // Gemini 3 Flash: $0.50/1M input, $3/1M output (per OpenRouter Dec 2025)
   'google/gemini-3-flash-preview': { inputPer1k: 0.0005, outputPer1k: 0.003 },
+
+  // xAI Grok models
+  // Grok 4 Fast: $0.20/1M input, $0.50/1M output (per OpenRouter Dec 2025)
+  'x-ai/grok-4-fast': { inputPer1k: 0.0002, outputPer1k: 0.0005 },
+  // Grok 4.1 Fast: Same pricing as 4 Fast (per OpenRouter Dec 2025)
+  'x-ai/grok-4.1-fast': { inputPer1k: 0.0002, outputPer1k: 0.0005 },
 } as const;
 
 /**

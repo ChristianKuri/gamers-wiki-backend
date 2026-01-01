@@ -32,7 +32,7 @@ describe('generateGameArticleDraft (integration-ish)', () => {
     server.close();
   });
 
-  it('generates a draft with markdown headings and Sources section (Tavily mocked)', async () => {
+  it('generates a draft with markdown headings (Tavily mocked)', async () => {
     // Articles are always generated in English
     const draft = await generateGameArticleDraft({
       gameName: 'The Legend of Zelda: Tears of the Kingdom',
@@ -58,9 +58,8 @@ describe('generateGameArticleDraft (integration-ish)', () => {
     // Markdown shape
     expect(draft.markdown).toMatch(/^#\s+/m);
     expect(draft.markdown).toMatch(/^##\s+/m);
-    expect(draft.markdown).toMatch(/^##\s+Sources\s*$/m);
 
-    // Sources captured
+    // Sources stored separately (not in markdown content)
     expect(draft.sources.length).toBeGreaterThan(0);
   });
 

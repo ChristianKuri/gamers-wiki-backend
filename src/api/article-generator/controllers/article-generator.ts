@@ -4,8 +4,230 @@ import { z } from 'zod';
 import type { DocumentQueryOptions, GameDocument } from '../../../types/strapi';
 import { isAIConfigured } from '../../../ai';
 import { generateGameArticleDraft } from '../../../ai/articles/generate-game-article';
+import type { GameArticleDraft } from '../../../ai/articles/types';
 import { importOrGetGameByIgdbId, GameImportError } from '../../game-fetcher/services/import-game-programmatic';
 import { resolveIGDBGameIdFromQuery } from '../../game-fetcher/services/game-resolver';
+
+/**
+ * Cost breakdown by phase stored in the database.
+ */
+interface PhaseCost {
+  model: string;
+  durationMs: number;
+  tokens?: { input: number; output: number };
+  costUsd?: number;
+}
+
+/**
+ * All cost and performance data stored in the database.
+ */
+interface StoredCosts {
+  /** Correlation ID for log tracing */
+  generationId: string;
+  /** Total generation duration in ms */
+  totalDurationMs: number;
+  /** Total estimated cost (LLM + Search + Cleaner) */
+  totalCostUsd?: number;
+  /** Cost and performance breakdown by phase */
+  phases: {
+    scout: PhaseCost;
+    editor: PhaseCost;
+    specialist: PhaseCost;
+    reviewer?: PhaseCost;
+    fixer?: PhaseCost;
+  };
+  /** Cleaner costs (content extraction/summarization) */
+  cleaner?: {
+    tokens: { input: number; output: number };
+    costUsd?: number;
+  };
+  /** Search API costs */
+  search?: {
+    tavily?: { queries: number; estimatedCostUsd: number };
+    exa?: { queries: number; costUsd: number };
+  };
+  /** Research statistics */
+  research: {
+    queriesExecuted: number;
+    sourcesCollected: number;
+    confidence: string;
+  };
+  /** Quality metrics from review/fix cycle */
+  quality: {
+    fixerIterations: number;
+    issuesFixed: number;
+    finalApproved: boolean;
+    remainingIssues: number;
+  };
+  /** ISO timestamp when generation completed */
+  generatedAt: string;
+}
+
+/**
+ * Article plan stored in the database.
+ */
+interface StoredPlan {
+  title: string;
+  gameName: string;
+  categorySlug: string;
+  sections: Array<{
+    headline: string;
+    goal: string;
+    researchQueries: string[];
+    mustCover: string[];
+  }>;
+  requiredElements: string[];
+}
+
+/**
+ * Extract costs data from a draft for database storage.
+ */
+function extractStoredCosts(draft: GameArticleDraft): StoredCosts {
+  const meta = draft.metadata;
+  const tokenUsage = meta.tokenUsage;
+  const searchCosts = meta.searchApiCosts;
+
+  // Build phase costs
+  const phases: StoredCosts['phases'] = {
+    scout: {
+      model: draft.models.scout,
+      durationMs: meta.phaseDurations.scout,
+      tokens: tokenUsage?.scout ? { input: tokenUsage.scout.input, output: tokenUsage.scout.output } : undefined,
+      costUsd: tokenUsage?.scout?.actualCostUsd,
+    },
+    editor: {
+      model: draft.models.editor,
+      durationMs: meta.phaseDurations.editor,
+      tokens: tokenUsage?.editor ? { input: tokenUsage.editor.input, output: tokenUsage.editor.output } : undefined,
+      costUsd: tokenUsage?.editor?.actualCostUsd,
+    },
+    specialist: {
+      model: draft.models.specialist,
+      durationMs: meta.phaseDurations.specialist,
+      tokens: tokenUsage?.specialist ? { input: tokenUsage.specialist.input, output: tokenUsage.specialist.output } : undefined,
+      costUsd: tokenUsage?.specialist?.actualCostUsd,
+    },
+  };
+
+  // Add reviewer if it ran
+  if (draft.models.reviewer && meta.phaseDurations.reviewer > 0) {
+    phases.reviewer = {
+      model: draft.models.reviewer,
+      durationMs: meta.phaseDurations.reviewer,
+      tokens: tokenUsage?.reviewer ? { input: tokenUsage.reviewer.input, output: tokenUsage.reviewer.output } : undefined,
+      costUsd: tokenUsage?.reviewer?.actualCostUsd,
+    };
+  }
+
+  // Add fixer if it ran (uses reviewer model, tokens included in reviewer totals)
+  if (meta.phaseDurations.fixer && meta.phaseDurations.fixer > 0) {
+    phases.fixer = {
+      model: draft.models.reviewer ?? draft.models.specialist,
+      durationMs: meta.phaseDurations.fixer,
+    };
+  }
+
+  // Build cleaner costs
+  const cleaner = tokenUsage?.cleaner ? {
+    tokens: { input: tokenUsage.cleaner.input, output: tokenUsage.cleaner.output },
+    costUsd: tokenUsage.cleaner.actualCostUsd,
+  } : undefined;
+
+  // Build search costs
+  const search = searchCosts ? {
+    ...(searchCosts.tavily && { 
+      tavily: { 
+        queries: searchCosts.tavily.queriesUsed, 
+        estimatedCostUsd: searchCosts.tavily.estimatedCostUsd 
+      } 
+    }),
+    ...(searchCosts.exa && { 
+      exa: { 
+        queries: searchCosts.exa.queriesUsed, 
+        costUsd: searchCosts.exa.costUsd 
+      } 
+    }),
+  } : undefined;
+
+  return {
+    generationId: meta.correlationId,
+    totalDurationMs: meta.totalDurationMs,
+    totalCostUsd: meta.totalEstimatedCostUsd,
+    phases,
+    cleaner,
+    search,
+    research: {
+      queriesExecuted: meta.queriesExecuted,
+      sourcesCollected: meta.sourcesCollected,
+      confidence: meta.researchConfidence,
+    },
+    quality: {
+      fixerIterations: meta.recovery?.fixerIterations ?? 0,
+      issuesFixed: meta.recovery?.fixesApplied?.filter(f => f.success).length ?? 0,
+      finalApproved: draft.reviewerApproved ?? true,
+      remainingIssues: draft.reviewerIssues?.length ?? 0,
+    },
+    generatedAt: meta.generatedAt,
+  };
+}
+
+/**
+ * Extract plan from a draft for database storage.
+ */
+function extractStoredPlan(draft: GameArticleDraft): StoredPlan {
+  return {
+    title: draft.plan.title,
+    gameName: draft.plan.gameName,
+    categorySlug: draft.plan.categorySlug,
+    sections: draft.plan.sections.map(s => ({
+      headline: s.headline,
+      goal: s.goal,
+      researchQueries: [...s.researchQueries],
+      mustCover: [...s.mustCover],
+    })),
+    requiredElements: [...draft.plan.requiredElements],
+  };
+}
+
+/**
+ * Sources data stored in the database with domain analysis.
+ */
+interface StoredSources {
+  count: number;
+  uniqueDomains: number;
+  topDomains: string[];
+  domainBreakdown: Record<string, number>;
+  urls: string[];
+}
+
+/**
+ * Extract sources with domain analysis from a draft for database storage.
+ */
+function extractStoredSources(sources: readonly string[]): StoredSources {
+  const domainBreakdown: Record<string, number> = {};
+  
+  for (const source of sources) {
+    try {
+      const url = new URL(source);
+      const domain = url.hostname.replace(/^www\./, '');
+      domainBreakdown[domain] = (domainBreakdown[domain] || 0) + 1;
+    } catch {
+      // Invalid URL, skip
+    }
+  }
+  
+  const sortedDomains = Object.entries(domainBreakdown)
+    .sort((a, b) => b[1] - a[1])
+    .map(([domain]) => domain);
+  
+  return {
+    count: sources.length,
+    uniqueDomains: sortedDomains.length,
+    topDomains: sortedDomains.slice(0, 10),
+    domainBreakdown,
+    urls: [...sources],
+  };
+}
 
 interface CategoryDocument {
   id: number;
@@ -198,6 +420,11 @@ export default ({ strapi }: { strapi: Core.Strapi }) => ({
       return ctx.internalServerError(`Category not found for slug: ${draft.categorySlug}`);
     }
 
+    // Extract structured data for DB storage
+    const costs = extractStoredCosts(draft);
+    const plan = extractStoredPlan(draft);
+    const sources = extractStoredSources(draft.sources);
+
     // Create a draft post (Strapi draftAndPublish: true)
     const created = await postService.create({
       locale,
@@ -210,6 +437,9 @@ export default ({ strapi }: { strapi: Core.Strapi }) => ({
         aiModel: JSON.stringify(draft.models),
         aiGeneratedAt: new Date().toISOString(),
         aiWorkflow: 'deep-dive-v1',
+        plan,     // Article plan (sections, goals, research queries)
+        costs,    // All cost/performance data by phase
+        sources,  // Source URLs with domain analysis
         // Use Document Service relation syntax to avoid ambiguity between
         // numeric DB IDs vs document IDs (UUIDs).
         category: { connect: [categoryMatch.documentId] } as any,

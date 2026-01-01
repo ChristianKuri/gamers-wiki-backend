@@ -643,14 +643,6 @@ function calculateResearchContentLength(research: readonly CategorizedSearchResu
 }
 
 /**
- * Formats sources section for markdown.
- */
-function formatSources(urls: readonly string[]): string {
-  if (urls.length === 0) return '';
-  return ['## Sources', ...urls.map((u) => `- ${u}`), ''].join('\n');
-}
-
-/**
  * Ensures unique strings up to a maximum count.
  */
 function ensureUniqueStrings(values: readonly string[], max: number): string[] {
@@ -1002,10 +994,9 @@ export async function runSpecialist(
     }
   }
 
-  // Collect all sources from research pool
+  // Collect all sources from research pool (stored in separate DB column, not in article content)
   const allSources = Array.from(enrichedPool.allUrls);
   const finalUrls = ensureUniqueStrings(allSources, SPECIALIST_CONFIG.MAX_SOURCES);
-  markdown += formatSources(finalUrls);
 
   // Log source usage summary
   log.info(`Source content usage: ${allSourceUsage.length} sources`);

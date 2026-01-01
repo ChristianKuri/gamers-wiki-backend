@@ -60,7 +60,7 @@ export const AI_DEFAULT_MODELS = {
   LANGUAGE_DESCRIPTIONS: 'deepseek/deepseek-v3.2',
   ARTICLE_SCOUT: 'google/gemini-3-flash-preview',
   ARTICLE_EDITOR: 'google/gemini-3-flash-preview',
-  ARTICLE_SPECIALIST: 'google/gemini-3-flash-preview',
+  ARTICLE_SPECIALIST: 'x-ai/grok-4.1-fast',
   ARTICLE_REVIEWER: 'google/gemini-3-flash-preview',
   ARTICLE_CLEANER: 'google/gemini-3-flash-preview',
   ARTICLE_PREFILTER: 'google/gemini-2.5-flash-lite',

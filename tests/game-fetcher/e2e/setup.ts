@@ -97,6 +97,18 @@ export async function createDbConnection(): Promise<Knex> {
       user: E2E_CONFIG.dbUser,
       password: E2E_CONFIG.dbPassword,
     },
+    pool: {
+      min: 0,
+      max: 5,
+      // Timeout for acquiring a connection from the pool (30s)
+      acquireTimeoutMillis: 30000,
+      // How long a connection can be idle before being released (60s)
+      idleTimeoutMillis: 60000,
+      // How often to check for idle connections (30s)
+      reapIntervalMillis: 30000,
+    },
+    // Timeout for acquiring a connection (Knex-level, 30s)
+    acquireConnectionTimeout: 30000,
   });
 }
 
