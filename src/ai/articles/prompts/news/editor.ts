@@ -1,4 +1,5 @@
 import type { EditorPromptContext, EditorPrompts } from '../shared/editor';
+import { SEO_TITLE_GUIDANCE } from '../shared/editor-utils';
 import { buildRequiredElementHints } from '../shared/editor-utils';
 
 export const editorPrompts: EditorPrompts = {
@@ -23,13 +24,15 @@ ${localeInstruction}`;
 
     return `Design a NEWS article plan for "${ctx.gameName}".
 ${validationFeedbackSection}
-Suggested title from Scout: "${ctx.draftTitle}"
+Suggested title from Scout (STARTING POINT ONLY): "${ctx.draftTitle}"
 
 === RESEARCH BRIEFINGS ===
 ${ctx.queryBriefingsSummary}
 
 === ${ctx.existingResearchSummary}
 ${ctx.topSourcesSummary ? `\n${ctx.topSourcesSummary}\n` : ''}
+${SEO_TITLE_GUIDANCE}
+
 === NEWS STRUCTURE ===
 The article MUST be a 'news' category.
 Inverted Pyramid structure:

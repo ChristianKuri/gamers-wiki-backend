@@ -192,10 +192,12 @@ function validateTemperature(value: number, name: string): void {
  * ALL validation constants should live here - no magic numbers elsewhere.
  */
 export const ARTICLE_PLAN_CONSTRAINTS = {
-  // Title constraints
-  TITLE_MIN_LENGTH: 10,
-  TITLE_MAX_LENGTH: 100,
-  TITLE_RECOMMENDED_MAX_LENGTH: 70,
+  // Title constraints - optimized for SEO visibility
+  // Google truncates at ~60 chars, so we target 50-65 for full visibility
+  TITLE_MIN_LENGTH: 30,
+  TITLE_MAX_LENGTH: 65,
+  /** @deprecated Use TITLE_MAX_LENGTH (65) - this was too generous for SEO */
+  TITLE_RECOMMENDED_MAX_LENGTH: 65,
 
   // Excerpt constraints (for SEO meta description)
   // Google typically shows 150-160 chars, but can display up to 300
@@ -543,8 +545,8 @@ export const SPECIALIST_CONFIG = {
 export const SEO_CONSTRAINTS = {
   /** Optimal minimum title length for SERP display */
   TITLE_OPTIMAL_MIN: 30,
-  /** Optimal maximum title length before truncation */
-  TITLE_OPTIMAL_MAX: 60,
+  /** Optimal maximum title length before truncation (Google cuts at ~60) */
+  TITLE_OPTIMAL_MAX: 65,
   /** Optimal minimum excerpt/meta description length */
   EXCERPT_OPTIMAL_MIN: 120,
   /** Optimal maximum excerpt/meta description length */

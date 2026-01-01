@@ -1,5 +1,5 @@
 import type { EditorPromptContext, EditorPrompts } from '../shared/editor';
-import { buildRequiredElementHints } from '../shared/editor-utils';
+import { buildRequiredElementHints, SEO_TITLE_GUIDANCE } from '../shared/editor-utils';
 
 export const editorPrompts: EditorPrompts = {
   getSystemPrompt(localeInstruction: string): string {
@@ -64,7 +64,7 @@ ${localeInstruction}`;
       : '';
 
 
-    const titleHint = `\nSuggested title from Scout: "${ctx.draftTitle}"\n`;
+    const titleHint = `\nSuggested title from Scout (STARTING POINT ONLY): "${ctx.draftTitle}"\n`;
     const researchSection = `=== RESEARCH BRIEFINGS (Per-Query Synthesis) ===\n${ctx.queryBriefingsSummary}`;
 
     return `Create a COMPLETE guide plan for "${ctx.gameName}".
@@ -149,10 +149,13 @@ VERIFICATION CHECKLIST:
 □ No section has 0 mustCover items
 □ All controls use [X] bracket format with action verbs
 □ All locations have Parent > Child hierarchy
+□ Title is 50-65 characters and SEO-optimized (see guidance below)
+
+${SEO_TITLE_GUIDANCE}
 
 OUTPUT STRUCTURE:
 {
-  "title": "Clear, actionable title with game name",
+  "title": "How to Beat Boss Name in Game Name: Complete Strategy" // 55-65 chars, descriptive, natural flow!
   "categorySlug": "guides",
   "excerpt": "120-160 char description of what the guide accomplishes",
   "tags": ["game-name", "topic", "key-item-or-ability"],

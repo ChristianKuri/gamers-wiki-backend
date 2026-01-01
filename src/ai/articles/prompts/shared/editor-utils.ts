@@ -246,3 +246,67 @@ export function buildTopSourcesSummary(scoutOutput: ScoutOutput): string {
 
   return sections.join('\n');
 }
+
+// ============================================================================ 
+// SEO Title Guidance
+// ============================================================================ 
+
+/**
+ * SEO title crafting guidance for Editor prompts.
+ * Titles must work for: users, search engines, and AI assistants.
+ */
+export const SEO_TITLE_GUIDANCE = `
+=== 🎯 TITLE CRAFTING (CRITICAL FOR SEO & DISCOVERABILITY) ===
+
+Your title is the FIRST thing users AND AI assistants see. Make it descriptive and compelling!
+
+📏 LENGTH REQUIREMENTS:
+• Target: 55-65 characters (sweet spot: descriptive but not truncated)
+• Minimum: 45 characters (don't be too brief - readers need context!)
+• Maximum: 65 characters (hard limit - Google truncates beyond this)
+• The Scout's "Suggested title" is just a starting point — CRAFT A BETTER ONE!
+
+🔍 OPTIMIZATION PRIORITIES (in order):
+1. DESCRIPTIVE: Reader AND AI instantly understand what the article covers
+2. NATURAL FLOW: Write like a sentence, not a keyword list
+3. GAME NAME: Include the full game name naturally in the title
+4. SPECIFIC TOPIC: Name the boss, feature, mechanic, or subject clearly
+5. ARTICLE TYPE: Indicate what kind of content (Strategy, Guide, Tips, Build)
+
+✅ GREAT TITLE EXAMPLES (descriptive, natural flow):
+• "Beat Simon the Divergent Star in Clair Obscur Expedition 33" (60 chars)
+• "Malenia Boss Strategy Guide for Elden Ring Players" (51 chars)
+• "Best Early Game Armor Locations in Zelda Tears of the Kingdom" (62 chars)
+• "Complete Karlach Romance Guide for Baldur's Gate 3" (51 chars)
+• "How to Master Ultrahand in Zelda TotK: Essential Tips" (54 chars)
+
+❌ BAD TITLE PATTERNS:
+• "Simon Boss Guide | Clair Obscur" → Too brief, pipe breaks natural flow
+• "Topic | Game Name" → Pipe separators feel robotic, not human
+• "Everything You Need to Know..." → Wastes chars, says nothing specific
+• Missing game name → Users AND AIs won't know what game it's for
+• Under 45 chars → Too vague, lacks context for AI retrieval
+• Over 65 chars → Gets truncated in search results
+
+🧠 THINK LIKE A USER AND AN AI:
+What would someone ask Google OR ChatGPT? Match that natural phrasing!
+• User searches: "how to beat simon clair obscur"
+• AI query: "strategies for Simon boss in Clair Obscur Expedition 33"
+→ Good title: "Beat Simon the Divergent Star in Clair Obscur Expedition 33"
+
+Write titles as natural sentences that answer the user's question:
+• "Best Starting Classes for New Elden Ring Players" ✅
+• "Elden Ring Classes Ranked | Best Starter" ❌ (pipe, keyword-stuffed)
+
+⚡ AI/LLM OPTIMIZATION (IMPORTANT):
+Modern AI assistants (ChatGPT, Claude, Perplexity) use titles to:
+• Decide if your article answers a user's question
+• Extract meaning for RAG retrieval
+• Cite your content in responses
+
+Make titles that AI can understand at a glance:
+• Descriptive and specific (not vague clickbait)
+• Natural language (complete phrases, not fragments)
+• Include the key entities (game name, boss name, feature name)
+• Sound like something a human would say, not SEO keyword soup
+` as const;

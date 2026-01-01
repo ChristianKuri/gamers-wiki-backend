@@ -640,7 +640,7 @@ describe('generateGameArticleDraft (integration-ish)', () => {
       // Create a guides category plan (normally sequential)
       // Must have at least 4 sections (MIN_SECTIONS = 4)
       const guidesPlan = {
-        title: 'Beginner Guide for Test Game',
+        title: 'Test Game Beginner Guide: Getting Started Tips',
         categorySlug: 'guides',
         excerpt:
           'Learn the basics of Test Game with this comprehensive beginner guide covering everything new players need to know to get started.',
@@ -780,7 +780,7 @@ describe('generateGameArticleDraft (integration-ish)', () => {
       // Create a lists category plan (normally parallel)
       // Must have at least 4 sections (MIN_SECTIONS = 4)
       const listsPlan = {
-        title: 'Top 5 Weapons in Test Game',
+        title: 'Top 5 Best Weapons in Test Game (Ranked)',
         categorySlug: 'lists',
         excerpt:
           'Discover the most powerful weapons in Test Game, ranked by damage output and versatility for both beginners and veteran players.',
