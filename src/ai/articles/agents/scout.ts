@@ -47,6 +47,7 @@ import {
   createEmptyTokenUsage,
   createTokenUsageFromResult,
   type CategorizedSearchResult,
+  type CleanerTokenUsage,
   type DiscoveryCheck,
   type DuplicateUrlInfo,
   type FilteredSourceSummary,
@@ -80,7 +81,11 @@ export { SCOUT_CONFIG } from '../config';
 export interface ScoutSearchResult {
   /** The categorized search result */
   readonly result: CategorizedSearchResult;
-  /** Token usage from cleaning operations (if any) */
+  /** Token usage from pre-filter LLM calls (quick relevance check) */
+  readonly prefilterTokenUsage: TokenUsage;
+  /** Token usage from extraction LLM calls (full cleaning) */
+  readonly extractionTokenUsage: TokenUsage;
+  /** Combined token usage from all cleaning operations (for backwards compat) */
   readonly cleaningTokenUsage: TokenUsage;
   /** Sources filtered out due to low quality or relevance */
   readonly filteredSources: readonly FilteredSourceSummary[];
@@ -109,6 +114,13 @@ export interface ScoutDeps {
    */
   readonly generateObject?: typeof import('ai').generateObject;
   readonly model: LanguageModel;
+  /**
+   * Optional separate model for briefing generation.
+   * Briefings are free-form text (no Zod schema), so can use models
+   * that are better at creative writing but worse at structured output.
+   * Defaults to `model` if not provided.
+   */
+  readonly briefingModel?: LanguageModel;
   readonly logger?: Logger;
   /** Optional AbortSignal for cancellation support */
   readonly signal?: AbortSignal;
@@ -210,6 +222,8 @@ export async function executeSearch(
     );
     return {
       result: cleaningResult.result,
+      prefilterTokenUsage: cleaningResult.prefilterTokenUsage,
+      extractionTokenUsage: cleaningResult.extractionTokenUsage,
       cleaningTokenUsage: cleaningResult.cleaningTokenUsage,
       filteredSources: cleaningResult.filteredSources,
     };
@@ -218,6 +232,8 @@ export async function executeSearch(
   // Pass through cost from Tavily response if available
   return {
     result: processSearchResults(query, category, result, 'tavily', result.costUsd),
+    prefilterTokenUsage: createEmptyTokenUsage(),
+    extractionTokenUsage: createEmptyTokenUsage(),
     cleaningTokenUsage: createEmptyTokenUsage(),
     filteredSources: [],
   };
@@ -297,6 +313,8 @@ export async function executeExaSearch(
     );
     return {
       result: cleaningResult.result,
+      prefilterTokenUsage: cleaningResult.prefilterTokenUsage,
+      extractionTokenUsage: cleaningResult.extractionTokenUsage,
       cleaningTokenUsage: cleaningResult.cleaningTokenUsage,
       filteredSources: cleaningResult.filteredSources,
     };
@@ -306,6 +324,8 @@ export async function executeExaSearch(
   // Preserve both content AND summary for hybrid approach
   return {
     result: processSearchResults(query, category, rawResults, 'exa' as SearchSource, costUsd),
+    prefilterTokenUsage: createEmptyTokenUsage(),
+    extractionTokenUsage: createEmptyTokenUsage(),
     cleaningTokenUsage: createEmptyTokenUsage(),
     filteredSources: [],
   };
@@ -408,11 +428,11 @@ export async function generateQueryBriefing(
 Your job is to extract specific findings relevant to the query's purpose.
 
 Output format:
-1. FINDINGS: A concise paragraph summarizing what was found (2-4 sentences)
-2. KEY FACTS: 3-5 bullet points of specific facts (names, numbers, dates)
+1. FINDINGS: A comprehensive summary of what was found (5-8 sentences). Include specific details, mechanics, names, numbers, locations, and strategies. This is the main content that will inform article writing.
+2. KEY FACTS: 5-7 bullet points of specific facts (names, numbers, dates, locations)
 3. GAPS: What information was NOT found that would be useful
 
-Be specific and factual. Include actual names, numbers, and details from the sources.`;
+Be thorough and specific. Prioritize actionable information and concrete details from the sources. Include actual names, numbers, and details from the sources.`;
 
   const userPrompt = `Query: "${planned.query}"
 Purpose: ${planned.purpose}
@@ -456,8 +476,8 @@ Synthesize the findings for this query:`;
     engine: planned.engine,
     purpose: planned.purpose,
     findings,
-    keyFacts: extractBullets(keyFactsRaw).slice(0, 5),
-    gaps: extractBullets(gapsRaw).slice(0, 3),
+    keyFacts: extractBullets(keyFactsRaw).slice(0, 7),
+    gaps: extractBullets(gapsRaw).slice(0, 5),
     sourceCount: searchResult.results.length,
   };
 
@@ -625,7 +645,8 @@ export function extractTopSourcesPerQuery(
  * Options for assembling ScoutOutput.
  */
 export interface AssembleScoutOutputOptions {
-  readonly cleaningTokenUsage?: TokenUsage;
+  /** Cleaning token usage with prefilter/extraction breakdown */
+  readonly cleaningTokenUsage?: CleanerTokenUsage;
   readonly filteredSources?: readonly FilteredSourceSummary[];
   readonly duplicatedUrls?: readonly DuplicateUrlInfo[];
   readonly queryStats?: readonly SearchQueryStats[];
@@ -642,7 +663,8 @@ export interface AssembleScoutOutputOptions {
  * @param discoveryCheck - Discovery check result
  * @param queryBriefings - Per-query briefings
  * @param researchPool - Built research pool
- * @param tokenUsage - Aggregated token usage from LLM calls
+ * @param queryPlanningTokenUsage - Token usage from query planning LLM calls
+ * @param briefingTokenUsage - Token usage from briefing generation LLM calls
  * @param confidence - Research confidence level
  * @param searchApiCosts - Aggregated search API costs
  * @param options - Optional additional data (cleaning usage, filtered sources, duplicates)
@@ -653,7 +675,8 @@ export function assembleScoutOutput(
   discoveryCheck: DiscoveryCheck,
   queryBriefings: readonly QueryBriefing[],
   researchPool: ResearchPool,
-  tokenUsage: TokenUsage,
+  queryPlanningTokenUsage: TokenUsage,
+  briefingTokenUsage: TokenUsage,
   confidence: ResearchConfidence,
   searchApiCosts: SearchApiCosts,
   options: AssembleScoutOutputOptions = {}
@@ -668,6 +691,9 @@ export function assembleScoutOutput(
     sourceSummaries,
   } = options;
 
+  // Combine query planning and briefing for backwards-compatible tokenUsage field
+  const combinedTokenUsage = addTokenUsage(queryPlanningTokenUsage, briefingTokenUsage);
+
   const output: ScoutOutput = {
     queryPlan,
     discoveryCheck,
@@ -676,7 +702,9 @@ export function assembleScoutOutput(
     ...(sourceSummaries && sourceSummaries.length > 0 ? { sourceSummaries } : {}),
     researchPool,
     sourceUrls: Array.from(researchPool.allUrls),
-    tokenUsage,
+    queryPlanningTokenUsage,
+    briefingTokenUsage,
+    tokenUsage: combinedTokenUsage,
     confidence,
     searchApiCosts,
     filteredSources,
@@ -686,7 +714,7 @@ export function assembleScoutOutput(
   };
 
   // Only include cleaningTokenUsage if there was actual cleaning
-  if (cleaningTokenUsage && (cleaningTokenUsage.input > 0 || cleaningTokenUsage.output > 0)) {
+  if (cleaningTokenUsage && (cleaningTokenUsage.total.input > 0 || cleaningTokenUsage.total.output > 0)) {
     return { ...output, cleaningTokenUsage };
   }
 
@@ -905,16 +933,30 @@ export async function runScout(
   const researchPool = poolBuilder.build();
 
   // ===== AGGREGATE CLEANING TOKEN USAGE =====
-  // Cleaning token usage includes actual LLM costs from OpenRouter
-  let cleaningTokenUsage = createEmptyTokenUsage();
+  // Track prefilter and extraction separately for cost visibility
+  let prefilterTokenUsage = createEmptyTokenUsage();
+  let extractionTokenUsage = createEmptyTokenUsage();
   for (const searchResult of [...tavilyResults, ...exaResults]) {
-    cleaningTokenUsage = addTokenUsage(cleaningTokenUsage, searchResult.cleaningTokenUsage);
+    prefilterTokenUsage = addTokenUsage(prefilterTokenUsage, searchResult.prefilterTokenUsage);
+    extractionTokenUsage = addTokenUsage(extractionTokenUsage, searchResult.extractionTokenUsage);
   }
 
-  if (cleaningTokenUsage.input > 0 || cleaningTokenUsage.output > 0) {
-    const cleaningCost = cleaningTokenUsage.actualCostUsd?.toFixed(4) ?? 'N/A';
+  // Build CleanerTokenUsage structure with sub-phase breakdown
+  const cleanerTotal = addTokenUsage(prefilterTokenUsage, extractionTokenUsage);
+  const cleaningTokenUsage: CleanerTokenUsage | undefined = 
+    (cleanerTotal.input > 0 || cleanerTotal.output > 0) 
+      ? {
+          prefilter: prefilterTokenUsage,
+          extraction: extractionTokenUsage,
+          total: cleanerTotal,
+        }
+      : undefined;
+
+  if (cleaningTokenUsage) {
+    const cleaningCost = cleaningTokenUsage.total.actualCostUsd?.toFixed(4) ?? 'N/A';
     log.debug(
-      `Content cleaning: ${cleaningTokenUsage.input} input / ${cleaningTokenUsage.output} output tokens, $${cleaningCost} cost`
+      `Content cleaning: ${cleaningTokenUsage.total.input} input / ${cleaningTokenUsage.total.output} output tokens, $${cleaningCost} cost ` +
+      `(prefilter: $${prefilterTokenUsage.actualCostUsd?.toFixed(4) ?? '0'}, extraction: $${extractionTokenUsage.actualCostUsd?.toFixed(4) ?? '0'})`
     );
   }
 
@@ -1002,6 +1044,7 @@ export async function runScout(
   }
 
   // Generate per-query briefings
+  // Use separate briefingModel if provided (allows using creative models for free-form text)
   log.info('Generating per-query briefings...');
   deps.onProgress?.('briefing', 0, queryPlan.queries.length);
   
@@ -1010,7 +1053,7 @@ export async function runScout(
     searchResultsByQuery,
     {
       generateText: deps.generateText,
-      model: deps.model,
+      model: deps.briefingModel ?? deps.model,
       temperature,
       signal,
       logger: log,
@@ -1021,10 +1064,8 @@ export async function runScout(
   log.info(`Generated ${queryBriefings.length} per-query briefings`);
   deps.onProgress?.('briefing', queryBriefings.length, queryPlan.queries.length);
 
-  // ===== AGGREGATE TOKEN USAGE =====
-  let tokenUsage = createEmptyTokenUsage();
-  tokenUsage = addTokenUsage(tokenUsage, queryPlanningTokenUsage);
-  tokenUsage = addTokenUsage(tokenUsage, queryBriefingsTokenUsage);
+  // Token usages are now passed separately to assembleScoutOutput
+  // queryPlanningTokenUsage and queryBriefingsTokenUsage are tracked above
 
   // ===== CALCULATE CONFIDENCE =====
   // Calculate based on source count, query count, and briefing quality
@@ -1066,7 +1107,8 @@ export async function runScout(
     discoveryCheck,
     queryBriefings,
     researchPool,
-    tokenUsage,
+    queryPlanningTokenUsage,
+    queryBriefingsTokenUsage,
     confidence,
     searchApiCosts,
     {

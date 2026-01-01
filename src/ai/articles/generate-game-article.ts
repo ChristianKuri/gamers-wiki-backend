@@ -86,6 +86,7 @@ import {
   type GameArticleDraft,
   type RecoveryMetadata,
   type ScoutOutput,
+  type ScoutTokenUsage,
   type SearchApiCosts,
   type SourceContentUsage,
   type TokenUsage,
@@ -530,7 +531,8 @@ interface PhaseContext {
  */
 async function executeScoutPhase(
   phaseContext: PhaseContext,
-  scoutModel: string
+  scoutModel: string,
+  scoutBriefingModel: string
 ): Promise<PhaseResult<ScoutOutput>> {
   const { context, deps, basePhaseOptions, log, progressTracker, phaseTimer, temperatureOverrides, cleaningDeps } = phaseContext;
 
@@ -547,6 +549,7 @@ async function executeScoutPhase(
         generateText: deps.generateText,
         generateObject: deps.generateObject,
         model: deps.openrouter(scoutModel),
+        briefingModel: deps.openrouter(scoutBriefingModel),
         logger: createPrefixedLogger('[Scout]'),
         signal: basePhaseOptions.signal,
         temperature: temperatureOverrides?.scout,
@@ -960,8 +963,10 @@ export async function generateGameArticleDraft(
   const { openrouter, search, generateText: genText, generateObject: genObject, strapi } = mergedDeps;
 
   const scoutModel = getModel('ARTICLE_SCOUT');
+  const scoutBriefingModel = getModel('ARTICLE_SCOUT_BRIEFING');
   const editorModel = getModel('ARTICLE_EDITOR');
   const specialistModel = getModel('ARTICLE_SPECIALIST');
+  const fixerModel = getModel('ARTICLE_FIXER');
   const cleanerModel = getModel('ARTICLE_CLEANER');
   const prefilterModel = getModel('ARTICLE_PREFILTER');
 
@@ -1048,7 +1053,7 @@ export async function generateGameArticleDraft(
   };
 
   // ===== PHASE 1: SCOUT =====
-  const scoutResult = await executeScoutPhase(phaseContext, scoutModel);
+  const scoutResult = await executeScoutPhase(phaseContext, scoutModel, scoutBriefingModel);
   const scoutOutput = scoutResult.output;
 
   // ===== PHASE 2: EDITOR (with retry) =====
@@ -1123,7 +1128,7 @@ export async function generateGameArticleDraft(
     const fixerDeps: FixerDeps = {
       generateText: resolvedDeps.generateText,
       generateObject: resolvedDeps.generateObject,
-      model: resolvedDeps.openrouter(reviewerModel), // Reuse reviewer model for fixer
+      model: resolvedDeps.openrouter(fixerModel),
       logger: createPrefixedLogger('[Fixer]'),
       signal: basePhaseOptions.signal,
       temperature: FIXER_CONFIG.TEMPERATURE,
@@ -1355,27 +1360,33 @@ export async function generateGameArticleDraft(
   );
   progressTracker.completePhase('validation', 'Article validated successfully');
 
-  // Aggregate token usage from all phases (use total editor usage for retries)
-  const scoutTokenUsage = scoutOutput.tokenUsage;
+  // Build ScoutTokenUsage with sub-phase breakdown
+  const scoutTokenUsageBreakdown: ScoutTokenUsage = {
+    queryPlanning: scoutOutput.queryPlanningTokenUsage,
+    briefing: scoutOutput.briefingTokenUsage,
+    total: scoutOutput.tokenUsage,
+  };
   const cleanerTokenUsage = scoutOutput.cleaningTokenUsage;
+  
+  // Aggregate token usage from all phases
   let totalTokenUsage = addTokenUsage(
-    addTokenUsage(scoutTokenUsage, editorTotalTokenUsage),
+    addTokenUsage(scoutOutput.tokenUsage, editorTotalTokenUsage),
     specialistTokenUsage
   );
 
-  // Add reviewer token usage if available (includes Fixer re-reviews)
+  // Add reviewer token usage if available (excludes Fixer - now tracked separately)
   if (shouldRunReviewer && reviewerTokenUsage) {
     totalTokenUsage = addTokenUsage(totalTokenUsage, reviewerTokenUsage);
   }
 
-  // Add fixer token usage if any fixes were applied
+  // Add fixer token usage if any fixes were applied (tracked separately for visibility)
   if (fixerTokenUsage.input > 0 || fixerTokenUsage.output > 0) {
     totalTokenUsage = addTokenUsage(totalTokenUsage, fixerTokenUsage);
   }
 
   // Add cleaner token usage if content was cleaned
-  if (cleanerTokenUsage && (cleanerTokenUsage.input > 0 || cleanerTokenUsage.output > 0)) {
-    totalTokenUsage = addTokenUsage(totalTokenUsage, cleanerTokenUsage);
+  if (cleanerTokenUsage && (cleanerTokenUsage.total.input > 0 || cleanerTokenUsage.total.output > 0)) {
+    totalTokenUsage = addTokenUsage(totalTokenUsage, cleanerTokenUsage.total);
   }
 
   // Check if any tokens were reported (some APIs may not report usage)
@@ -1392,17 +1403,25 @@ export async function generateGameArticleDraft(
   }
 
   // Log cleaning costs separately for visibility
-  if (cleanerTokenUsage && cleanerTokenUsage.actualCostUsd !== undefined) {
-    log.info(`Content cleaning cost: $${cleanerTokenUsage.actualCostUsd.toFixed(4)} USD`);
+  if (cleanerTokenUsage && cleanerTokenUsage.total.actualCostUsd !== undefined) {
+    log.info(
+      `Content cleaning cost: $${cleanerTokenUsage.total.actualCostUsd.toFixed(4)} USD ` +
+      `(prefilter: $${cleanerTokenUsage.prefilter.actualCostUsd?.toFixed(4) ?? '0'}, ` +
+      `extraction: $${cleanerTokenUsage.extraction.actualCostUsd?.toFixed(4) ?? '0'})`
+    );
   }
 
   const tokenUsage: AggregatedTokenUsage | undefined = hasTokenUsage
     ? {
-        scout: scoutTokenUsage,
+        scout: scoutTokenUsageBreakdown,
         editor: editorTotalTokenUsage,
         specialist: specialistTokenUsage,
         ...(shouldRunReviewer ? { reviewer: reviewerTokenUsage } : {}),
-        ...(cleanerTokenUsage && (cleanerTokenUsage.input > 0 || cleanerTokenUsage.output > 0)
+        // Fixer tracked separately from reviewer for cost visibility
+        ...(fixerTokenUsage.input > 0 || fixerTokenUsage.output > 0
+          ? { fixer: fixerTokenUsage }
+          : {}),
+        ...(cleanerTokenUsage && (cleanerTokenUsage.total.input > 0 || cleanerTokenUsage.total.output > 0)
           ? { cleaner: cleanerTokenUsage }
           : {}),
         total: totalTokenUsage,
@@ -1539,6 +1558,7 @@ export async function generateGameArticleDraft(
       editor: editorModel,
       specialist: specialistModel,
       ...(shouldRunReviewer ? { reviewer: reviewerModel } : {}),
+      ...(cleaningDeps ? { cleaner: cleanerModel } : {}),
     },
     metadata,
     ...(shouldRunReviewer && reviewerOutput

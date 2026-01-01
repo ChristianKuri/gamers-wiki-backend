@@ -92,8 +92,8 @@ function extractStoredCosts(draft: GameArticleDraft): StoredCosts {
     scout: {
       model: draft.models.scout,
       durationMs: meta.phaseDurations.scout,
-      tokens: tokenUsage?.scout ? { input: tokenUsage.scout.input, output: tokenUsage.scout.output } : undefined,
-      costUsd: tokenUsage?.scout?.actualCostUsd,
+      tokens: tokenUsage?.scout ? { input: tokenUsage.scout.total.input, output: tokenUsage.scout.total.output } : undefined,
+      costUsd: tokenUsage?.scout?.total.actualCostUsd,
     },
     editor: {
       model: draft.models.editor,
@@ -129,22 +129,22 @@ function extractStoredCosts(draft: GameArticleDraft): StoredCosts {
 
   // Build cleaner costs
   const cleaner = tokenUsage?.cleaner ? {
-    tokens: { input: tokenUsage.cleaner.input, output: tokenUsage.cleaner.output },
-    costUsd: tokenUsage.cleaner.actualCostUsd,
+    tokens: { input: tokenUsage.cleaner.total.input, output: tokenUsage.cleaner.total.output },
+    costUsd: tokenUsage.cleaner.total.actualCostUsd,
   } : undefined;
 
   // Build search costs
   const search = searchCosts ? {
-    ...(searchCosts.tavily && { 
+    ...(searchCosts.tavilySearchCount > 0 && { 
       tavily: { 
-        queries: searchCosts.tavily.queriesUsed, 
-        estimatedCostUsd: searchCosts.tavily.estimatedCostUsd 
+        queries: searchCosts.tavilySearchCount, 
+        estimatedCostUsd: searchCosts.tavilyCostUsd 
       } 
     }),
-    ...(searchCosts.exa && { 
+    ...(searchCosts.exaSearchCount > 0 && { 
       exa: { 
-        queries: searchCosts.exa.queriesUsed, 
-        costUsd: searchCosts.exa.costUsd 
+        queries: searchCosts.exaSearchCount, 
+        costUsd: searchCosts.exaCostUsd 
       } 
     }),
   } : undefined;

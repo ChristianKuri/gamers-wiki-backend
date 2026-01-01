@@ -65,14 +65,37 @@ export interface PhaseTokenUsage {
   readonly actualCostUsd?: number;
 }
 
+/** Scout token usage with sub-phase breakdown */
+export interface ScoutPhaseTokenUsage {
+  /** Query planning LLM calls */
+  readonly queryPlanning: PhaseTokenUsage;
+  /** Briefing generation LLM calls */
+  readonly briefing: PhaseTokenUsage;
+  /** Total scout token usage */
+  readonly total: PhaseTokenUsage;
+}
+
+/** Cleaner token usage with sub-phase breakdown */
+export interface CleanerPhaseTokenUsage {
+  /** Pre-filter LLM calls (quick relevance check) */
+  readonly prefilter: PhaseTokenUsage;
+  /** Extraction LLM calls (full cleaning) */
+  readonly extraction: PhaseTokenUsage;
+  /** Total cleaner token usage */
+  readonly total: PhaseTokenUsage;
+}
+
 /** Token usage by phase */
 export interface TokenUsageByPhase {
-  readonly scout: PhaseTokenUsage;
+  /** Scout with queryPlanning vs briefing breakdown */
+  readonly scout: ScoutPhaseTokenUsage;
   readonly editor: PhaseTokenUsage;
   readonly specialist: PhaseTokenUsage;
   readonly reviewer?: PhaseTokenUsage;
-  /** Cleaner agent token usage (separate for cost visibility) */
-  readonly cleaner?: PhaseTokenUsage;
+  /** Fixer agent token usage (separate from reviewer for cost visibility) */
+  readonly fixer?: PhaseTokenUsage;
+  /** Cleaner agent with prefilter vs extraction breakdown */
+  readonly cleaner?: CleanerPhaseTokenUsage;
 }
 
 /**

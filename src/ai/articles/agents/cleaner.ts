@@ -43,12 +43,12 @@ const CleanerOutputSchema = z.object({
   summary: z
     .string()
     .min(1)
-    .max(500)
+    .max(1000)
     .describe('A concise 1-2 sentence summary of what this content is about. Will be used for quick reference.'),
   detailedSummary: z
     .string()
     .min(1)
-    .max(2000)
+    .max(10000)
     .describe('A detailed summary (3-5 paragraphs) preserving specific facts, numbers, names, locations, and actionable information. Include concrete details that would be useful for writing an article.'),
   keyFacts: z
     .array(z.string())
@@ -468,12 +468,12 @@ const SummaryExtractionSchema = z.object({
   summary: z
     .string()
     .min(1)
-    .max(500)
+    .max(1000)
     .describe('A concise 1-2 sentence summary of what this content is about.'),
   detailedSummary: z
     .string()
     .min(1)
-    .max(2000)
+    .max(10000)
     .describe('A detailed summary (3-5 paragraphs) preserving specific facts, numbers, names, locations, and actionable information.'),
   keyFacts: z
     .array(z.string())

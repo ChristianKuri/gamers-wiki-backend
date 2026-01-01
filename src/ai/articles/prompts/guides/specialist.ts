@@ -173,6 +173,57 @@ Good natural writing:
 "This ability lets you manipulate metal objects from a distance, which is essential for several upcoming puzzles."
 `;
 
+// =============================================================================
+// SEO and Discoverability Rules
+// =============================================================================
+const SEO_RULES = `
+SEO & DISCOVERABILITY (Critical for Search Engines and LLMs):
+
+**Game Name Requirement (TARGET: 8+ mentions per article):**
+The GAME NAME must appear naturally throughout the article:
+• At least ONCE in the opening paragraph of each section
+• Use variations: full name, short name, or "the game"
+
+Placement checklist for each section:
+1. Opening paragraph - "In Clair Obscur: Expedition 33, Simon's Phase 2..."
+2. Key strategy explanations - "This Expedition 33 boss requires..."
+3. Summary statements - "This is widely considered Clair Obscur's toughest boss..."
+
+Natural variations allowed:
+• Full: "Clair Obscur: Expedition 33"
+• Short: "Clair Obscur" or "Expedition 33"
+• Contextual: "the game", "this RPG"
+
+✅ Good examples:
+"In Clair Obscur: Expedition 33, Simon is the ultimate superboss challenge..."
+"This Expedition 33 boss requires careful preparation..."
+"Elden Ring players will recognize this area from the main quest..."
+"One of Dark Souls 3's toughest encounters, the Nameless King..."
+
+❌ Bad examples:
+"Simon is the ultimate superboss challenge..." (game name missing entirely)
+"In Clair Obscur: Expedition 33, Clair Obscur: Expedition 33 players..." (forced repetition)
+
+**H3 Subheadings for Long Sections:**
+For sections over 4 paragraphs, add descriptive H3 subheadings that include topic keywords:
+✅ "### Best Weapons for the Simon Fight"
+✅ "### Maelle's One-Shot Build Setup"
+❌ "### Tips" (too vague, no keywords)
+
+**Semantic Keywords:**
+Include related terms that help search engines understand context:
+• Genre terms: "RPG", "turn-based combat", "action game"
+• Intent keywords: "how to beat", "guide", "strategy", "tips"
+• Related mechanics: "boss fight", "parry timing", "build setup"
+
+**LLM Discoverability:**
+Write content that LLMs can easily parse:
+• Front-load key information in paragraphs
+• Use clear cause-effect relationships
+• Include specific numbers and stats when available
+• Answer implied questions (what, why, how, when)
+`;
+
 export const specialistPrompts: SpecialistPrompts = {
   getSystemPrompt(localeInstruction: string): string {
     return `You are an expert gaming guide writer who creates engaging, helpful content that feels like advice from a skilled friend—not a robotic manual.
@@ -187,11 +238,13 @@ ${FACTUAL_ACCURACY}
 
 ${NATURAL_LANGUAGE}
 
+${SEO_RULES}
+
 ${COMPLETE_EXAMPLE}
 
 ${localeInstruction}
 
-Remember: Your goal is to help players succeed AND enjoy reading the guide. Be precise with names and locations, accurate with details from research, conversational in tone, and engaging in style.`;
+Remember: Your goal is to help players succeed AND enjoy reading the guide. Be precise with names and locations, accurate with details from research, conversational in tone, engaging in style, and SEO-aware with game name mentions (target 8+ across the full article).`;
   },
 
   getSectionUserPrompt(
@@ -303,6 +356,12 @@ Format:
 • Include 1-2 pro tips using > blockquote format where helpful
 • End with a confidence-building takeaway
 
+SEO CRITICAL - GAME NAME REQUIREMENT:
+• Mention "${gameName}" (or a natural variation) at least ONCE in this section
+• Best placement: opening paragraph or hook sentence
+• Natural variations OK: short name, "the game", etc.
+• Example: "In ${gameName}, this boss requires..." or "This ${gameName.split(':')[0]} encounter..."
+
 HYBRID STYLE REMINDERS:
 • Open with atmosphere: "This is it—the final phase" / "Your adventure starts here"
 • Sprinkle warmth: "Trust me" / "Here's the trick" / "Don't panic"
@@ -316,6 +375,7 @@ COMPLETENESS > WORD COUNT:
 • If you can cover everything in 3 paragraphs, that's fine—don't stretch to fill space
 
 Precision checklist (verify before submitting):
+✓ Game name "${gameName}" mentioned at least once in section
 ✓ Opens with an engaging hook (not dry instruction)
 ✓ Every named element leads with its proper name
 ✓ Every NPC has: name + location + role + purpose

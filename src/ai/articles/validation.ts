@@ -906,8 +906,97 @@ export function validateHeadingHierarchy(markdown: string): ValidationIssue[] {
 }
 
 /**
+ * Configuration for enhanced SEO validation.
+ */
+const ENHANCED_SEO_CONFIG = {
+  /** Minimum game name mentions (warning threshold) */
+  GAME_NAME_MIN_WARNING: 5,
+  /** Minimum game name mentions (critical threshold) */
+  GAME_NAME_MIN_CRITICAL: 3,
+  /** Minimum percentage of H2s that should contain topic keyword */
+  H2_TOPIC_MIN_PERCENT: 0.5,
+  /** Minimum H2s that should contain game name */
+  H2_GAME_NAME_MIN: 2,
+} as const;
+
+/**
+ * Counts all variations of a game name in text.
+ * Handles full name, base name (before colon), and subtitle.
+ */
+function countGameNameOccurrences(text: string, gameName: string): number {
+  const lowerText = text.toLowerCase();
+  const positions = new Set<number>();
+
+  // Full name
+  const fullName = gameName.toLowerCase();
+  let idx = lowerText.indexOf(fullName);
+  while (idx !== -1) {
+    positions.add(idx);
+    idx = lowerText.indexOf(fullName, idx + 1);
+  }
+
+  // Base name (before colon)
+  const baseName = gameName.split(':')[0].trim().toLowerCase();
+  if (baseName !== fullName) {
+    idx = lowerText.indexOf(baseName);
+    while (idx !== -1) {
+      if (!positions.has(idx)) {
+        positions.add(idx);
+      }
+      idx = lowerText.indexOf(baseName, idx + 1);
+    }
+  }
+
+  // Subtitle (after colon)
+  const parts = gameName.split(':');
+  if (parts.length > 1) {
+    const subtitle = parts[1].trim().toLowerCase();
+    if (subtitle.length > 3) {
+      idx = lowerText.indexOf(subtitle);
+      while (idx !== -1) {
+        let alreadyCounted = false;
+        for (const pos of positions) {
+          if (idx >= pos && idx < pos + fullName.length) {
+            alreadyCounted = true;
+            break;
+          }
+        }
+        if (!alreadyCounted) {
+          positions.add(idx);
+        }
+        idx = lowerText.indexOf(subtitle, idx + 1);
+      }
+    }
+  }
+
+  return positions.size;
+}
+
+/**
+ * Extracts the primary topic keyword from the title.
+ */
+function extractTopicKeyword(title: string, gameName: string): string | null {
+  const baseGameName = gameName.split(':')[0].trim().toLowerCase();
+  const cleanTitle = title.toLowerCase().replace(baseGameName, '').trim();
+
+  // Pattern: "How to [verb] [topic]"
+  const howToMatch = cleanTitle.match(/how to (?:beat|defeat|find|unlock|reach|get)\s+(.+?)(?:\s+in|\s*[:-]|$)/i);
+  if (howToMatch) return howToMatch[1].trim();
+
+  // Pattern: "[Topic] boss/guide/walkthrough"
+  const topicMatch = cleanTitle.match(/^(.+?)\s+(?:boss|guide|walkthrough|location)/i);
+  if (topicMatch) return topicMatch[1].trim();
+
+  // Pattern: "for [topic]" at end
+  const forMatch = cleanTitle.match(/for\s+(.+?)(?:\s+in|\s*$)/i);
+  if (forMatch) return forMatch[1].trim();
+
+  return null;
+}
+
+/**
  * Validates SEO aspects of an article.
- * Checks title length, keyword presence, and heading hierarchy.
+ * Checks title length, keyword presence, heading hierarchy, and game name frequency.
  *
  * @param draft - The draft to validate
  * @param gameName - The game name (should appear in title)
@@ -924,6 +1013,8 @@ export function validateSEO(
 ): ValidationIssue[] {
   const issues: ValidationIssue[] = [];
   const SEO = SEO_CONSTRAINTS;
+  const ESEO = ENHANCED_SEO_CONFIG;
+  const contentMarkdown = stripSourcesSection(draft.markdown);
 
   // 1. Title length (optimal: 50-60 chars for SERP)
   if (draft.title.length < SEO.TITLE_OPTIMAL_MIN) {
@@ -958,7 +1049,6 @@ export function validateSEO(
   issues.push(...headingIssues);
 
   // 4. Game name in title
-  // Extract the base game name (before any subtitle/colon)
   const baseGameName = gameName.split(':')[0].trim().toLowerCase();
   if (!draft.title.toLowerCase().includes(baseGameName)) {
     issues.push(issue('warning', `Title should include game name "${baseGameName}" for SEO`));
@@ -967,7 +1057,6 @@ export function validateSEO(
   // 5. Keyword density (primary tag should appear 2-8 times)
   const primaryKeyword = draft.tags[0];
   if (primaryKeyword) {
-    const contentMarkdown = stripSourcesSection(draft.markdown);
     const keywordCount = countKeywordOccurrences(contentMarkdown, primaryKeyword);
 
     if (keywordCount < SEO.MIN_KEYWORD_OCCURRENCES) {
@@ -988,6 +1077,62 @@ export function validateSEO(
         )
       );
     }
+  }
+
+  // === ENHANCED SEO CHECKS ===
+
+  // 6. Game name frequency in content
+  const gameNameCount = countGameNameOccurrences(contentMarkdown, gameName);
+  if (gameNameCount < ESEO.GAME_NAME_MIN_CRITICAL) {
+    issues.push(
+      issue(
+        'warning',
+        `Game name "${gameName}" appears only ${gameNameCount} time(s) in content (minimum: ${ESEO.GAME_NAME_MIN_CRITICAL}). ` +
+          `Add game name naturally to section openings.`
+      )
+    );
+  } else if (gameNameCount < ESEO.GAME_NAME_MIN_WARNING) {
+    issues.push(
+      issue(
+        'warning',
+        `Game name "${gameName}" appears only ${gameNameCount} time(s) in content (recommended: ${ESEO.GAME_NAME_MIN_WARNING}+).`
+      )
+    );
+  }
+
+  // 7. H2 headers with topic keyword
+  const topicKeyword = extractTopicKeyword(draft.title, gameName);
+  if (topicKeyword) {
+    const h2Headers = getContentH2Sections(contentMarkdown).map(s => s.heading.toLowerCase());
+    const h2sWithTopic = h2Headers.filter(h => h.includes(topicKeyword.toLowerCase()));
+    const topicPercent = h2Headers.length > 0 ? h2sWithTopic.length / h2Headers.length : 0;
+
+    if (topicPercent < ESEO.H2_TOPIC_MIN_PERCENT && h2Headers.length >= 2) {
+      issues.push(
+        issue(
+          'warning',
+          `Only ${h2sWithTopic.length}/${h2Headers.length} H2 headers contain topic keyword "${topicKeyword}" ` +
+            `(recommended: ${Math.round(ESEO.H2_TOPIC_MIN_PERCENT * 100)}%+).`
+        )
+      );
+    }
+  }
+
+  // 8. H2 headers with game name
+  const h2Headers = getContentH2Sections(contentMarkdown).map(s => s.heading.toLowerCase());
+  const h2sWithGameName = h2Headers.filter(h => 
+    h.includes(baseGameName) || 
+    (gameName.includes(':') && h.includes(gameName.split(':')[1].trim().toLowerCase()))
+  );
+
+  if (h2sWithGameName.length < ESEO.H2_GAME_NAME_MIN && h2Headers.length >= 3) {
+    issues.push(
+      issue(
+        'warning',
+        `Only ${h2sWithGameName.length}/${h2Headers.length} H2 headers contain game name ` +
+          `(recommended: ${ESEO.H2_GAME_NAME_MIN}+).`
+      )
+    );
   }
 
   return issues;

@@ -864,7 +864,11 @@ export interface CleanedSearchProcessingResult {
   readonly cacheMisses: number;
   /** Number of cleaning failures */
   readonly cleaningFailures: number;
-  /** Token usage from cleaning operations (LLM calls) */
+  /** Token usage from pre-filter LLM calls (quick relevance check) */
+  readonly prefilterTokenUsage: TokenUsage;
+  /** Token usage from extraction LLM calls (full cleaning) */
+  readonly extractionTokenUsage: TokenUsage;
+  /** Combined token usage from all cleaning operations (prefilter + extraction) */
   readonly cleaningTokenUsage: TokenUsage;
   /** Sources filtered out due to low quality or relevance */
   readonly filteredSources: readonly FilteredSource[];
@@ -914,6 +918,8 @@ export async function processSearchResultsWithCleaning(
       cacheHits: 0,
       cacheMisses: 0,
       cleaningFailures: 0,
+      prefilterTokenUsage: createEmptyTokenUsage(),
+      extractionTokenUsage: createEmptyTokenUsage(),
       cleaningTokenUsage: createEmptyTokenUsage(),
       filteredSources: [],
     };
@@ -967,6 +973,8 @@ export async function processSearchResultsWithCleaning(
       cacheHits: 0,
       cacheMisses: 0,
       cleaningFailures: 0,
+      prefilterTokenUsage: createEmptyTokenUsage(),
+      extractionTokenUsage: createEmptyTokenUsage(),
       cleaningTokenUsage: createEmptyTokenUsage(),
       filteredSources: [],
     };
@@ -1107,7 +1115,9 @@ export async function processSearchResultsWithCleaning(
   // Clean uncached sources (only if cleaner is enabled)
   let cleanedSources: CleanedSource[] = [];
   let cleaningFailures = 0;
-  let cleaningTokenUsage: TokenUsage = createEmptyTokenUsage();
+  // Track prefilter and extraction token usages separately for cost visibility
+  let prefilterTokenUsage: TokenUsage = createEmptyTokenUsage();
+  let extractionTokenUsage: TokenUsage = createEmptyTokenUsage();
 
   if (misses.length > 0 && cleanerEnabled) {
     const allMissedSources = misses.map((m) => m.raw!);
@@ -1198,8 +1208,8 @@ export async function processSearchResultsWithCleaning(
         articleTopic,
       });
 
-      // Track pre-filter token usage
-      cleaningTokenUsage = addTokenUsage(cleaningTokenUsage, llmPreFilterResult.tokenUsage);
+      // Track pre-filter token usage separately
+      prefilterTokenUsage = addTokenUsage(prefilterTokenUsage, llmPreFilterResult.tokenUsage);
 
       // Store pre-filter results for irrelevant sources (for domain quality tracking)
       if (llmPreFilterResult.irrelevant.length > 0) {
@@ -1254,7 +1264,8 @@ export async function processSearchResultsWithCleaning(
       gameName,
     });
     cleanedSources = cleanResult.sources;
-    cleaningTokenUsage = addTokenUsage(cleaningTokenUsage, cleanResult.tokenUsage);
+    // Track extraction token usage separately
+    extractionTokenUsage = addTokenUsage(extractionTokenUsage, cleanResult.tokenUsage);
 
     // Cleaning failures = sources that went through full cleaning but failed
     cleaningFailures = sourcesAfterPreFilter.length - cleanedSources.length;
@@ -1445,6 +1456,9 @@ export async function processSearchResultsWithCleaning(
     );
   }
 
+  // Combine prefilter and extraction for backwards-compatible cleaningTokenUsage
+  const cleaningTokenUsage = addTokenUsage(prefilterTokenUsage, extractionTokenUsage);
+
   return {
     result: {
       query,
@@ -1458,6 +1472,8 @@ export async function processSearchResultsWithCleaning(
     cacheHits: hits.length,
     cacheMisses: misses.length,
     cleaningFailures,
+    prefilterTokenUsage,
+    extractionTokenUsage,
     cleaningTokenUsage,
     filteredSources,
   };

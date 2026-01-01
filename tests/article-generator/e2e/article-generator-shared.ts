@@ -116,11 +116,13 @@ export const VALID_CONFIDENCE_LEVELS = ['high', 'medium', 'low'] as const;
 
 /**
  * Fetch with extended timeouts for long-running AI operations.
+ * Returns the response body text directly (consuming the body) so the agent
+ * can be safely closed.
  */
 export async function fetchWithExtendedTimeout(
   url: string,
   options: RequestInit & { timeoutMs?: number }
-): Promise<Response> {
+): Promise<{ status: number; statusText: string; ok: boolean; text: string }> {
   const { Agent, fetch: undiciFetch } = await import('undici');
   const timeoutMs = options.timeoutMs ?? 900000;
 
@@ -128,17 +130,28 @@ export async function fetchWithExtendedTimeout(
     headersTimeout: timeoutMs,
     bodyTimeout: timeoutMs,
     connectTimeout: 30000,
-    keepAliveTimeout: 1,
-    keepAliveMaxTimeout: 1,
+    keepAliveTimeout: timeoutMs, // Keep connection alive for body reading
+    keepAliveMaxTimeout: timeoutMs,
     pipelining: 0,
   });
 
   try {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    return (await undiciFetch(url, {
+    const response = (await undiciFetch(url, {
       ...options,
       dispatcher: agent,
     } as any)) as unknown as Response;
+    
+    // CRITICAL: Consume the body BEFORE closing the agent
+    // Otherwise the socket gets disconnected before body is read
+    const text = await response.text();
+    
+    return {
+      status: response.status,
+      statusText: response.statusText,
+      ok: response.ok,
+      text,
+    };
   } finally {
     await agent.close();
   }
@@ -335,12 +348,18 @@ export function extractGenerationStats(json: any): GenerationStats {
     },
     tokens: {
       byPhase: {
-        // Include actualCostUsd from each phase if available
-        scout: tokenUsage.scout ?? { input: 0, output: 0 },
+        // Scout with sub-phase breakdown (queryPlanning + briefing)
+        scout: tokenUsage.scout ?? {
+          queryPlanning: { input: 0, output: 0 },
+          briefing: { input: 0, output: 0 },
+          total: { input: 0, output: 0 },
+        },
         editor: tokenUsage.editor ?? { input: 0, output: 0 },
         specialist: tokenUsage.specialist ?? { input: 0, output: 0 },
         ...(tokenUsage.reviewer ? { reviewer: tokenUsage.reviewer } : {}),
-        // Cleaner is tracked separately for cost visibility
+        // Fixer tracked separately from reviewer for cost visibility
+        ...(tokenUsage.fixer ? { fixer: tokenUsage.fixer } : {}),
+        // Cleaner with sub-phase breakdown (prefilter + extraction)
         ...(tokenUsage.cleaner ? { cleaner: tokenUsage.cleaner } : {}),
       },
       total: tokenUsage.total ?? { input: 0, output: 0 },
@@ -534,11 +553,18 @@ export interface MutableDatabaseVerification {
   };
 }
 
+/** Simplified HTTP response info for test state */
+interface HttpResponseInfo {
+  status: number;
+  statusText: string;
+  ok: boolean;
+}
+
 /** Shared state for E2E tests */
 export interface TestState {
   knex: Knex | undefined;
   strapiReady: boolean;
-  response: Response | undefined;
+  response: HttpResponseInfo | undefined;
   json: any;
   testStartTime: number;
   validationIssues: ValidationIssue[];
@@ -681,7 +707,7 @@ export async function setupArticleGeneratorTest(
   const headerSecret = secret || mustGetEnv('AI_GENERATION_SECRET');
 
   console.log('[E2E Setup] Making HTTP request to article generator...');
-  state.response = await fetchWithExtendedTimeout(
+  const httpResult = await fetchWithExtendedTimeout(
     `${E2E_CONFIG.strapiUrl}/api/article-generator/generate`,
     {
       method: 'POST',
@@ -700,19 +726,24 @@ export async function setupArticleGeneratorTest(
   );
   console.log('[E2E Setup] HTTP response received');
 
-  console.log('[E2E Setup] Reading response body...');
-  const responseText = await state.response.text();
-  console.log(`[E2E Setup] Response body length: ${responseText.length} chars`);
+  // Store response info for test assertions
+  state.response = { 
+    status: httpResult.status, 
+    statusText: httpResult.statusText,
+    ok: httpResult.ok,
+  };
+  
+  console.log(`[E2E Setup] Response body length: ${httpResult.text.length} chars`);
   
   try {
-    state.json = JSON.parse(responseText);
+    state.json = JSON.parse(httpResult.text);
   } catch {
-    state.json = { raw: responseText, parseError: true };
+    state.json = { raw: httpResult.text, parseError: true };
   }
 
   const duration = ((Date.now() - state.testStartTime) / 1000).toFixed(1);
   console.log(`[E2E Setup] ✓ Endpoint called in ${duration}s`);
-  console.log(`[E2E Setup] Response status: ${state.response.status}`);
+  console.log(`[E2E Setup] Response status: ${httpResult.status}`);
   console.log(`[E2E Setup] Success: ${state.json?.success}`);
   console.log('[E2E Setup] Setup complete, running tests...');
 

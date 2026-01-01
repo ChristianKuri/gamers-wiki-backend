@@ -1012,6 +1012,128 @@ export interface ApiCompanyCompany extends Struct.CollectionTypeSchema {
   };
 }
 
+export interface ApiDomainQualityDomainQuality
+  extends Struct.CollectionTypeSchema {
+  collectionName: 'domain_qualities';
+  info: {
+    description: 'Aggregated quality scores per domain for search filtering';
+    displayName: 'Domain Quality';
+    pluralName: 'domain-qualities';
+    singularName: 'domain-quality';
+  };
+  options: {
+    draftAndPublish: false;
+  };
+  attributes: {
+    avgQualityScore: Schema.Attribute.Decimal &
+      Schema.Attribute.Required &
+      Schema.Attribute.SetMinMax<
+        {
+          max: 100;
+          min: 0;
+        },
+        number
+      > &
+      Schema.Attribute.DefaultTo<0>;
+    avgRelevanceScore: Schema.Attribute.Decimal &
+      Schema.Attribute.Required &
+      Schema.Attribute.SetMinMax<
+        {
+          max: 100;
+          min: 0;
+        },
+        number
+      > &
+      Schema.Attribute.DefaultTo<0>;
+    createdAt: Schema.Attribute.DateTime;
+    createdBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
+      Schema.Attribute.Private;
+    domain: Schema.Attribute.String &
+      Schema.Attribute.Required &
+      Schema.Attribute.Unique &
+      Schema.Attribute.SetMinMaxLength<{
+        maxLength: 255;
+      }>;
+    domainType: Schema.Attribute.String &
+      Schema.Attribute.Required &
+      Schema.Attribute.SetMinMaxLength<{
+        maxLength: 100;
+      }>;
+    exaAttempts: Schema.Attribute.Integer &
+      Schema.Attribute.Required &
+      Schema.Attribute.SetMinMax<
+        {
+          min: 0;
+        },
+        number
+      > &
+      Schema.Attribute.DefaultTo<0>;
+    exaExcludeReason: Schema.Attribute.Text;
+    exaScrapeFailures: Schema.Attribute.Integer &
+      Schema.Attribute.Required &
+      Schema.Attribute.SetMinMax<
+        {
+          min: 0;
+        },
+        number
+      > &
+      Schema.Attribute.DefaultTo<0>;
+    excludeReason: Schema.Attribute.Text;
+    isExcluded: Schema.Attribute.Boolean &
+      Schema.Attribute.Required &
+      Schema.Attribute.DefaultTo<false>;
+    isExcludedExa: Schema.Attribute.Boolean &
+      Schema.Attribute.Required &
+      Schema.Attribute.DefaultTo<false>;
+    isExcludedTavily: Schema.Attribute.Boolean &
+      Schema.Attribute.Required &
+      Schema.Attribute.DefaultTo<false>;
+    locale: Schema.Attribute.String & Schema.Attribute.Private;
+    localizations: Schema.Attribute.Relation<
+      'oneToMany',
+      'api::domain-quality.domain-quality'
+    > &
+      Schema.Attribute.Private;
+    publishedAt: Schema.Attribute.DateTime;
+    tavilyAttempts: Schema.Attribute.Integer &
+      Schema.Attribute.Required &
+      Schema.Attribute.SetMinMax<
+        {
+          min: 0;
+        },
+        number
+      > &
+      Schema.Attribute.DefaultTo<0>;
+    tavilyExcludeReason: Schema.Attribute.Text;
+    tavilyScrapeFailures: Schema.Attribute.Integer &
+      Schema.Attribute.Required &
+      Schema.Attribute.SetMinMax<
+        {
+          min: 0;
+        },
+        number
+      > &
+      Schema.Attribute.DefaultTo<0>;
+    tier: Schema.Attribute.Enumeration<
+      ['excellent', 'good', 'average', 'poor', 'excluded']
+    > &
+      Schema.Attribute.Required &
+      Schema.Attribute.DefaultTo<'average'>;
+    totalSources: Schema.Attribute.Integer &
+      Schema.Attribute.Required &
+      Schema.Attribute.SetMinMax<
+        {
+          min: 0;
+        },
+        number
+      > &
+      Schema.Attribute.DefaultTo<0>;
+    updatedAt: Schema.Attribute.DateTime;
+    updatedBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
+      Schema.Attribute.Private;
+  };
+}
+
 export interface ApiFranchiseFranchise extends Struct.CollectionTypeSchema {
   collectionName: 'franchises';
   info: {
@@ -1931,6 +2053,13 @@ export interface ApiPostPost extends Struct.CollectionTypeSchema {
           localized: true;
         };
       }>;
+    costs: Schema.Attribute.JSON &
+      Schema.Attribute.Private &
+      Schema.Attribute.SetPluginOptions<{
+        i18n: {
+          localized: false;
+        };
+      }>;
     createdAt: Schema.Attribute.DateTime;
     createdBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
       Schema.Attribute.Private;
@@ -1962,12 +2091,26 @@ export interface ApiPostPost extends Struct.CollectionTypeSchema {
       Schema.Attribute.Required;
     locale: Schema.Attribute.String;
     localizations: Schema.Attribute.Relation<'oneToMany', 'api::post.post'>;
+    plan: Schema.Attribute.JSON &
+      Schema.Attribute.Private &
+      Schema.Attribute.SetPluginOptions<{
+        i18n: {
+          localized: false;
+        };
+      }>;
     publishedAt: Schema.Attribute.DateTime;
     slug: Schema.Attribute.UID<'title'> &
       Schema.Attribute.Required &
       Schema.Attribute.SetPluginOptions<{
         i18n: {
           localized: true;
+        };
+      }>;
+    sources: Schema.Attribute.JSON &
+      Schema.Attribute.Private &
+      Schema.Attribute.SetPluginOptions<{
+        i18n: {
+          localized: false;
         };
       }>;
     tags: Schema.Attribute.Relation<'manyToMany', 'api::tag.tag'>;
@@ -1981,6 +2124,111 @@ export interface ApiPostPost extends Struct.CollectionTypeSchema {
     updatedAt: Schema.Attribute.DateTime;
     updatedBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
       Schema.Attribute.Private;
+  };
+}
+
+export interface ApiSourceContentSourceContent
+  extends Struct.CollectionTypeSchema {
+  collectionName: 'source_contents';
+  info: {
+    description: 'Cached cleaned web content from search results with quality metadata';
+    displayName: 'Source Content';
+    pluralName: 'source-contents';
+    singularName: 'source-content';
+  };
+  options: {
+    draftAndPublish: false;
+  };
+  attributes: {
+    accessCount: Schema.Attribute.Integer &
+      Schema.Attribute.Required &
+      Schema.Attribute.SetMinMax<
+        {
+          min: 0;
+        },
+        number
+      > &
+      Schema.Attribute.DefaultTo<0>;
+    cleanedContent: Schema.Attribute.RichText & Schema.Attribute.Required;
+    contentType: Schema.Attribute.String &
+      Schema.Attribute.Required &
+      Schema.Attribute.SetMinMaxLength<{
+        maxLength: 100;
+      }>;
+    createdAt: Schema.Attribute.DateTime;
+    createdBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
+      Schema.Attribute.Private;
+    dataPoints: Schema.Attribute.JSON;
+    detailedSummary: Schema.Attribute.Text;
+    domain: Schema.Attribute.String &
+      Schema.Attribute.Required &
+      Schema.Attribute.SetMinMaxLength<{
+        maxLength: 255;
+      }>;
+    games: Schema.Attribute.Relation<'manyToMany', 'api::game.game'>;
+    junkRatio: Schema.Attribute.Decimal &
+      Schema.Attribute.Required &
+      Schema.Attribute.SetMinMax<
+        {
+          max: 1;
+          min: 0;
+        },
+        number
+      >;
+    keyFacts: Schema.Attribute.JSON;
+    lastAccessedAt: Schema.Attribute.DateTime;
+    locale: Schema.Attribute.String & Schema.Attribute.Private;
+    localizations: Schema.Attribute.Relation<
+      'oneToMany',
+      'api::source-content.source-content'
+    > &
+      Schema.Attribute.Private;
+    originalContentLength: Schema.Attribute.Integer &
+      Schema.Attribute.Required &
+      Schema.Attribute.SetMinMax<
+        {
+          min: 0;
+        },
+        number
+      >;
+    publishedAt: Schema.Attribute.DateTime;
+    qualityNotes: Schema.Attribute.Text;
+    qualityScore: Schema.Attribute.Integer &
+      Schema.Attribute.SetMinMax<
+        {
+          max: 100;
+          min: 0;
+        },
+        number
+      >;
+    relevanceScore: Schema.Attribute.Integer &
+      Schema.Attribute.SetMinMax<
+        {
+          max: 100;
+          min: 0;
+        },
+        number
+      >;
+    scrapeSucceeded: Schema.Attribute.Boolean &
+      Schema.Attribute.Required &
+      Schema.Attribute.DefaultTo<true>;
+    searchSource: Schema.Attribute.Enumeration<['tavily', 'exa']> &
+      Schema.Attribute.Required;
+    summary: Schema.Attribute.Text;
+    title: Schema.Attribute.String &
+      Schema.Attribute.Required &
+      Schema.Attribute.SetMinMaxLength<{
+        maxLength: 500;
+      }>;
+    updatedAt: Schema.Attribute.DateTime;
+    updatedBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
+      Schema.Attribute.Private;
+    url: Schema.Attribute.String &
+      Schema.Attribute.Required &
+      Schema.Attribute.Unique &
+      Schema.Attribute.SetMinMaxLength<{
+        maxLength: 2048;
+      }>;
   };
 }
 
@@ -2603,6 +2851,7 @@ declare module '@strapi/strapi' {
       'api::category.category': ApiCategoryCategory;
       'api::collection.collection': ApiCollectionCollection;
       'api::company.company': ApiCompanyCompany;
+      'api::domain-quality.domain-quality': ApiDomainQualityDomainQuality;
       'api::franchise.franchise': ApiFranchiseFranchise;
       'api::game-engine.game-engine': ApiGameEngineGameEngine;
       'api::game-mode.game-mode': ApiGameModeGameMode;
@@ -2613,6 +2862,7 @@ declare module '@strapi/strapi' {
       'api::platform.platform': ApiPlatformPlatform;
       'api::player-perspective.player-perspective': ApiPlayerPerspectivePlayerPerspective;
       'api::post.post': ApiPostPost;
+      'api::source-content.source-content': ApiSourceContentSourceContent;
       'api::tag.tag': ApiTagTag;
       'api::theme.theme': ApiThemeTheme;
       'plugin::content-releases.release': PluginContentReleasesRelease;
