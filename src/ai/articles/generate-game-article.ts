@@ -1539,6 +1539,7 @@ export async function generateGameArticleDraft(
       editor: editorModel,
       specialist: specialistModel,
       ...(shouldRunReviewer ? { reviewer: reviewerModel } : {}),
+      ...(cleaningDeps ? { cleaner: cleanerModel } : {}),
     },
     metadata,
     ...(shouldRunReviewer && reviewerOutput

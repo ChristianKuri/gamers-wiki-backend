@@ -172,8 +172,11 @@ The world of Elden Ring is vast and full of secrets.
     it('should pass when title contains base game name (before colon)', () => {
       const draft = createDraft({ title: 'Dark Souls III Guide: Complete Walkthrough' });
       const issues = validateSEO(draft, 'Dark Souls III: The Ringed City');
-      const missingGameName = issues.find((i) => i.message.includes('game name'));
-      expect(missingGameName).toBeUndefined();
+      // Should not have a warning about game name missing from TITLE
+      const missingGameNameInTitle = issues.find((i) =>
+        i.message.includes('Title should include game name')
+      );
+      expect(missingGameNameInTitle).toBeUndefined();
     });
   });
 

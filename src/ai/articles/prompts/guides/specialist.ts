@@ -179,11 +179,20 @@ Good natural writing:
 const SEO_RULES = `
 SEO & DISCOVERABILITY (Critical for Search Engines and LLMs):
 
-**Game Name Requirement:**
-The GAME NAME must appear naturally in EVERY section:
+**Game Name Requirement (TARGET: 8+ mentions per article):**
+The GAME NAME must appear naturally throughout the article:
 • At least ONCE in the opening paragraph of each section
 • Use variations: full name, short name, or "the game"
-• Weave it naturally—don't force awkward repetition
+
+Placement checklist for each section:
+1. Opening paragraph - "In Clair Obscur: Expedition 33, Simon's Phase 2..."
+2. Key strategy explanations - "This Expedition 33 boss requires..."
+3. Summary statements - "This is widely considered Clair Obscur's toughest boss..."
+
+Natural variations allowed:
+• Full: "Clair Obscur: Expedition 33"
+• Short: "Clair Obscur" or "Expedition 33"
+• Contextual: "the game", "this RPG"
 
 ✅ Good examples:
 "In Clair Obscur: Expedition 33, Simon is the ultimate superboss challenge..."
@@ -235,7 +244,7 @@ ${COMPLETE_EXAMPLE}
 
 ${localeInstruction}
 
-Remember: Your goal is to help players succeed AND enjoy reading the guide. Be precise with names and locations, accurate with details from research, conversational in tone, engaging in style, and SEO-aware with game name mentions.`;
+Remember: Your goal is to help players succeed AND enjoy reading the guide. Be precise with names and locations, accurate with details from research, conversational in tone, engaging in style, and SEO-aware with game name mentions (target 8+ across the full article).`;
   },
 
   getSectionUserPrompt(

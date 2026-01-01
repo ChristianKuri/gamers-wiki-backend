@@ -974,6 +974,8 @@ export interface GameArticleDraft {
     readonly specialist: string;
     /** Reviewer model (may be undefined if reviewer was disabled) */
     readonly reviewer?: string;
+    /** Cleaner model (may be undefined if cleaner was disabled) */
+    readonly cleaner?: string;
   };
   /** Generation metadata for debugging and analytics */
   readonly metadata: ArticleGenerationMetadata;

@@ -153,6 +153,41 @@ STRUCTURE TEMPLATES:
 • Boss Guide: Preparation → Phase breakdown → Strategy → Rewards
 • Area Guide: Overview → Subarea 1 → Subarea 2 → ... → Secrets
 
+=== H2 HEADLINE FORMAT (SEO-CRITICAL) ===
+
+Every H2 headline MUST follow one of these patterns:
+
+**For unlock/location sections:**
+• Pattern: "How to [Unlock/Find/Reach] [Topic] in [Game Name]"
+• Example: "How to Unlock Simon in Clair Obscur: Expedition 33"
+
+**For build/preparation sections:**
+• Pattern: "Best [Build/Party/Setup] for [Topic]"
+• Example: "Best Party Setup for Simon Boss Fight"
+
+**For phase/combat sections:**
+• Pattern: "[Boss Name] Phase [X]: [Descriptive Subtitle]"
+• Example: "Simon Phase 1: Parry Timings and Attack Patterns"
+
+**For rewards/loot sections:**
+• Pattern: "[Topic] [Rewards/Drops/Loot] in [Game Name]"
+• Example: "Simon Boss Rewards: Simoso Weapon and Loot"
+
+HEADLINE RULES:
+1. Topic keyword (boss name, location, item) MUST appear in EVERY H2
+2. Game name should appear in at least 2 of your H2 headlines
+3. At least ONE H2 should start with "How to"
+4. NEVER use vague headers like "Essential Setup", "Combat Strategy", "The Fight"
+
+=== AT A GLANCE TABLE (REQUIRED FOR FIRST SECTION) ===
+
+The FIRST section's mustCover MUST include an "At a Glance" summary table requirement:
+
+Example mustCover item for first section:
+"At a Glance Table: Location, Unlock Requirement, Recommended Level, Difficulty, Key Mechanic, Best Strategy, Top Reward"
+
+The Specialist will render this as a quick-reference table with key stats.
+
 ${buildRequiredElementHints(ctx.instruction, ctx.genres)}
 
 === OUTPUT REQUIREMENTS ===
