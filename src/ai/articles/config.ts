@@ -782,7 +782,7 @@ export const CLEANER_CONFIG = {
   },
   /**
    * Whether to use LLM pre-filter before full cleaning.
-   * Pre-filter uses title + 500 char snippet to check relevance.
+   * Pre-filter uses title + snippet to check relevance.
    * Costs ~$0.0001-0.0005 per source, can save full cleaning cost on irrelevant content.
    * Override with env var ARTICLE_PREFILTER_ENABLED=false
    */
@@ -793,6 +793,14 @@ export const CLEANER_CONFIG = {
     }
     return true; // Enabled by default
   },
+  /**
+   * Character length of content snippet for pre-filter.
+   * INCREASED from 500 to 2000: Many pages have navigation/breadcrumbs at the
+   * start, so 500 chars often only captures "Home > Games > Guide > ..." junk.
+   * 1500 chars gets past navigation to actual article content.
+   * Cost impact: minimal (pre-filter uses cheap gemini-2.5-flash-lite).
+   */
+  PREFILTER_SNIPPET_LENGTH: 2000,
   /**
    * Timeout for pre-filter LLM call (ms).
    * Short timeout since it's a simple relevance check.

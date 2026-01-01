@@ -738,8 +738,10 @@ ${articleContext}
 
 DOMAIN: ${domain}
 PAGE TITLE: ${title}
-CONTENT SNIPPET (first 500 chars):
+CONTENT SNIPPET:
 ${snippet}
+
+NOTE: If snippet starts with navigation/breadcrumbs, look past them for actual article content.
 
 Provide:
 1. relevanceToGaming (0-100): Is this about video games?
@@ -775,7 +777,9 @@ export async function preFilterSingleSource(
 ): Promise<PreFilterSingleResult> {
   const log = deps.logger ?? createPrefixedLogger('[PreFilter]');
   const domain = extractDomain(source.url);
-  const snippet = source.content.slice(0, 500);
+  // Use Tavily's clean snippet if available (already ~800c extracted content)
+  // Otherwise fall back to slicing the full content
+  const snippet = source.snippet ?? source.content.slice(0, CLEANER_CONFIG.PREFILTER_SNIPPET_LENGTH);
 
   try {
     const result = await withRetry(

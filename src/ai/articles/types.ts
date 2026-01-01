@@ -1286,6 +1286,12 @@ export interface RawSourceInput {
   readonly title: string;
   readonly content: string;
   readonly searchSource: SearchSource;
+  /**
+   * Optional clean snippet for pre-filtering (Tavily's extracted content).
+   * Tavily provides ~800c clean snippet that's better for pre-filtering
+   * than taking the first N chars of raw_content (which may have navigation).
+   */
+  readonly snippet?: string;
 }
 
 /**

@@ -866,6 +866,9 @@ export async function processSearchResultsWithCleaning(
         title: r.title,
         content: r.raw_content ?? r.content ?? '',
         searchSource,
+        // Preserve Tavily's clean snippet for pre-filtering (if raw_content was used)
+        // Tavily's content (~800c) is a clean extracted summary, better than slicing raw_content
+        ...(r.raw_content && r.content ? { snippet: r.content } : {}),
       };
     })
     .filter((r): r is RawSourceInput => r !== null);
