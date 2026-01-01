@@ -292,19 +292,72 @@ export async function preFilterSources(
   const toClean: RawSourceInput[] = [];
   const skipped: Array<{ source: RawSourceInput; reason: string }> = [];
 
-  // Get known bad domains from DB
+  // Track domains with different exclusion reasons
   const knex = strapi.db.connection;
-  const badDomains = new Set<string>();
+  const manuallyExcludedDomains = new Set<string>();
+  const lowRelevanceDomains = new Set<string>(); // Requires 3+ samples
+  const lowQualityDomains = new Set<string>();   // Requires 5+ samples
+  const hardToScrapeTavily = new Set<string>();
+  const hardToScrapeExa = new Set<string>();
 
   try {
-    const results = await knex('domain_qualities')
-      .where('is_excluded', true)
-      .orWhere('avg_quality_score', '<', CLEANER_CONFIG.MIN_QUALITY_FOR_RESULTS)
-      .orWhere('avg_relevance_score', '<', CLEANER_CONFIG.AUTO_EXCLUDE_RELEVANCE_THRESHOLD)
-      .select('domain');
+    // Query all domain quality data in one go
+    const domainData = await knex('domain_qualities')
+      .select(
+        'domain',
+        'is_excluded',
+        'is_excluded_tavily',
+        'is_excluded_exa',
+        'avg_quality_score',
+        'avg_relevance_score',
+        'total_sources',
+        'tavily_attempts',
+        'tavily_scrape_failures',
+        'exa_attempts',
+        'exa_scrape_failures'
+      );
 
-    for (const row of results) {
-      badDomains.add((row as { domain: string }).domain);
+    for (const row of domainData) {
+      const domain = row.domain as string;
+      
+      // Check 1: Manually excluded
+      if (row.is_excluded) {
+        manuallyExcludedDomains.add(domain);
+        continue;
+      }
+      
+      // Check 2: Per-engine scrape failure exclusion (>70% failure rate with 10+ attempts)
+      if (row.is_excluded_tavily) {
+        hardToScrapeTavily.add(domain);
+      }
+      if (row.is_excluded_exa) {
+        hardToScrapeExa.add(domain);
+      }
+      
+      // Only evaluate quality/relevance if has successful cleanings
+      const successfulCleanings = 
+        (row.tavily_attempts - row.tavily_scrape_failures) + 
+        (row.exa_attempts - row.exa_scrape_failures);
+      
+      if (successfulCleanings === 0) {
+        continue; // Scores are meaningless without successful cleanings
+      }
+      
+      // Check 3: Low relevance (requires 3+ samples - domain-wide, won't improve)
+      if (
+        row.total_sources >= CLEANER_CONFIG.AUTO_EXCLUDE_RELEVANCE_MIN_SAMPLES &&
+        parseFloat(row.avg_relevance_score) < CLEANER_CONFIG.AUTO_EXCLUDE_RELEVANCE_THRESHOLD
+      ) {
+        lowRelevanceDomains.add(domain);
+      }
+      
+      // Check 4: Low quality (requires 5+ samples - quality varies per page)
+      if (
+        row.total_sources >= CLEANER_CONFIG.AUTO_EXCLUDE_QUALITY_MIN_SAMPLES &&
+        parseFloat(row.avg_quality_score) < CLEANER_CONFIG.MIN_QUALITY_FOR_RESULTS
+      ) {
+        lowQualityDomains.add(domain);
+      }
     }
   } catch (err) {
     // If DB query fails, continue without domain filtering
@@ -324,11 +377,45 @@ export async function preFilterSources(
       continue;
     }
 
-    // Check 2: Known bad domain
-    if (badDomains.has(domain)) {
+    // Check 2: Manually excluded domain
+    if (manuallyExcludedDomains.has(domain)) {
       skipped.push({
         source,
-        reason: `Known bad domain: ${domain}`,
+        reason: `Manually excluded domain: ${domain}`,
+      });
+      continue;
+    }
+
+    // Check 3: Per-engine scrape failure exclusion (hard to scrape)
+    if (source.searchSource === 'tavily' && hardToScrapeTavily.has(domain)) {
+      skipped.push({
+        source,
+        reason: `Hard to scrape domain (Tavily): ${domain}`,
+      });
+      continue;
+    }
+    if (source.searchSource === 'exa' && hardToScrapeExa.has(domain)) {
+      skipped.push({
+        source,
+        reason: `Hard to scrape domain (Exa): ${domain}`,
+      });
+      continue;
+    }
+
+    // Check 4: Low relevance domain (requires 3+ samples - checked first)
+    if (lowRelevanceDomains.has(domain)) {
+      skipped.push({
+        source,
+        reason: `Low relevance domain: ${domain}`,
+      });
+      continue;
+    }
+
+    // Check 5: Low quality domain (requires 5+ samples)
+    if (lowQualityDomains.has(domain)) {
+      skipped.push({
+        source,
+        reason: `Low quality domain: ${domain}`,
       });
       continue;
     }
@@ -745,8 +832,9 @@ export interface FilteredSource {
   readonly url: string;
   readonly domain: string;
   readonly title: string;
-  readonly qualityScore: number;
-  /** Relevance score (0-100), or null if unknown (e.g., scrape failures) */
+  /** Quality score (0-100), or null if not evaluated (programmatic filters) */
+  readonly qualityScore: number | null;
+  /** Relevance score (0-100), or null if unknown (e.g., scrape failures, programmatic filters) */
   readonly relevanceScore: number | null;
   /** Reason for filtering */
   readonly reason: 'low_relevance' | 'low_quality' | 'excluded_domain' | 'pre_filtered' | 'scrape_failure';
@@ -922,7 +1010,7 @@ export async function processSearchResultsWithCleaning(
         url: r.url,
         domain,
         title: r.cached.title ?? 'Unknown',
-        qualityScore: 0,
+        qualityScore: null, // Not evaluated - scrape failure
         relevanceScore: null,
         reason: 'scrape_failure',
         details: `Scrape failed again: ${rawLength} chars (min: ${CLEANER_CONFIG.MIN_CONTENT_LENGTH})`,
@@ -958,8 +1046,8 @@ export async function processSearchResultsWithCleaning(
         url: r.url,
         domain,
         title: r.cached?.title ?? 'Unknown',
-        qualityScore: r.cached?.qualityScore ?? 0,
-        relevanceScore: r.cached?.relevanceScore ?? 0,
+        qualityScore: r.cached?.qualityScore ?? null, // Use cached score if available
+        relevanceScore: r.cached?.relevanceScore ?? null,
         reason: 'excluded_domain',
         details: `Cached source from now-excluded domain: ${domain}`,
         query,
@@ -1043,7 +1131,7 @@ export async function processSearchResultsWithCleaning(
           url: s.url,
           domain: extractDomainFromUrl(s.url),
           title: s.title,
-          qualityScore: 0,
+          qualityScore: null, // Not evaluated - scrape failure
           relevanceScore: null, // Unknown - couldn't evaluate content
           reason: 'scrape_failure',
           details: `Content too short: ${s.content.length} chars (min: ${CLEANER_CONFIG.MIN_CONTENT_LENGTH})`,
@@ -1081,7 +1169,7 @@ export async function processSearchResultsWithCleaning(
           url: source.url,
           domain: extractDomainFromUrl(source.url),
           title: source.title,
-          qualityScore: 0,
+          qualityScore: null, // Not evaluated - programmatic filter
           relevanceScore: null, // Unknown - skipped before evaluation
           reason: 'pre_filtered',
           details: `Programmatic: ${reason}`,
@@ -1140,7 +1228,7 @@ export async function processSearchResultsWithCleaning(
             url: source.url,
             domain: extractDomainFromUrl(source.url),
             title: source.title,
-            qualityScore: 0, // Unknown - not cleaned
+            qualityScore: null, // Not evaluated - pre-filter (only relevance checked)
             relevanceScore: relevanceToGaming,
             reason: 'pre_filtered',
             details: `Gaming: ${relevanceToGaming}/100, Article: ${relevanceToArticle}/100 - ${reason}`,
