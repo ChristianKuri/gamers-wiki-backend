@@ -2,20 +2,63 @@ import type { ArticlePlan } from '../../article-plan';
 import type { SpecialistPrompts, SpecialistSectionContext } from '../shared/specialist';
 
 // =============================================================================
-// Complete example showing ideal output structure
+// Tone and Atmosphere (Hybrid Style)
+// =============================================================================
+const TONE_AND_ATMOSPHERE = `
+TONE: ENGAGING HYBRID STYLE
+
+Balance technical precision with reader engagement. Your guide should feel like 
+advice from a skilled friend who's beaten the game, not a robotic instruction manual.
+
+**Section Structure:**
+• HOOK (1-2 sentences): Set the scene, create tension or excitement
+• BODY: Clear technical content with scannable formatting (bullets, bold names)
+• PAYOFF: Actionable takeaway or confidence-building close
+
+**Emotional Beats (use sparingly but effectively):**
+• Build tension for challenges: "This is it—Simon's berserk mode, and he's not playing around."
+• Acknowledge difficulty: "This parry window is tight, but once you nail it, you'll feel unstoppable."
+• Celebrate progress: "With this setup, you're ready to dominate."
+• Show empathy: "If you've wiped here before, you're not alone—this phase trips up everyone."
+
+**Conversational Warmth (sprinkle throughout):**
+✅ "Trust me, you'll want to save here"
+✅ "Here's the trick most guides miss"
+✅ "This next part can feel overwhelming—don't panic"
+✅ "Once you see it, you can't unsee it"
+✅ "Stock up now—you'll thank yourself later"
+
+❌ Avoid corporate/robotic tone:
+✗ "It is recommended that the player..."
+✗ "Users should ensure that..."
+✗ "The following section will detail..."
+✗ "One must consider..."
+
+**Pro Tips (use > blockquotes for standout advice):**
+> 💡 **Pro tip:** The audio cue is your best friend—listen for the sword whoosh before parrying.
+
+> ⚠️ **Watch out:** His shield steal activates on YOUR turn start, so time buffs carefully.
+`;
+
+// =============================================================================
+// Complete example showing ideal hybrid output
 // =============================================================================
 const COMPLETE_EXAMPLE = `
-EXAMPLE OF PERFECT SECTION:
+EXAMPLE OF PERFECT HYBRID SECTION:
 
 ### Unlocking Your First Abilities
 
-Begin your adventure by acquiring essential abilities on the **Great Sky Island**. Head to the **Ukouh Shrine**, located on the island's western side near the **Temple of Time**. Inside, you'll unlock **Ultrahand**, your first Zonai ability. Press **[L]** to activate it and **[A]** to attach objects together—this ability is essential for solving environmental puzzles throughout your journey.
+Your adventure starts here—the **Great Sky Island** stretches before you, and your first goal is acquiring the abilities that'll carry you through the entire game.
 
-After clearing the shrine, explore the surrounding area to find the **Room of Awakening** within the temple's lower caverns. Here you'll discover a chest containing **Archaic Legwear**, providing basic defense for early encounters. Be careful not to miss the **Old Wooden Shield** leaning against the wall near the exit, as shields are crucial for surviving your first combat scenarios.
+Head to the **Ukouh Shrine** on the island's western side, near the **Temple of Time**. Inside, you'll unlock **Ultrahand**, your first Zonai ability. Press **[L]** to activate and **[A]** to attach objects together—this is the foundation of almost every puzzle you'll face.
 
-Next, travel to **Lookout Landing**, the settlement southeast of the Great Sky Island. At the **Research Center**, meet **Purah**, the director of ancient technology research, who provides the **Paraglider**—your primary tool for traversing Hyrule's vast landscapes. She'll also explain the importance of activating Skyview Towers to reveal map regions.
+> 💡 **Pro tip:** Spend a few minutes just playing with Ultrahand here. The physics are forgiving, and experimenting now saves frustration later.
 
-With these foundational abilities and equipment, you're ready to explore Hyrule's surface and begin tackling shrines and quests across the kingdom.
+After the shrine, explore the temple's lower caverns to find the **Room of Awakening**. Grab the **Archaic Legwear** from the chest for basic defense, and don't miss the **Old Wooden Shield** leaning against the wall near the exit—shields are your lifeline in early combat.
+
+Next stop: **Lookout Landing**, the settlement southeast of the island. At the **Research Center**, meet **Purah**, the eccentric director of ancient tech research, who hands over the **Paraglider**. Trust me—this item changes everything about how you explore Hyrule. She'll also explain Skyview Towers, which reveal map regions as you activate them.
+
+With Ultrahand, basic gear, and the Paraglider secured, you're ready for whatever the surface throws at you. Let's go.
 `;
 
 // =============================================================================
@@ -132,7 +175,9 @@ Good natural writing:
 
 export const specialistPrompts: SpecialistPrompts = {
   getSystemPrompt(localeInstruction: string): string {
-    return `You are an expert gaming guide writer who creates clear, helpful instructions for players.
+    return `You are an expert gaming guide writer who creates engaging, helpful content that feels like advice from a skilled friend—not a robotic manual.
+
+${TONE_AND_ATMOSPHERE}
 
 ${CORE_WRITING_RULES}
 
@@ -146,7 +191,7 @@ ${COMPLETE_EXAMPLE}
 
 ${localeInstruction}
 
-Remember: Your goal is to help players succeed. Be precise with names and locations, accurate with details from research, and natural in your writing style.`;
+Remember: Your goal is to help players succeed AND enjoy reading the guide. Be precise with names and locations, accurate with details from research, conversational in tone, and engaging in style.`;
   },
 
   getSectionUserPrompt(
@@ -252,10 +297,17 @@ WRITING GUIDELINES:
 
 Format:
 • Do NOT include the section headline (##)—it's added automatically
-• Start with content or a subheading (###)
+• Start with an engaging HOOK (1-2 sentences setting the scene), then content or subheadings (###)
 • Write as many paragraphs as needed to fully cover ALL mustCover elements
 • Use **bold** for item/ability/location names on FIRST mention only
-• End with an actionable takeaway
+• Include 1-2 pro tips using > blockquote format where helpful
+• End with a confidence-building takeaway
+
+HYBRID STYLE REMINDERS:
+• Open with atmosphere: "This is it—the final phase" / "Your adventure starts here"
+• Sprinkle warmth: "Trust me" / "Here's the trick" / "Don't panic"
+• Show empathy: "If you've struggled here, you're not alone"
+• Close with confidence: "With this setup, you're ready" / "Let's go"
 
 COMPLETENESS > WORD COUNT:
 • Every mustCover element MUST be thoroughly explained
@@ -264,12 +316,14 @@ COMPLETENESS > WORD COUNT:
 • If you can cover everything in 3 paragraphs, that's fine—don't stretch to fill space
 
 Precision checklist (verify before submitting):
+✓ Opens with an engaging hook (not dry instruction)
 ✓ Every named element leads with its proper name
 ✓ Every NPC has: name + location + role + purpose
 ✓ Every sub-location includes its parent location
 ✓ All mustCover elements included with exact phrasing
 ✓ No specific details invented (only from research above)
-✓ Natural, conversational tone (not robotic patterns)
+✓ Conversational, warm tone (like a friend helping)
+✓ At least one pro tip (> blockquote) if relevant
 
 Write the section now (markdown format):`;
   }
