@@ -74,6 +74,7 @@ ${ctx.instruction?.trim() || 'Create a comprehensive guide'}
 
 ${researchSection}
 
+${ctx.topDetailedSummaries ? `\n${ctx.topDetailedSummaries}\n` : ''}
 ${ctx.existingResearchSummary}
 ${ctx.topSourcesSummary ? `\n${ctx.topSourcesSummary}\n` : ''}
 ██████████████████████████████████████████████████████████████████████████████

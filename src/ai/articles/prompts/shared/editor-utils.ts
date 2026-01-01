@@ -248,6 +248,129 @@ export function buildTopSourcesSummary(scoutOutput: ScoutOutput): string {
 }
 
 // ============================================================================ 
+// Top Detailed Summaries for Editor
+// ============================================================================ 
+
+/**
+ * Builds a summary of the top N best-quality detailed summaries from Scout research.
+ * These are source-level comprehensive summaries ranked by (quality + relevance).
+ * 
+ * **Excludes** sources already in `topSourcesPerQuery` (they get full content anyway).
+ * 
+ * Provides the Editor with:
+ * - Specific facts, numbers, names from the best sources
+ * - Key facts as bullet points
+ * - Data points (stats, dates, specific values)
+ * 
+ * This complements briefings (query-level synthesis) with source-level detail.
+ *
+ * @param scoutOutput - The Scout output containing research pool
+ * @param topN - Number of top summaries to include (default: 3)
+ * @returns Formatted string with top detailed summaries (excluding top sources)
+ */
+export function buildTopDetailedSummaries(scoutOutput: ScoutOutput, topN: number = 3): string {
+  // Guard against missing or empty research pool
+  if (!scoutOutput.researchPool?.results) {
+    return '';
+  }
+
+  // Build set of URLs already in topSourcesPerQuery (they get full content, no need for summary)
+  const topSourceUrls = new Set<string>(
+    scoutOutput.topSourcesPerQuery?.map(s => s.url) ?? []
+  );
+
+  // Collect all sources with detailed summaries from the research pool
+  const sourcesWithSummaries: Array<{
+    title: string;
+    url: string;
+    detailedSummary: string;
+    keyFacts: readonly string[];
+    dataPoints: readonly string[];
+    qualityScore: number;
+    relevanceScore: number;
+    combinedScore: number;
+  }> = [];
+
+  // Iterate through all categorized results in the research pool
+  for (const result of scoutOutput.researchPool.results) {
+    for (const item of result.results) {
+      // Skip sources already in topSourcesPerQuery (they get full content)
+      if (topSourceUrls.has(item.url)) {
+        continue;
+      }
+      if (item.detailedSummary && item.qualityScore !== undefined && item.relevanceScore !== undefined) {
+        sourcesWithSummaries.push({
+          title: item.title,
+          url: item.url,
+          detailedSummary: item.detailedSummary,
+          keyFacts: item.keyFacts ?? [],
+          dataPoints: item.dataPoints ?? [],
+          qualityScore: item.qualityScore,
+          relevanceScore: item.relevanceScore,
+          combinedScore: item.qualityScore + item.relevanceScore,
+        });
+      }
+    }
+  }
+
+  if (sourcesWithSummaries.length === 0) {
+    return '';
+  }
+
+  // Deduplicate by URL (same source might appear in multiple queries)
+  const seenUrls = new Set<string>();
+  const uniqueSources = sourcesWithSummaries.filter(s => {
+    if (seenUrls.has(s.url)) return false;
+    seenUrls.add(s.url);
+    return true;
+  });
+
+  // Sort by combined score (quality + relevance) descending
+  uniqueSources.sort((a, b) => b.combinedScore - a.combinedScore);
+
+  // Take top N
+  const topSources = uniqueSources.slice(0, topN);
+
+  const sections: string[] = [
+    `=== TOP ${topSources.length} BEST SOURCES (Detailed Summaries) ===`,
+    'These are comprehensive summaries from the highest-quality, most relevant sources.',
+    'Use these to understand what specific information exists for planning.',
+    '',
+  ];
+
+  for (let i = 0; i < topSources.length; i++) {
+    const source = topSources[i];
+
+    sections.push(`--- TOP SOURCE ${i + 1} ---`);
+    sections.push(`📄 ${source.title}`);
+    sections.push(`🔗 ${source.url}`);
+    sections.push(`⭐ Quality: ${source.qualityScore}/100 | Relevance: ${source.relevanceScore}/100`);
+    sections.push('');
+    sections.push('DETAILED SUMMARY:');
+    sections.push(source.detailedSummary);
+    sections.push('');
+
+    if (source.keyFacts.length > 0) {
+      sections.push('KEY FACTS:');
+      for (const fact of source.keyFacts.slice(0, 5)) { // Limit to 5 key facts
+        sections.push(`• ${fact}`);
+      }
+      sections.push('');
+    }
+
+    if (source.dataPoints.length > 0) {
+      sections.push('DATA POINTS:');
+      sections.push(source.dataPoints.slice(0, 8).join(' | ')); // Limit to 8, compact format
+      sections.push('');
+    }
+
+    sections.push('');
+  }
+
+  return sections.join('\n');
+}
+
+// ============================================================================ 
 // SEO Title Guidance
 // ============================================================================ 
 

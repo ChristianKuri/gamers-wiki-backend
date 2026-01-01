@@ -29,6 +29,7 @@ Suggested title from Scout (STARTING POINT ONLY): "${ctx.draftTitle}"
 === RESEARCH BRIEFINGS ===
 ${ctx.queryBriefingsSummary}
 
+${ctx.topDetailedSummaries ? `${ctx.topDetailedSummaries}\n` : ''}
 === ${ctx.existingResearchSummary}
 ${ctx.topSourcesSummary ? `\n${ctx.topSourcesSummary}\n` : ''}
 ${SEO_TITLE_GUIDANCE}

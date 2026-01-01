@@ -461,10 +461,13 @@ export const SPECIALIST_CONFIG = {
   MAX_SCOUT_OVERVIEW_LENGTH: 2500,
   /**
    * Characters of research context per result.
-   * INCREASED: Now that Exa returns 20,000c per result, use more of it.
-   * 10,000c × 5 results = 50,000c max per section (reasonable for 1M token LLM).
+   * INCREASED: Use full cleaned content without truncation.
+   * Database stats show: avg 3.8K, P99 17K, max 36K chars.
+   * 50,000c covers 100% of sources (max is 36K).
+   * 50,000c × 5 results = 250,000c max per section.
+   * That's ~62K tokens - well within Gemini 3 Flash's 1M context.
    */
-  RESEARCH_CONTEXT_PER_RESULT: 10000,
+  RESEARCH_CONTEXT_PER_RESULT: 50000,
   /**
    * Threshold for "thin research" warning.
    * INCREASED: With larger content per result, threshold should be higher.

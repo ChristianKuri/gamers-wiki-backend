@@ -24,6 +24,7 @@ import {
   buildExistingResearchSummary,
   buildQueryBriefingsSummary,
   buildTopSourcesSummary,
+  buildTopDetailedSummaries,
   detectArticleIntent,
   getEditorSystemPrompt,
   getEditorUserPrompt,
@@ -106,8 +107,11 @@ export async function runEditor(
   );
   const topSourcesSummary = buildTopSourcesSummary(scoutOutput);
   
-  // NEW: Build query briefings summary when available
+  // Build query briefings summary when available
   const queryBriefingsSummary = buildQueryBriefingsSummary(scoutOutput.queryBriefings);
+  
+  // Build top detailed summaries from best sources (top 3 by quality + relevance)
+  const topDetailedSummaries = buildTopDetailedSummaries(scoutOutput, 3);
 
   const targetWordCount = deps.targetWordCount ?? context.targetWordCount;
 
@@ -127,6 +131,7 @@ export async function runEditor(
     categorySlug: effectiveCategorySlug,
     topSourcesSummary,
     queryBriefingsSummary,
+    topDetailedSummaries,
     draftTitle: scoutOutput.queryPlan.draftTitle,
   };
 

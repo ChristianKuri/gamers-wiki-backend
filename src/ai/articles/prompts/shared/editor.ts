@@ -25,6 +25,11 @@ export interface EditorPromptContext {
    */
   readonly queryBriefingsSummary: string;
   /**
+   * Top detailed summaries from best sources (ranked by quality + relevance).
+   * Contains comprehensive source-level summaries with key facts and data points.
+   */
+  readonly topDetailedSummaries?: string;
+  /**
    * Draft title suggested by the Scout Query Planner.
    * Editor can use this as a starting point or create a new one.
    */
