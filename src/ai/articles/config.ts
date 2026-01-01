@@ -897,6 +897,10 @@ export const MODEL_PRICING: Record<string, ModelPricing> = {
   'google/gemini-pro': { inputPer1k: 0.00025, outputPer1k: 0.0005 },
   'google/gemini-pro-1.5': { inputPer1k: 0.00125, outputPer1k: 0.005 },
   'google/gemini-flash-2.0': { inputPer1k: 0.0001, outputPer1k: 0.0004 },
+  // Gemini 2.5 Flash: $0.30/1M input, $2.50/1M output
+  'google/gemini-2.5-flash': { inputPer1k: 0.0003, outputPer1k: 0.0025 },
+  // Gemini 2.5 Flash Lite: $0.10/1M input, $0.40/1M output (same as 2.0, optimized for speed)
+  'google/gemini-2.5-flash-lite': { inputPer1k: 0.0001, outputPer1k: 0.0004 },
   // Gemini 3 Flash: $0.50/1M input, $3/1M output (per OpenRouter Dec 2025)
   'google/gemini-3-flash-preview': { inputPer1k: 0.0005, outputPer1k: 0.003 },
 } as const;

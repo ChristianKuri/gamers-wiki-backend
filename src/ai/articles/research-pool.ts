@@ -675,8 +675,16 @@ export interface CleaningDeps {
   readonly strapi: Core.Strapi;
   /** AI SDK generateObject function */
   readonly generateObject: typeof import('ai').generateObject;
-  /** Language model for cleaning */
+  /** Language model for full cleaning (content extraction, quality scoring) */
   readonly model: LanguageModel;
+  /**
+   * Optional separate model for pre-filtering.
+   * Pre-filter is a simple classification task (gaming relevance + article relevance),
+   * so a faster/cheaper model can be used without sacrificing quality.
+   * If not provided, falls back to the main `model`.
+   * @example Use 'google/gemini-flash-2.0' for fast/cheap pre-filtering
+   */
+  readonly prefilterModel?: LanguageModel;
   /** Logger instance */
   readonly logger?: Logger;
   /** AbortSignal for cancellation */
@@ -827,7 +835,7 @@ export async function processSearchResultsWithCleaning(
   const { cleanSourcesBatch } = await import('./agents/cleaner');
   const { checkSourceCache, storeCleanedSources } = await import('./source-cache');
 
-  const { strapi, generateObject, model, logger, signal, gameName, gameDocumentId, minRelevanceOverride, minQualityOverride, articleTopic, duplicateTracker, phase = 'scout' } = cleaningDeps;
+  const { strapi, generateObject, model, prefilterModel, logger, signal, gameName, gameDocumentId, minRelevanceOverride, minQualityOverride, articleTopic, duplicateTracker, phase = 'scout' } = cleaningDeps;
 
   // Use overrides if provided, otherwise fall back to config defaults
   const minRelevance = minRelevanceOverride ?? CLEANER_CONFIG.MIN_RELEVANCE_FOR_RESULTS;
@@ -1088,9 +1096,11 @@ export async function processSearchResultsWithCleaning(
 
     if (CLEANER_CONFIG.PREFILTER_ENABLED && programmaticPreFilter.toClean.length > 0) {
       const { preFilterSourcesBatch } = await import('./agents/cleaner');
+      // Use dedicated prefilter model if provided, otherwise fall back to cleaner model
+      const preFilterModelToUse = prefilterModel ?? model;
       const llmPreFilterResult = await preFilterSourcesBatch(programmaticPreFilter.toClean, {
         generateObject,
-        model,
+        model: preFilterModelToUse,
         logger,
         signal,
         gameName,

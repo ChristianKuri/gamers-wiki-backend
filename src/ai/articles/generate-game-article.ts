@@ -963,6 +963,7 @@ export async function generateGameArticleDraft(
   const editorModel = getModel('ARTICLE_EDITOR');
   const specialistModel = getModel('ARTICLE_SPECIALIST');
   const cleanerModel = getModel('ARTICLE_CLEANER');
+  const prefilterModel = getModel('ARTICLE_PREFILTER');
 
   // Create contextual logger with correlation ID for tracing
   const correlationId = options?.correlationId ?? generateCorrelationId();
@@ -1021,6 +1022,7 @@ export async function generateGameArticleDraft(
       strapi,
       generateObject: genObject,
       model: openrouter(cleanerModel),
+      prefilterModel: openrouter(prefilterModel),
       logger: createPrefixedLogger('[Cleaner]'),
       signal,
       gameName: context.gameName,
@@ -1029,7 +1031,7 @@ export async function generateGameArticleDraft(
       tavilyExcludedDomains,
       exaExcludedDomains,
     };
-    log.info(`Content cleaning enabled (model: ${cleanerModel})`);
+    log.info(`Content cleaning enabled (cleaner: ${cleanerModel}, prefilter: ${prefilterModel})`);
     log.debug(`Excluded domains: ${excludedDomains.length} global, Tavily: ${tavilyExcludedDomains.length}, Exa: ${exaExcludedDomains.length}`);
   }
 
