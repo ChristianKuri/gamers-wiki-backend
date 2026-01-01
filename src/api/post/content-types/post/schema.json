@@ -133,7 +133,25 @@
         }
       }
     },
-    "generationMetadata": {
+    "plan": {
+      "type": "json",
+      "private": true,
+      "pluginOptions": {
+        "i18n": {
+          "localized": false
+        }
+      }
+    },
+    "costs": {
+      "type": "json",
+      "private": true,
+      "pluginOptions": {
+        "i18n": {
+          "localized": false
+        }
+      }
+    },
+    "sources": {
       "type": "json",
       "private": true,
       "pluginOptions": {

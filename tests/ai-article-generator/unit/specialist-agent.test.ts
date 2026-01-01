@@ -551,7 +551,8 @@ describe('runSpecialist', () => {
         deps
       );
 
-      expect(result.markdown).toContain('## Sources');
+      // Sources are stored in separate DB column, not in markdown content
+      expect(result.sources.length).toBeGreaterThan(0);
     });
   });
 
