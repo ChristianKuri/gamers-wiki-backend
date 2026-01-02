@@ -57,7 +57,8 @@ describe('Scout Helper Functions', () => {
       const discoveryCheck = createMockDiscoveryCheck();
       const queryBriefings = createMockQueryBriefings();
       const pool = createEmptyResearchPool();
-      const tokenUsage = createEmptyTokenUsage();
+      const queryPlanningTokenUsage = createEmptyTokenUsage();
+      const briefingTokenUsage = createEmptyTokenUsage();
       const searchApiCosts = createEmptySearchApiCosts();
       
       const output = assembleScoutOutput(
@@ -65,7 +66,8 @@ describe('Scout Helper Functions', () => {
         discoveryCheck,
         queryBriefings,
         pool,
-        tokenUsage,
+        queryPlanningTokenUsage,
+        briefingTokenUsage,
         'high',
         searchApiCosts
       );
@@ -74,7 +76,8 @@ describe('Scout Helper Functions', () => {
       expect(output.discoveryCheck).toBe(discoveryCheck);
       expect(output.queryBriefings).toBe(queryBriefings);
       expect(output.researchPool).toBe(pool);
-      expect(output.tokenUsage).toBe(tokenUsage);
+      expect(output.queryPlanningTokenUsage).toBe(queryPlanningTokenUsage);
+      expect(output.briefingTokenUsage).toBe(briefingTokenUsage);
       expect(output.confidence).toBe('high');
     });
 
@@ -98,6 +101,7 @@ describe('Scout Helper Functions', () => {
         createMockQueryBriefings(),
         pool,
         createEmptyTokenUsage(),
+        createEmptyTokenUsage(),
         'medium',
         createEmptySearchApiCosts()
       );
@@ -113,12 +117,13 @@ describe('Scout Helper Functions', () => {
       const discoveryCheck = createMockDiscoveryCheck();
       const queryBriefings = createMockQueryBriefings();
       const pool = createEmptyResearchPool();
-      const tokenUsage = createEmptyTokenUsage();
+      const queryPlanningTokenUsage = createEmptyTokenUsage();
+      const briefingTokenUsage = createEmptyTokenUsage();
       const searchApiCosts = createEmptySearchApiCosts();
       
-      const highOutput = assembleScoutOutput(queryPlan, discoveryCheck, queryBriefings, pool, tokenUsage, 'high', searchApiCosts);
-      const mediumOutput = assembleScoutOutput(queryPlan, discoveryCheck, queryBriefings, pool, tokenUsage, 'medium', searchApiCosts);
-      const lowOutput = assembleScoutOutput(queryPlan, discoveryCheck, queryBriefings, pool, tokenUsage, 'low', searchApiCosts);
+      const highOutput = assembleScoutOutput(queryPlan, discoveryCheck, queryBriefings, pool, queryPlanningTokenUsage, briefingTokenUsage, 'high', searchApiCosts);
+      const mediumOutput = assembleScoutOutput(queryPlan, discoveryCheck, queryBriefings, pool, queryPlanningTokenUsage, briefingTokenUsage, 'medium', searchApiCosts);
+      const lowOutput = assembleScoutOutput(queryPlan, discoveryCheck, queryBriefings, pool, queryPlanningTokenUsage, briefingTokenUsage, 'low', searchApiCosts);
 
       expect(highOutput.confidence).toBe('high');
       expect(mediumOutput.confidence).toBe('medium');
@@ -146,6 +151,7 @@ describe('Scout Helper Functions', () => {
         discoveryCheck,
         createMockQueryBriefings(),
         createEmptyResearchPool(),
+        createEmptyTokenUsage(),
         createEmptyTokenUsage(),
         'high',
         createEmptySearchApiCosts(),

@@ -755,11 +755,24 @@ export async function runScout(
     // If generic, we default to guides logic inside the prompt functions or null here
   }
 
+  // ===== SETUP CLEANING DEPS =====
+  // Create duplicate tracker and cleaning deps early so they can be used for discovery query too
+  const duplicateTracker = new DuplicateTracker();
+  const { cleaningDeps } = deps;
+  const cleaningDepsWithTracker: CleaningDeps | undefined = cleaningDeps
+    ? { ...cleaningDeps, duplicateTracker, phase: 'scout' }
+    : undefined;
+
+  if (cleaningDeps) {
+    log.debug('Content cleaning enabled - search results will be cleaned and cached');
+  }
+
   // ===== QUERY PLANNING PHASE (New Scout Query Planner) =====
   let queryPlanResult: ScoutQueryPlannerResult | null = null;
   let queryPlan: QueryPlan;
   let discoveryCheck: DiscoveryCheck | undefined;
   let discoveryResult: CategorizedSearchResult | undefined;
+  let discoverySearchResult: ScoutSearchResult | undefined;
   let queryPlanningTokenUsage: TokenUsage = createEmptyTokenUsage();
 
   if (SCOUT_CONFIG.QUERY_OPTIMIZATION_ENABLED && deps.generateObject) {
@@ -782,20 +795,19 @@ export async function runScout(
         log.info(`Discovery needed (${discoveryCheck.discoveryReason}): executing discovery query...`);
         
         const discoveryEngine = discoveryCheck.discoveryEngine ?? 'tavily';
-        let discoverySearchResult: ScoutSearchResult;
         
         if (discoveryEngine === 'exa' && isExaConfigured()) {
           discoverySearchResult = await executeExaSearch(
             discoveryCheck.discoveryQuery,
             'overview',
-            { numResults: 5, signal }
+            { numResults: 5, signal, cleaningDeps: cleaningDepsWithTracker }
           );
         } else {
           discoverySearchResult = await executeSearch(
             deps.search,
             discoveryCheck.discoveryQuery,
             'overview',
-            { searchDepth: 'advanced', maxResults: 10, signal }
+            { searchDepth: 'advanced', maxResults: 10, signal, cleaningDeps: cleaningDepsWithTracker }
           );
         }
         
@@ -872,20 +884,6 @@ export async function runScout(
   // Report initial progress
   deps.onProgress?.('search', 0, totalSearches);
 
-  // Log cleaning status
-  const { cleaningDeps } = deps;
-  if (cleaningDeps) {
-    log.debug('Content cleaning enabled - search results will be cleaned and cached');
-  }
-
-  // Create duplicate tracker to track URLs across all queries
-  const duplicateTracker = new DuplicateTracker();
-
-  // Enhance cleaningDeps with duplicate tracker
-  const cleaningDepsWithTracker: CleaningDeps | undefined = cleaningDeps
-    ? { ...cleaningDeps, duplicateTracker, phase: 'scout' }
-    : undefined;
-
   // ===== PARALLEL SEARCH PHASE =====
   // Execute all Tavily searches from planned queries
   const tavilyPromises: Promise<ScoutSearchResult>[] = tavilyQueries.map((planned, index) =>
@@ -918,8 +916,10 @@ export async function runScout(
     Promise.all(exaPromises),
   ]);
 
-  // Combine all results for research pool
+  // Combine all results for research pool (including discovery if available)
   const allResults: CategorizedSearchResult[] = [
+    // Include discovery results first (if available) - these are cleaned and cached like other queries
+    ...(discoveryResult ? [discoveryResult] : []),
     ...tavilyResults.map(r => r.result),
     ...exaResults.map(r => r.result),
   ];
@@ -934,9 +934,16 @@ export async function runScout(
 
   // ===== AGGREGATE CLEANING TOKEN USAGE =====
   // Track prefilter and extraction separately for cost visibility
+  // Include discovery search result if it was executed and cleaned
+  const allSearchResults: ScoutSearchResult[] = [
+    ...(discoverySearchResult ? [discoverySearchResult] : []),
+    ...tavilyResults,
+    ...exaResults,
+  ];
+  
   let prefilterTokenUsage = createEmptyTokenUsage();
   let extractionTokenUsage = createEmptyTokenUsage();
-  for (const searchResult of [...tavilyResults, ...exaResults]) {
+  for (const searchResult of allSearchResults) {
     prefilterTokenUsage = addTokenUsage(prefilterTokenUsage, searchResult.prefilterTokenUsage);
     extractionTokenUsage = addTokenUsage(extractionTokenUsage, searchResult.extractionTokenUsage);
   }
@@ -963,7 +970,7 @@ export async function runScout(
   // ===== AGGREGATE FILTERED SOURCES =====
   // Collect all sources that were filtered out due to low quality or relevance
   const allFilteredSources: FilteredSourceSummary[] = [];
-  for (const searchResult of [...tavilyResults, ...exaResults]) {
+  for (const searchResult of allSearchResults) {
     allFilteredSources.push(...searchResult.filteredSources);
   }
 
@@ -979,6 +986,22 @@ export async function runScout(
 
   // ===== AGGREGATE SEARCH API COSTS =====
   let searchApiCosts = createEmptySearchApiCosts();
+
+  // Track discovery search cost (if executed)
+  if (discoverySearchResult) {
+    const discoveryEngine = discoveryCheck?.discoveryEngine ?? 'tavily';
+    const costUsd = discoverySearchResult.result.costUsd;
+    
+    if (discoveryEngine === 'exa') {
+      searchApiCosts = addExaSearchCost(searchApiCosts, { costUsd: costUsd ?? 0.015 });
+    } else {
+      if (costUsd !== undefined) {
+        searchApiCosts = addTavilySearch(searchApiCosts, { credits: 1, costUsd });
+      } else {
+        searchApiCosts = addTavilySearch(searchApiCosts);
+      }
+    }
+  }
 
   // Track Tavily searches with actual costs from API response
   for (const searchResult of tavilyResults) {
