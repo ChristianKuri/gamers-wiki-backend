@@ -1327,6 +1327,7 @@ export async function generateGameArticleDraft(
     title: plan.title,
     categorySlug: plan.categorySlug,
     excerpt: plan.excerpt,
+    description: plan.description,
     tags: plan.tags,
     markdown: currentMarkdown,
     sources,

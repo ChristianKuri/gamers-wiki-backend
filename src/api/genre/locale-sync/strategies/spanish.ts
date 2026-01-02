@@ -1,17 +1,6 @@
 import type { Core } from '@strapi/strapi';
 import type { GenreLocaleStrategy, GenreLocaleData } from '../types';
-
-/**
- * Generate a URL-safe slug from a localized name
- */
-function generateSlug(name: string): string {
-  return name
-    .toLowerCase()
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '') // Remove accents
-    .replace(/[^a-z0-9]+/g, '-')     // Replace non-alphanumeric with dashes
-    .replace(/^-|-$/g, '');          // Remove leading/trailing dashes
-}
+import { slugify } from '../../../../utils/slug';
 
 /**
  * Spanish (es) locale strategy for genres
@@ -36,7 +25,7 @@ export const spanishGenreLocaleStrategy: GenreLocaleStrategy = {
 
     // Use localized name if provided, otherwise use original name
     const spanishName = data.localizedName || data.name;
-    const spanishSlug = generateSlug(spanishName);
+    const spanishSlug = slugify(spanishName);
 
     // Create Spanish locale entry using Document Service update()
     // In Strapi 5, update() with a new locale creates that locale version

@@ -109,6 +109,10 @@ export const ArticlePlanSchema = z.object({
     .string()
     .min(ARTICLE_PLAN_CONSTRAINTS.EXCERPT_MIN_LENGTH)
     .max(ARTICLE_PLAN_CONSTRAINTS.EXCERPT_MAX_LENGTH),
+  description: z
+    .string()
+    .min(ARTICLE_PLAN_CONSTRAINTS.DESCRIPTION_MIN_LENGTH)
+    .max(ARTICLE_PLAN_CONSTRAINTS.DESCRIPTION_MAX_LENGTH),
   tags: z
     .array(
       z.string()
@@ -150,7 +154,16 @@ export interface ArticlePlan {
   readonly gameSlug?: string;
   readonly title: string;
   readonly categorySlug: ArticleCategorySlug;
+  /**
+   * SEO meta description (120-160 chars).
+   * Shown in Google search results. Must be keyword-rich with CTA.
+   */
   readonly excerpt: string;
+  /**
+   * User-facing card preview (80-150 chars).
+   * Shown on article listing pages. Describes what the reader will learn.
+   */
+  readonly description: string;
   readonly tags: readonly string[];
   readonly sections: readonly ArticleSectionPlan[];
   /**

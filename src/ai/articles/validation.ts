@@ -135,6 +135,10 @@ export const GameArticleDraftSchema = z.object({
     .string()
     .min(ARTICLE_PLAN_CONSTRAINTS.EXCERPT_MIN_LENGTH, `Excerpt too short (minimum ${ARTICLE_PLAN_CONSTRAINTS.EXCERPT_MIN_LENGTH} characters)`)
     .max(ARTICLE_PLAN_CONSTRAINTS.EXCERPT_MAX_LENGTH, `Excerpt too long (maximum ${ARTICLE_PLAN_CONSTRAINTS.EXCERPT_MAX_LENGTH} characters)`),
+  description: z
+    .string()
+    .min(ARTICLE_PLAN_CONSTRAINTS.DESCRIPTION_MIN_LENGTH, `Description too short (minimum ${ARTICLE_PLAN_CONSTRAINTS.DESCRIPTION_MIN_LENGTH} characters)`)
+    .max(ARTICLE_PLAN_CONSTRAINTS.DESCRIPTION_MAX_LENGTH, `Description too long (maximum ${ARTICLE_PLAN_CONSTRAINTS.DESCRIPTION_MAX_LENGTH} characters)`),
   tags: z
     .array(
       z.string()
@@ -180,6 +184,7 @@ function validateStructureWithSchema(draft: {
   title: string;
   categorySlug: string;
   excerpt: string;
+  description: string;
   tags: readonly string[];
   markdown: string;
   sources: readonly string[];
@@ -486,6 +491,7 @@ export function detectRepetitiveText(text: string): {
 export function findCorruptedPlanField(plan: {
   title: string;
   excerpt: string;
+  description: string;
   tags: readonly string[];
   sections: readonly { headline: string; goal: string; researchQueries: readonly string[]; mustCover: readonly string[] }[];
   requiredElements?: readonly string[];
@@ -500,6 +506,12 @@ export function findCorruptedPlanField(plan: {
   const excerptCheck = detectRepetitiveText(plan.excerpt);
   if (excerptCheck.isCorrupted) {
     return { field: 'excerpt', pattern: excerptCheck.pattern!, repetitions: excerptCheck.repetitions! };
+  }
+
+  // Check description
+  const descriptionCheck = detectRepetitiveText(plan.description);
+  if (descriptionCheck.isCorrupted) {
+    return { field: 'description', pattern: descriptionCheck.pattern!, repetitions: descriptionCheck.repetitions! };
   }
 
   // Check tags
@@ -1163,6 +1175,7 @@ export function validateArticleDraft(
     title: string;
     categorySlug: string;
     excerpt: string;
+    description: string;
     tags: readonly string[];
     markdown: string;
     sources: readonly string[];

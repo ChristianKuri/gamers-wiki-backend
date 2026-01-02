@@ -476,3 +476,30 @@ Users type: "how to beat simon clair obscur"
 AI asks: "What's the strategy for Simon in Clair Obscur?"
 → Your title should match both: "How to Beat Simon Boss Fight in Clair Obscur Expedition 33"
 ` as const;
+
+// ============================================================================ 
+// SEO Excerpt & Description Guidance
+// ============================================================================ 
+
+/**
+ * Guidance for writing SEO excerpt (meta description) and user-facing description.
+ * These serve DIFFERENT purposes and must be crafted differently.
+ */
+export const SEO_EXCERPT_DESCRIPTION_GUIDANCE = `
+=== EXCERPT vs DESCRIPTION ===
+
+Generate BOTH fields — they serve different audiences:
+
+**EXCERPT** (120-150 chars) — SEO meta description for Google (160 chars max)
+- Start with primary keyword in first 40 chars
+- Professional, action-oriented, ends with CTA
+- ✅ "How to beat Simon in Clair Obscur. Three-phase guide with parry timings and one-shot Maelle strategy."
+- ❌ "This guide covers the Simon boss fight." (keyword buried, no CTA)
+
+**DESCRIPTION** (80-150 chars) — Card preview for site visitors
+- Casual, benefit-focused: what will they learn?
+- ✅ "Complete Simon boss guide covering all phases, parry patterns, and the build that can one-shot him."
+- ❌ "How to beat Simon boss fight guide with strategies." (sounds like SEO spam)
+
+Write excerpt first (keyword-focused) include game name and topic (boss, item, quest, etc.), then write a human friendly description, that causes curiosity and engagement.
+` as const;

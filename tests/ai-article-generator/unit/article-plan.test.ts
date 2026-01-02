@@ -14,6 +14,8 @@ describe('ArticlePlanSchema', () => {
       categorySlug: 'guide',
       excerpt:
         'Start strong in Elden Ring with early routes, safe upgrades, and the key mistakes most new Tarnished make—so you level faster and stay alive.',
+      description:
+        'Complete beginner guide with early routes, upgrades, and common mistakes to avoid.',
       tags: ['beginner tips', 'early game', 'build advice'],
       sections: [
         {
@@ -57,6 +59,8 @@ describe('ArticlePlanSchema', () => {
       categorySlug: 'guides',
       excerpt:
         'Start strong in Elden Ring with early routes, safe upgrades, and the key mistakes most new Tarnished make—so you level faster and stay alive.',
+      description:
+        'Complete beginner guide with early routes, upgrades, and common mistakes to avoid.',
       sections: [
         { headline: 'Section 1', goal: 'Goal', researchQueries: ['query1'], mustCover: ['item1'] },
         { headline: 'Section 2', goal: 'Goal', researchQueries: ['query2'], mustCover: ['item2'] },
@@ -184,6 +188,8 @@ describe('ArticlePlanSchema safety field', () => {
     categorySlug: 'guides',
     excerpt:
       'Start strong in Elden Ring with early routes, safe upgrades, and the key mistakes most new Tarnished make—so you level faster and stay alive.',
+    description:
+      'Complete beginner guide with early routes, upgrades, and common mistakes to avoid.',
     tags: ['test tag'],
     sections: [
       { headline: 'Section 1', goal: 'Goal', researchQueries: ['query1'], mustCover: ['item1'] },

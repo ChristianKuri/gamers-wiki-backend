@@ -994,7 +994,16 @@ export interface ReviewIssue {
 export interface GameArticleDraft {
   readonly title: string;
   readonly categorySlug: ArticleCategorySlug;
+  /**
+   * SEO meta description (120-160 chars).
+   * Shown in Google search results. Keyword-rich with CTA.
+   */
   readonly excerpt: string;
+  /**
+   * User-facing card preview (80-150 chars).
+   * Shown on article listing pages. Describes what reader will learn.
+   */
+  readonly description: string;
   readonly tags: readonly string[];
   readonly markdown: string;
   readonly sources: readonly string[];

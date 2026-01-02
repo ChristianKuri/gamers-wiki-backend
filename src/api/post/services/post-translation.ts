@@ -3,6 +3,7 @@ import { generateObject } from 'ai';
 import { z } from 'zod';
 
 import { getModel } from '../../../ai/config/utils';
+import { slugify } from '../../../utils/slug';
 
 const openrouter = createOpenAI({
   baseURL: 'https://openrouter.ai/api/v1',
@@ -22,15 +23,6 @@ export interface SpanishPostDraft {
   readonly excerpt: string;
   readonly description?: string;
   readonly content: string;
-}
-
-function slugify(value: string): string {
-  return value
-    .toLowerCase()
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-|-$/g, '');
 }
 
 const TranslationSchema = z.object({

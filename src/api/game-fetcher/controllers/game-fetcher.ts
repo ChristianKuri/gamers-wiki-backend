@@ -36,6 +36,7 @@ import {
 } from '../../../ai';
 import { syncLocales, type GameLocaleData } from '../../game/locale-sync';
 import { resolveIGDBGameIdFromQuery } from '../services/game-resolver';
+import { slugify } from '../../../utils/slug';
 
 interface SearchQuery {
   q?: string;
@@ -1022,12 +1023,7 @@ export default ({ strapi }: { strapi: Core.Strapi }) => ({
           },
           es: { 
             name: gameData.localizedNames.es.name, 
-            slug: gameData.localizedNames.es.name
-              .toLowerCase()
-              .normalize('NFD')
-              .replace(/[\u0300-\u036f]/g, '')
-              .replace(/[^a-z0-9]+/g, '-')
-              .replace(/^-|-$/g, ''),
+            slug: slugify(gameData.localizedNames.es.name),
             coverUrl: gameData.localizedNames.es.coverUrl,
             fromIGDB: gameData.localizedNames.es.name !== gameData.name,
           },

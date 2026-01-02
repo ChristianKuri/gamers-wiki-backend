@@ -1,5 +1,5 @@
 import type { EditorPromptContext, EditorPrompts } from '../shared/editor';
-import { buildRequiredElementHints, SEO_TITLE_GUIDANCE } from '../shared/editor-utils';
+import { buildRequiredElementHints, SEO_TITLE_GUIDANCE, SEO_EXCERPT_DESCRIPTION_GUIDANCE } from '../shared/editor-utils';
 
 export const editorPrompts: EditorPrompts = {
   getSystemPrompt(localeInstruction: string): string {
@@ -214,11 +214,14 @@ VERIFICATION CHECKLIST:
 
 ${SEO_TITLE_GUIDANCE}
 
+${SEO_EXCERPT_DESCRIPTION_GUIDANCE}
+
 OUTPUT STRUCTURE:
 {
   "title": "How to Beat Boss Name in Game Name: Complete Strategy" // 55-65 chars, descriptive, natural flow!
   "categorySlug": "guides",
-  "excerpt": "120-160 char description of what the guide accomplishes",
+  "excerpt": "SEO meta description (120-160 chars). Start with primary keyword, be keyword-rich, end with CTA.",
+  "description": "Card preview (80-150 chars). Casual summary for users browsing the site. What will they learn?",
   "tags": ["game-name", "topic", "key-item-or-ability"],
   "requiredElements": [
     "Item: Archaic Tunic (Great Sky Island > Pondside Cave, chest in main chamber)",

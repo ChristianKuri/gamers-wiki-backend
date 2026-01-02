@@ -1,6 +1,6 @@
 import type { Core } from '@strapi/strapi';
 import type { LocaleStrategy, GameLocaleData } from '../types';
-import { generateSlug } from './base';
+import { slugify } from '../../../../utils/slug';
 
 /**
  * Spanish (es) locale strategy
@@ -35,7 +35,7 @@ export const spanishLocaleStrategy: LocaleStrategy = {
     const spanishData = data.localizedNames.es;
     const spanishName = spanishData.name;
     const spanishCoverUrl = spanishData.coverUrl;
-    const spanishSlug = generateSlug(spanishName);
+    const spanishSlug = slugify(spanishName);
 
     // Check if Spanish locale already exists for this document
     const existing = await gameService.findOne({

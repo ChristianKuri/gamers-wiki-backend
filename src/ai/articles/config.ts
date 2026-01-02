@@ -201,9 +201,15 @@ export const ARTICLE_PLAN_CONSTRAINTS = {
 
   // Excerpt constraints (for SEO meta description)
   // Google typically shows 150-160 chars, but can display up to 300
+  // MUST be keyword-rich, start with primary keyword, include CTA
   EXCERPT_MIN_LENGTH: 120,
   EXCERPT_RECOMMENDED_MAX_LENGTH: 160, // Ideal for SEO - used in prompts
   EXCERPT_MAX_LENGTH: 200, // Hard cap for schema - allows some flexibility
+
+  // Description constraints (for UI card previews, user-facing)
+  // Shorter, more casual, describes what user will learn
+  DESCRIPTION_MIN_LENGTH: 80,
+  DESCRIPTION_MAX_LENGTH: 150,
 
   // Section constraints
   MIN_SECTIONS: 4,
@@ -1000,6 +1006,12 @@ function validateConfiguration(): void {
     ARTICLE_PLAN_CONSTRAINTS.EXCERPT_MAX_LENGTH,
     'EXCERPT_MIN_LENGTH',
     'EXCERPT_MAX_LENGTH'
+  );
+  validateMinMax(
+    ARTICLE_PLAN_CONSTRAINTS.DESCRIPTION_MIN_LENGTH,
+    ARTICLE_PLAN_CONSTRAINTS.DESCRIPTION_MAX_LENGTH,
+    'DESCRIPTION_MIN_LENGTH',
+    'DESCRIPTION_MAX_LENGTH'
   );
   validateMinMax(
     ARTICLE_PLAN_CONSTRAINTS.MIN_SECTIONS,

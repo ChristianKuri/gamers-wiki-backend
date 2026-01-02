@@ -1,6 +1,5 @@
 import type { EditorPromptContext, EditorPrompts } from '../shared/editor';
-import { SEO_TITLE_GUIDANCE } from '../shared/editor-utils';
-import { buildRequiredElementHints } from '../shared/editor-utils';
+import { SEO_TITLE_GUIDANCE, SEO_EXCERPT_DESCRIPTION_GUIDANCE, buildRequiredElementHints } from '../shared/editor-utils';
 
 export const editorPrompts: EditorPrompts = {
   getSystemPrompt(localeInstruction: string): string {
@@ -33,6 +32,8 @@ ${ctx.topDetailedSummaries ? `${ctx.topDetailedSummaries}\n` : ''}
 === ${ctx.existingResearchSummary}
 ${ctx.topSourcesSummary ? `\n${ctx.topSourcesSummary}\n` : ''}
 ${SEO_TITLE_GUIDANCE}
+
+${SEO_EXCERPT_DESCRIPTION_GUIDANCE}
 
 === NEWS STRUCTURE ===
 The article MUST be a 'news' category.

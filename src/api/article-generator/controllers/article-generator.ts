@@ -5,6 +5,7 @@ import type { DocumentQueryOptions, GameDocument } from '../../../types/strapi';
 import { isAIConfigured } from '../../../ai';
 import { generateGameArticleDraft } from '../../../ai/articles/generate-game-article';
 import type { GameArticleDraft } from '../../../ai/articles/types';
+import { slugify } from '../../../utils/slug';
 import { importOrGetGameByIgdbId, GameImportError } from '../../game-fetcher/services/import-game-programmatic';
 import { resolveIGDBGameIdFromQuery } from '../../game-fetcher/services/game-resolver';
 
@@ -426,12 +427,16 @@ export default ({ strapi }: { strapi: Core.Strapi }) => ({
     const sources = extractStoredSources(draft.sources);
 
     // Create a draft post (Strapi draftAndPublish: true)
+    // Note: Strapi's UID auto-generation doesn't trigger via Document Service API,
+    // so we must generate the slug ourselves.
     const created = await postService.create({
       locale,
       status: 'draft',
       data: {
         title: draft.title,
+        slug: slugify(draft.title),
         excerpt: draft.excerpt,
+        description: draft.description,
         content: draft.markdown,
         aiAssisted: true,
         aiModel: JSON.stringify(draft.models),
@@ -465,6 +470,7 @@ export default ({ strapi }: { strapi: Core.Strapi }) => ({
         title: draft.title,
         categorySlug: draft.categorySlug,
         excerpt: draft.excerpt,
+        description: draft.description,
         tags: draft.tags,
         markdown: draft.markdown,
         sources: draft.sources,

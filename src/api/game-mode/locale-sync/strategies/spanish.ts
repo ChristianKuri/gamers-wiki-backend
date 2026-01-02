@@ -1,17 +1,6 @@
 import type { Core } from '@strapi/strapi';
 import type { GameModeLocaleStrategy, GameModeLocaleData } from '../types';
-
-/**
- * Generate a URL-safe slug from a localized name
- */
-function generateSlug(name: string): string {
-  return name
-    .toLowerCase()
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '') // Remove accents
-    .replace(/[^a-z0-9]+/g, '-')     // Replace non-alphanumeric with dashes
-    .replace(/^-|-$/g, '');          // Remove leading/trailing dashes
-}
+import { slugify } from '../../../../utils/slug';
 
 /**
  * Spanish (es) locale strategy for game modes
@@ -34,7 +23,7 @@ export const spanishGameModeLocaleStrategy: GameModeLocaleStrategy = {
 
     // Use localized name if provided, otherwise use original name
     const spanishName = data.localizedName || data.name;
-    const spanishSlug = generateSlug(spanishName);
+    const spanishSlug = slugify(spanishName);
 
     const created = await gameModeService.update({
       documentId: data.documentId,

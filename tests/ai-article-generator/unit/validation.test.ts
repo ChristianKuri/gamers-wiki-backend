@@ -194,6 +194,8 @@ describe('validateArticleDraft tag length validation', () => {
     categorySlug: 'guides',
     excerpt:
       'This is a test excerpt that meets the minimum length requirement of 120 characters and is also under the maximum of 160 characters.',
+    description:
+      'A user-friendly card preview that describes what readers will learn from this guide.',
     tags: ['tag1', 'tag2'],
     markdown: `# Test Article
 
@@ -354,6 +356,8 @@ describe('validateArticlePlan', () => {
     categorySlug: 'guides',
     excerpt:
       'Master the Lands Between with this comprehensive beginner guide covering early game strategies, builds, and exploration tips.',
+    description:
+      'Comprehensive beginner guide for new Tarnished with early game tips, builds, and exploration strategies.',
     tags: ['beginner', 'guide', 'tips'],
     sections: [
       {
@@ -765,6 +769,7 @@ describe('findCorruptedPlanField', () => {
   const validPlan = {
     title: 'Valid Title For Testing',
     excerpt: 'This is a valid excerpt that meets all requirements and is not corrupted in any way.',
+    description: 'A card preview that helps users browsing the site decide what to read.',
     tags: ['tag1', 'tag2', 'tag3'],
     sections: [
       { headline: 'Section 1', goal: 'Goal 1', researchQueries: ['query1'], mustCover: ['item1'] },

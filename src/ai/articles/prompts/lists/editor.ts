@@ -1,5 +1,5 @@
 import type { EditorPromptContext, EditorPrompts } from '../shared/editor';
-import { buildRequiredElementHints, SEO_TITLE_GUIDANCE } from '../shared/editor-utils';
+import { buildRequiredElementHints, SEO_TITLE_GUIDANCE, SEO_EXCERPT_DESCRIPTION_GUIDANCE } from '../shared/editor-utils';
 
 export const editorPrompts: EditorPrompts = {
   getSystemPrompt(localeInstruction: string): string {
@@ -35,6 +35,8 @@ ${ctx.topDetailedSummaries ? `${ctx.topDetailedSummaries}\n` : ''}
 === ${ctx.existingResearchSummary}
 ${ctx.topSourcesSummary ? `\n${ctx.topSourcesSummary}\n` : ''}
 ${SEO_TITLE_GUIDANCE}
+
+${SEO_EXCERPT_DESCRIPTION_GUIDANCE}
 
 === LIST STRUCTURE ===
 The article MUST be a 'lists' category.
