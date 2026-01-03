@@ -1303,16 +1303,16 @@ export async function processSearchResultsWithCleaning(
         logger?.info?.(`Updated ${retrySources.length} scrape failure(s) to success`);
       }
       
-      // Update reprocessed sources (legacy data with NULL relevance)
+      // Update reprocessed sources (missing relevance OR missing detailedSummary)
       if (reprocessedSources.length > 0) {
-        const { updateLegacySourceRelevance } = await import('./source-cache');
+        const { updateReprocessedSource } = await import('./source-cache');
         for (const source of reprocessedSources) {
-          updateLegacySourceRelevance(strapi, source.url, source).catch((err) => {
+          updateReprocessedSource(strapi, source.url, source).catch((err) => {
             const message = err instanceof Error ? err.message : String(err);
-            logger?.warn?.(`Failed to update legacy source relevance ${source.url}: ${message}`);
+            logger?.warn?.(`Failed to update reprocessed source ${source.url}: ${message}`);
           });
         }
-        logger?.info?.(`Updated ${reprocessedSources.length} legacy source(s) with relevance scores`);
+        logger?.info?.(`Updated ${reprocessedSources.length} reprocessed source(s)`);
       }
       
       // Store new sources normally

@@ -648,14 +648,15 @@ export async function updateScrapeFailureToSuccess(
 }
 
 /**
- * Update a legacy source with NULL relevance after reprocessing.
- * Called when we re-clean a source that had NULL relevance score.
+ * Update an existing source after reprocessing.
+ * Called when we re-clean a cached source that was flagged as needsReprocessing
+ * (either missing relevance score OR missing detailedSummary).
  * 
  * @param strapi - Strapi instance
  * @param url - URL that was reprocessed
- * @param cleanedSource - The newly cleaned source content with relevance
+ * @param cleanedSource - The newly cleaned source content
  */
-export async function updateLegacySourceRelevance(
+export async function updateReprocessedSource(
   strapi: Core.Strapi,
   url: string,
   cleanedSource: CleanedSource
@@ -665,18 +666,17 @@ export async function updateLegacySourceRelevance(
   if (!normalizedUrl) return;
 
   try {
-    // Find the existing record with NULL relevance
+    // Find the existing record by URL
     const existing = await knex<SourceContentRow>('source_contents')
       .where('url', normalizedUrl)
-      .whereNull('relevance_score')
       .first();
 
     if (!existing) {
-      strapi.log.debug(`[SourceCache] No legacy source found for relevance update: ${normalizedUrl}`);
+      strapi.log.debug(`[SourceCache] No source found for reprocessing update: ${normalizedUrl}`);
       return;
     }
 
-    // Update with newly calculated scores and detailed summaries
+    // Update with newly cleaned content, scores, and summaries
     await knex('source_contents')
       .where('id', existing.id)
       .update({
@@ -698,67 +698,14 @@ export async function updateLegacySourceRelevance(
       });
 
     strapi.log.info(
-      `[SourceCache] Updated legacy source with relevance (Q:${cleanedSource.qualityScore}, R:${cleanedSource.relevanceScore}): ${normalizedUrl}`
+      `[SourceCache] Updated reprocessed source (Q:${cleanedSource.qualityScore}, R:${cleanedSource.relevanceScore}): ${normalizedUrl}`
     );
 
     // Update domain quality with new scores
     await updateDomainQuality(strapi, cleanedSource.domain);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    strapi.log.warn(`[SourceCache] Failed to update legacy source relevance ${url}: ${message}`);
-  }
-}
-
-/**
- * Update summaries for a cached source that has cleanedContent but missing summaries.
- * This is a lightweight backfill operation - only updates summary fields, not content.
- * 
- * @param strapi - Strapi instance
- * @param url - URL of the source to update
- * @param summaries - Extracted summaries to store
- */
-export async function updateSourceSummaries(
-  strapi: Core.Strapi,
-  url: string,
-  summaries: {
-    readonly summary: string;
-    readonly detailedSummary: string;
-    readonly keyFacts: readonly string[];
-    readonly dataPoints: readonly string[];
-  }
-): Promise<void> {
-  const knex = strapi.db.connection;
-  const normalizedUrl = normalizeUrl(url);
-  if (!normalizedUrl) return;
-
-  try {
-    // Find the existing record
-    const existing = await knex<SourceContentRow>('source_contents')
-      .where('url', normalizedUrl)
-      .first();
-
-    if (!existing) {
-      strapi.log.debug(`[SourceCache] No source found for summary update: ${normalizedUrl}`);
-      return;
-    }
-
-    // Update only the summary fields
-    await knex('source_contents')
-      .where('id', existing.id)
-      .update({
-        summary: summaries.summary,
-        detailed_summary: summaries.detailedSummary,
-        key_facts: JSON.stringify(summaries.keyFacts),
-        data_points: JSON.stringify(summaries.dataPoints),
-        updated_at: new Date().toISOString(),
-      });
-
-    strapi.log.info(
-      `[SourceCache] Backfilled summaries for: ${normalizedUrl}`
-    );
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    strapi.log.warn(`[SourceCache] Failed to update summaries for ${url}: ${message}`);
+    strapi.log.warn(`[SourceCache] Failed to update reprocessed source ${url}: ${message}`);
   }
 }
 
