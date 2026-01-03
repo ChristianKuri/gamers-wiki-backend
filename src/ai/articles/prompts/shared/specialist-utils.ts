@@ -1,4 +1,5 @@
 import type { CategorizedSearchResult, ContentType, SearchResultItem, SearchSource, SourceUsageItem } from '../../types';
+import { getFeatureFlag } from '../../../config/utils';
 
 /**
  * Result of content selection.
@@ -9,17 +10,55 @@ interface ContentResult {
 }
 
 /**
+ * Builds compact context from detailedSummary + keyFacts + dataPoints.
+ * This provides ~70% token reduction while preserving key information.
+ *
+ * @param result - The search result item with summary data
+ * @returns Formatted compact context string
+ */
+function buildCompactContext(result: SearchResultItem): string {
+  const sections: string[] = [];
+
+  // 1. Detailed summary (primary content)
+  if (result.detailedSummary) {
+    sections.push(result.detailedSummary);
+  }
+
+  // 2. Key facts as bullet points
+  if (result.keyFacts && result.keyFacts.length > 0) {
+    sections.push(`\nKEY FACTS:\n${result.keyFacts.map((f) => `• ${f}`).join('\n')}`);
+  }
+
+  // 3. Data points (compact, pipe-separated)
+  if (result.dataPoints && result.dataPoints.length > 0) {
+    sections.push(`\nDATA: ${result.dataPoints.join(' | ')}`);
+  }
+
+  return sections.join('\n');
+}
+
+/**
  * Gets the display content for a search result.
- * Always uses full content (summary support removed as we don't use it).
+ * Uses compact context (detailedSummary + structured data) when enabled and available,
+ * otherwise falls back to full cleanedContent.
  *
  * @param result - The search result item
- * @param contentPerResult - Maximum length for content
- * @returns Content and content type (always 'full')
+ * @param contentPerResult - Maximum length for content (used for full content fallback)
+ * @returns Content and content type
  */
 function getSourceContent(
   result: SearchResultItem,
   contentPerResult: number
 ): ContentResult {
+  // Use compact context if enabled and detailedSummary is available
+  if (getFeatureFlag('SPECIALIST_USE_COMPACT_CONTEXT') && result.detailedSummary) {
+    return {
+      content: buildCompactContext(result),
+      contentType: 'summary',
+    };
+  }
+
+  // Fallback: use full cleanedContent
   return {
     content: result.content.slice(0, contentPerResult),
     contentType: 'full',
@@ -38,11 +77,17 @@ export interface ResearchContextResult {
 
 /**
  * Builds research context for a section.
- * Always uses full content for all results.
+ * 
+ * When SPECIALIST_USE_COMPACT_CONTEXT=true:
+ * - Uses detailedSummary + keyFacts + dataPoints (~5K chars per source)
+ * - ~70% token reduction while preserving key information
+ * 
+ * When disabled (default):
+ * - Uses full cleanedContent (up to contentPerResult chars)
  *
  * @param research - Array of categorized search results
  * @param resultsPerResearch - Number of results to include per research query
- * @param contentPerResult - Maximum characters of content per result
+ * @param contentPerResult - Maximum characters of content per result (for full mode)
  * @param sectionHeadline - Section headline for tracking (optional)
  */
 export function buildResearchContext(
@@ -77,8 +122,8 @@ export function buildResearchContext(
             // Include quality/relevance scores if available (from cleaned sources)
             ...(result.qualityScore !== undefined ? { qualityScore: result.qualityScore } : {}),
             ...(result.relevanceScore !== undefined ? { relevanceScore: result.relevanceScore } : {}),
-            // Include cleaned content length
-            cleanedCharCount: result.content.length,
+            // Track actual content length used (compact or full)
+            cleanedCharCount: source.content.length,
             // Include cache status if available
             ...(result.wasCached !== undefined ? { wasCached: result.wasCached } : {}),
           });

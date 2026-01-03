@@ -689,9 +689,10 @@ export function addTavilySearch(
 
 /**
  * Content type used for a source in the LLM context.
- * Always 'full' - we always use full content from sources.
+ * - 'full': Full cleanedContent (default)
+ * - 'summary': Compact context (detailedSummary + keyFacts + dataPoints)
  */
-export type ContentType = 'full';
+export type ContentType = 'full' | 'summary';
 
 /**
  * Tracking of which content type was used for a single source.
@@ -699,7 +700,7 @@ export type ContentType = 'full';
 export interface SourceUsageItem {
   readonly url: string;
   readonly title: string;
-  /** Which content type was used in the LLM context (always 'full') */
+  /** Which content type was used in the LLM context ('full' or 'summary') */
   readonly contentType: ContentType;
   /** Phase where this source was used */
   readonly phase: 'scout' | 'specialist';
