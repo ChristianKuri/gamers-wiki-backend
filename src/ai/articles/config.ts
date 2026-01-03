@@ -507,7 +507,7 @@ export const SPECIALIST_CONFIG = {
    * Higher = more context for the Specialist to draw from, but more tokens.
    * Scout extracts up to 15 source summaries total.
    */
-  MAX_SOURCE_SUMMARIES_IN_PROMPT: 20,
+  MAX_SOURCE_SUMMARIES_IN_PROMPT: 40,
   /**
    * Number of concurrent search queries during batch research.
    * Higher values = faster research but more API pressure.
