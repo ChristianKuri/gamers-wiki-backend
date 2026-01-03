@@ -1,0 +1,27 @@
+#!/bin/bash
+# Automatically symlink .env from main worktree to new worktrees
+
+# Only run on worktree creation (when $3 is 1, meaning branch checkout)
+if [ "$3" != "1" ]; then
+    exit 0
+fi
+
+# Check if we're in a worktree (not the main working tree)
+MAIN_WORKTREE=$(git worktree list --porcelain | grep "^worktree " | head -1 | cut -d' ' -f2)
+CURRENT_DIR=$(pwd)
+
+# If we're in the main worktree, nothing to do
+if [ "$CURRENT_DIR" = "$MAIN_WORKTREE" ]; then
+    exit 0
+fi
+
+# If .env already exists (file or symlink), skip
+if [ -e ".env" ] || [ -L ".env" ]; then
+    exit 0
+fi
+
+# If main worktree has .env, create symlink
+if [ -f "$MAIN_WORKTREE/.env" ]; then
+    ln -s "$MAIN_WORKTREE/.env" ".env"
+    echo "✓ Symlinked .env from main worktree"
+fi
