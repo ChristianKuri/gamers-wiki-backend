@@ -58,12 +58,9 @@ export function getSpecialistSystemPrompt(
 export function getSpecialistSectionUserPrompt(
   ctx: SpecialistSectionContext,
   plan: ArticlePlan,
-  gameName: string,
-  maxScoutOverviewLength: number,
-  minParagraphs: number,
-  maxParagraphs: number
+  gameName: string
 ): string {
   // Plan always has the categorySlug
   const strategy = getStrategy(plan.categorySlug);
-  return strategy.getSectionUserPrompt(ctx, plan, gameName, maxScoutOverviewLength, minParagraphs, maxParagraphs);
+  return strategy.getSectionUserPrompt(ctx, plan, gameName);
 }

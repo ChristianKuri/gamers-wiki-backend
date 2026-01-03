@@ -263,16 +263,6 @@ export const WORD_COUNT_CONSTRAINTS = {
   MAX_WORD_COUNT: 5000,
   /** Average words per section (used to calculate section count) */
   WORDS_PER_SECTION: 400,
-  /** Average words per paragraph (used to calculate paragraph count) */
-  WORDS_PER_PARAGRAPH: 120,
-  /** Minimum paragraphs per section (floor for dynamic calculation) */
-  MIN_PARAGRAPHS_FLOOR: 2,
-  /** Maximum paragraphs per section (ceiling for dynamic calculation) */
-  MAX_PARAGRAPHS_CEILING: 8,
-  /** Subtracted from ideal paragraph count to get minimum */
-  PARAGRAPH_RANGE_LOWER_OFFSET: 1,
-  /** Added to ideal paragraph count to get maximum */
-  PARAGRAPH_RANGE_UPPER_OFFSET: 2,
 } as const;
 
 // ============================================================================
@@ -442,10 +432,6 @@ export const SPECIALIST_CONFIG = {
   TOP_RESULTS_PER_QUERY: 3,
   /** Characters of previous section to include as context */
   CONTEXT_TAIL_LENGTH: 500,
-  /** Minimum paragraphs per section */
-  MIN_PARAGRAPHS: 2,
-  /** Maximum paragraphs per section */
-  MAX_PARAGRAPHS: 5,
   /** Maximum length of Scout overview to include */
   MAX_SCOUT_OVERVIEW_LENGTH: 2500,
   /**
@@ -1027,12 +1013,6 @@ function validateConfiguration(): void {
   // Specialist Config
   validateTemperature(SPECIALIST_CONFIG.TEMPERATURE, 'SPECIALIST_CONFIG.TEMPERATURE');
   validatePositive(SPECIALIST_CONFIG.SNIPPET_LENGTH, 'SPECIALIST_CONFIG.SNIPPET_LENGTH');
-  validateMinMax(
-    SPECIALIST_CONFIG.MIN_PARAGRAPHS,
-    SPECIALIST_CONFIG.MAX_PARAGRAPHS,
-    'SPECIALIST_CONFIG.MIN_PARAGRAPHS',
-    'SPECIALIST_CONFIG.MAX_PARAGRAPHS'
-  );
   validatePositive(SPECIALIST_CONFIG.BATCH_CONCURRENCY, 'SPECIALIST_CONFIG.BATCH_CONCURRENCY');
   validateNonNegative(SPECIALIST_CONFIG.BATCH_DELAY_MS, 'SPECIALIST_CONFIG.BATCH_DELAY_MS');
   validatePositive(SPECIALIST_CONFIG.MAX_SOURCES, 'SPECIALIST_CONFIG.MAX_SOURCES');
@@ -1108,7 +1088,6 @@ function validateConfiguration(): void {
     'WORD_COUNT_CONSTRAINTS.MAX_WORD_COUNT'
   );
   validatePositive(WORD_COUNT_CONSTRAINTS.WORDS_PER_SECTION, 'WORD_COUNT_CONSTRAINTS.WORDS_PER_SECTION');
-  validatePositive(WORD_COUNT_CONSTRAINTS.WORDS_PER_PARAGRAPH, 'WORD_COUNT_CONSTRAINTS.WORDS_PER_PARAGRAPH');
 
   // Word Count Defaults - ensure all are within constraints
   for (const [category, wordCount] of Object.entries(WORD_COUNT_DEFAULTS)) {

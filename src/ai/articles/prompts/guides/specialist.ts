@@ -280,10 +280,7 @@ Remember: Your goal is to help players succeed AND enjoy reading the guide. Be p
   getSectionUserPrompt(
     ctx: SpecialistSectionContext,
     plan: ArticlePlan,
-    gameName: string,
-    _maxScoutOverviewLength: number,
-    _minParagraphs: number,
-    _maxParagraphs: number
+    gameName: string
   ): string {
 
     const mustCoverSection = ctx.mustCover.length > 0 ? `

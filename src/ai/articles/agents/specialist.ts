@@ -16,7 +16,7 @@ import type { LanguageModel } from 'ai';
 import { createPrefixedLogger, type Logger } from '../../../utils/logger';
 import { exaSearch, isExaConfigured, type ExaSearchOptions } from '../../tools/exa';
 import type { ArticlePlan, ArticleSectionPlan } from '../article-plan';
-import { SPECIALIST_CONFIG, WORD_COUNT_CONSTRAINTS } from '../config';
+import { SPECIALIST_CONFIG } from '../config';
 import { sleep, withRetry } from '../retry';
 import {
   buildResearchContext,
@@ -659,44 +659,6 @@ function ensureUniqueStrings(values: readonly string[], max: number): string[] {
 }
 
 /**
- * Calculates dynamic paragraph counts based on target word count and section count.
- * Uses WORD_COUNT_CONSTRAINTS.WORDS_PER_PARAGRAPH as the baseline.
- *
- * @param targetWordCount - Target word count for the entire article
- * @param sectionCount - Number of sections in the article
- * @returns Object with minParagraphs and maxParagraphs
- */
-function calculateDynamicParagraphCounts(
-  targetWordCount: number | undefined,
-  sectionCount: number
-): { minParagraphs: number; maxParagraphs: number } {
-  if (!targetWordCount) {
-    // Use default config values
-    return {
-      minParagraphs: SPECIALIST_CONFIG.MIN_PARAGRAPHS,
-      maxParagraphs: SPECIALIST_CONFIG.MAX_PARAGRAPHS,
-    };
-  }
-
-  const targetWordsPerSection = targetWordCount / sectionCount;
-  const wordsPerParagraph = WORD_COUNT_CONSTRAINTS.WORDS_PER_PARAGRAPH;
-
-  // Calculate paragraph range based on target words per section
-  // Allow some flexibility with min/max using configured offsets
-  const idealParagraphs = Math.round(targetWordsPerSection / wordsPerParagraph);
-  const minParagraphs = Math.max(
-    WORD_COUNT_CONSTRAINTS.MIN_PARAGRAPHS_FLOOR,
-    idealParagraphs - WORD_COUNT_CONSTRAINTS.PARAGRAPH_RANGE_LOWER_OFFSET
-  );
-  const maxParagraphs = Math.min(
-    WORD_COUNT_CONSTRAINTS.MAX_PARAGRAPHS_CEILING,
-    idealParagraphs + WORD_COUNT_CONSTRAINTS.PARAGRAPH_RANGE_UPPER_OFFSET
-  );
-
-  return { minParagraphs, maxParagraphs };
-}
-
-/**
  * Result from writing a single section.
  */
 interface WriteSectionResult {
@@ -710,8 +672,6 @@ interface WriteSectionResult {
  * Options for writing a single section.
  */
 interface WriteSectionOptions {
-  readonly minParagraphs: number;
-  readonly maxParagraphs: number;
   /** Cross-reference context from previous sections (sequential mode only) */
   readonly crossReferenceContext?: string;
 }
@@ -790,10 +750,7 @@ async function writeSection(
         prompt: getSpecialistSectionUserPrompt(
           sectionContext,
           plan,
-          context.gameName,
-          SPECIALIST_CONFIG.MAX_SCOUT_OVERVIEW_LENGTH,
-          options.minParagraphs,
-          options.maxParagraphs
+          context.gameName
         ),
       }),
     { context: `Specialist section "${section.headline}"`, signal: deps.signal }
@@ -857,26 +814,6 @@ export async function runSpecialist(
     log.info(`Batch research complete: ${successCount} successful, ${failureCount} failed`);
   }
 
-  // ===== CALCULATE DYNAMIC PARAGRAPH COUNTS =====
-  const targetWordCount = deps.targetWordCount ?? context.targetWordCount;
-  const { minParagraphs, maxParagraphs } = calculateDynamicParagraphCounts(
-    targetWordCount,
-    plan.sections.length
-  );
-
-  if (targetWordCount) {
-    log.debug(
-      `Dynamic paragraph range: ${minParagraphs}-${maxParagraphs} ` +
-        `(targeting ~${targetWordCount} words across ${plan.sections.length} sections)`
-    );
-  }
-
-  // Build write options with dynamic paragraph counts
-  const writeOptions: WriteSectionOptions = {
-    minParagraphs,
-    maxParagraphs,
-  };
-
   // ===== SECTION WRITING PHASE =====
   let sectionTexts: string[];
   let totalTokenUsage = createEmptyTokenUsage();
@@ -908,7 +845,7 @@ export async function runSpecialist(
         enrichedPool,
         writeDeps,
         '', // No previous context in parallel mode
-        writeOptions
+        {} // No special options in parallel mode
       ).then((result) => {
         // Report progress as each section completes
         deps.onSectionProgress?.(i + 1, plan.sections.length, section.headline);
@@ -952,7 +889,7 @@ export async function runSpecialist(
         enrichedPool,
         writeDeps,
         previousContext,
-        { ...writeOptions, crossReferenceContext }
+        { crossReferenceContext }
       );
 
       sectionTexts.push(result.text);
@@ -1091,12 +1028,6 @@ export async function writeSingleSection(
 
   log.info(`Regenerating section "${section.headline}" (index ${sectionIndex}) with Fixer feedback`);
 
-  // Calculate dynamic paragraph counts
-  const { minParagraphs, maxParagraphs } = calculateDynamicParagraphCounts(
-    options?.targetWordCount,
-    plan.sections.length
-  );
-
   // If feedback is provided, modify the section's goal to include it
   let effectiveSection = section;
   if (options?.feedback) {
@@ -1116,10 +1047,7 @@ export async function writeSingleSection(
     enrichedPool,
     deps,
     '', // No previous context for regeneration
-    {
-      minParagraphs,
-      maxParagraphs,
-    }
+    {} // No special options for regeneration
   );
 
   log.info(`Section "${section.headline}" regenerated: ${result.text.length} chars`);

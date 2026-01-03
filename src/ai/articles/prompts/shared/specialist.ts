@@ -34,9 +34,6 @@ export interface SpecialistPrompts {
   getSectionUserPrompt(
     ctx: SpecialistSectionContext,
     plan: ArticlePlan,
-    gameName: string,
-    maxScoutOverviewLength: number,
-    minParagraphs: number,
-    maxParagraphs: number
+    gameName: string
   ): string;
 }

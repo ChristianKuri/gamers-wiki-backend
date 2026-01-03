@@ -36,10 +36,7 @@ ${TONE_GUIDE}`;
   getSectionUserPrompt(
     ctx: SpecialistSectionContext,
     plan: ArticlePlan,
-    gameName: string,
-    _maxScoutOverviewLength: number,
-    minParagraphs: number,
-    maxParagraphs: number
+    gameName: string
   ): string {
     // Build source summaries section
     const maxSummaries = SPECIALIST_CONFIG.MAX_SOURCE_SUMMARIES_IN_PROMPT;
