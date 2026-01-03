@@ -80,51 +80,6 @@ export const AI_DEFAULT_MODELS = {
 export type AITaskKey = keyof typeof AI_ENV_KEYS;
 export type AIEnvKey = typeof AI_ENV_KEYS[keyof typeof AI_ENV_KEYS];
 
-// Helper to parse boolean env vars with a default value
-function envBool(envVar: string, defaultValue: boolean): boolean {
-  const value = process.env[envVar];
-  if (value === undefined) return defaultValue;
-  return value === 'true';
-}
-
-/**
- * Feature flags for AI functionality
- * These are boolean toggles that can be overridden via environment variables.
- */
-export const AI_FEATURE_FLAGS = {
-  /**
-   * Enable two-step cleaning (clean first, then summarize separately).
-   * 
-   * Benefits: Better quality summaries, cleaner model sees less data.
-   * Trade-off: Two LLM calls per source instead of one.
-   * 
-   * Env var: CLEANER_TWO_STEP_ENABLED
-   * Default: true
-   */
-  CLEANER_TWO_STEP_ENABLED: envBool('CLEANER_TWO_STEP_ENABLED', true),
-  /**
-   * Use compact context (detailedSummary + keyFacts + dataPoints) instead of full cleanedContent.
-   * 
-   * Benefits: ~70% reduction in Specialist input tokens, faster, cheaper.
-   * Trade-off: Relies on summary quality - may miss edge-case details.
-   * 
-   * Env var: SPECIALIST_USE_COMPACT_CONTEXT
-   * Default: true
-   */
-  SPECIALIST_USE_COMPACT_CONTEXT: envBool('SPECIALIST_USE_COMPACT_CONTEXT', true),
-} as const;
-
-export type AIFeatureFlagKey = keyof typeof AI_FEATURE_FLAGS;
-
-/**
- * Get a feature flag value
- * @param flagKey - The feature flag key
- * @returns The boolean value of the flag
- */
-export function getFeatureFlag(flagKey: AIFeatureFlagKey): boolean {
-  return AI_FEATURE_FLAGS[flagKey];
-}
-
 /**
  * Get the model for a specific AI task
  * Checks environment variable first, falls back to default model

@@ -1,5 +1,5 @@
 import type { CategorizedSearchResult, ContentType, SearchResultItem, SearchSource, SourceUsageItem } from '../../types';
-import { getFeatureFlag } from '../../../config/utils';
+import { SPECIALIST_CONFIG } from '../../config';
 
 /**
  * Result of content selection.
@@ -51,7 +51,7 @@ function getSourceContent(
   contentPerResult: number
 ): ContentResult {
   // Use compact context if enabled and detailedSummary is available
-  if (getFeatureFlag('SPECIALIST_USE_COMPACT_CONTEXT') && result.detailedSummary) {
+  if (SPECIALIST_CONFIG.USE_COMPACT_CONTEXT && result.detailedSummary) {
     return {
       content: buildCompactContext(result),
       contentType: 'summary',

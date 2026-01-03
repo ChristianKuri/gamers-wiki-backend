@@ -10,7 +10,6 @@ import type { LanguageModel } from 'ai';
 import { z } from 'zod';
 
 import { createPrefixedLogger, type Logger } from '../../../utils/logger';
-import { getFeatureFlag } from '../../config/utils';
 import { CLEANER_CONFIG } from '../config';
 import { withRetry } from '../retry';
 import { extractDomain } from '../source-cache';
@@ -450,7 +449,7 @@ export async function cleanSourcesBatch(
 ): Promise<CleanSourcesBatchResult> {
   const log = deps.logger ?? createPrefixedLogger('[Cleaner]');
   // Use two-step if enabled in config AND summarizerModel is provided
-  const useTwoStep = getFeatureFlag('CLEANER_TWO_STEP_ENABLED') && Boolean(deps.summarizerModel);
+  const useTwoStep = CLEANER_CONFIG.TWO_STEP_ENABLED && Boolean(deps.summarizerModel);
 
   if (sources.length === 0) {
     return { sources: [], tokenUsage: createEmptyTokenUsage() };

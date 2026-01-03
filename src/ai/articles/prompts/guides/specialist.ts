@@ -175,6 +175,33 @@ Good natural writing:
 `;
 
 // =============================================================================
+// Data Presentation and Structured Formatting
+// =============================================================================
+const DATA_AND_FORMATTING = `
+FORMATTING:
+
+**When to use lists:**
+• Numbered lists for step-by-step sequences or combat rotations where order matters
+• Bullet lists for required items, gear options, or quick checklists
+• Keep lists short and purposeful—prose is still your primary tool
+
+**When to use tables:**
+- Tables can break reading flow, so use them sparingly and only when they're the clearest way to present the information
+- Ideal for comparisons (e.g., stat breakdowns across gear pieces, skill damage at different levels, or cooldown timers)
+- If a table adds more clarity than it costs in readability, use it—otherwise, keep the data in prose
+
+Data: 
+
+**Include hard data when available:**
+• Specific numbers: HP values, damage thresholds, level requirements
+• Button prompts with results: "Press [R1] to parry → triggers Counter stance"
+• Patch notes or version-specific info mentioned in research
+
+**Recognize community knowledge:**
+Reference meta builds, known strategies, or community nicknames when they appear in research
+`;
+
+// =============================================================================
 // SEO and Discoverability Rules
 // =============================================================================
 const SEO_RULES = `
@@ -239,13 +266,15 @@ ${FACTUAL_ACCURACY}
 
 ${NATURAL_LANGUAGE}
 
+${DATA_AND_FORMATTING}
+
 ${SEO_RULES}
 
 ${COMPLETE_EXAMPLE}
 
 ${localeInstruction}
 
-Remember: Your goal is to help players succeed AND enjoy reading the guide. Be precise with names and locations, accurate with details from research, conversational in tone, engaging in style, and SEO-aware with game name mentions (target 8+ across the full article).`;
+Remember: Your goal is to help players succeed AND enjoy reading the guide. Be precise with names and locations, accurate with details from research, conversational in tone, engaging in style, use structured formatting when it aids clarity, and be SEO-aware with game name mentions (target 8+ across the full article).`;
   },
 
   getSectionUserPrompt(
@@ -253,8 +282,8 @@ Remember: Your goal is to help players succeed AND enjoy reading the guide. Be p
     plan: ArticlePlan,
     gameName: string,
     _maxScoutOverviewLength: number,
-    minParagraphs: number,
-    maxParagraphs: number
+    _minParagraphs: number,
+    _maxParagraphs: number
   ): string {
 
     const mustCoverSection = ctx.mustCover.length > 0 ? `

@@ -531,6 +531,12 @@ export const SPECIALIST_CONFIG = {
    * Helps avoid rate limiting when making multiple requests.
    */
   BATCH_DELAY_MS: 200,
+  /**
+   * Use compact context (detailedSummary + keyFacts + dataPoints) instead of full cleanedContent.
+   * Benefits: ~70% reduction in input tokens, faster, cheaper.
+   * Trade-off: Relies on summary quality - may miss edge-case details.
+   */
+  USE_COMPACT_CONTEXT: true,
 } as const;
 
 // ============================================================================
@@ -644,19 +650,6 @@ export const FIXER_CONFIG = {
 // ============================================================================
 // Cleaner Agent Configuration
 // ============================================================================
-
-/**
- * Check if cleaner is enabled via env variable or config.
- * Env variable ARTICLE_CLEANER_ENABLED overrides config.
- * Set to 'false' to disable cleaning (use raw content + cache only).
- */
-function isCleanerEnabled(): boolean {
-  const envValue = process.env.ARTICLE_CLEANER_ENABLED;
-  if (envValue !== undefined) {
-    return envValue.toLowerCase() !== 'false' && envValue !== '0';
-  }
-  return true; // Default enabled
-}
 
 export const CLEANER_CONFIG = {
   /**
@@ -772,24 +765,20 @@ export const CLEANER_CONFIG = {
   /**
    * Whether the cleaner LLM is enabled.
    * When false, only checks DB cache - doesn't run LLM on misses.
-   * Override with env var ARTICLE_CLEANER_ENABLED=false
    */
-  get ENABLED(): boolean {
-    return isCleanerEnabled();
-  },
+  ENABLED: true,
   /**
    * Whether to use LLM pre-filter before full cleaning.
    * Pre-filter uses title + snippet to check relevance.
    * Costs ~$0.0001-0.0005 per source, can save full cleaning cost on irrelevant content.
-   * Override with env var ARTICLE_PREFILTER_ENABLED=false
    */
-  get PREFILTER_ENABLED(): boolean {
-    const envValue = process.env.ARTICLE_PREFILTER_ENABLED;
-    if (envValue !== undefined) {
-      return envValue.toLowerCase() !== 'false';
-    }
-    return true; // Enabled by default
-  },
+  PREFILTER_ENABLED: true,
+  /**
+   * Enable two-step cleaning (clean first, then summarize separately).
+   * Benefits: Better quality summaries, cleaner model sees less data.
+   * Trade-off: Two LLM calls per source instead of one.
+   */
+  TWO_STEP_ENABLED: true,
   /**
    * Character length of content snippet for pre-filter.
    * INCREASED from 500 to 2000: Many pages have navigation/breadcrumbs at the
