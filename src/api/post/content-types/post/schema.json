@@ -159,6 +159,11 @@
           "localized": false
         }
       }
+    },
+    "relatedPosts": {
+      "type": "relation",
+      "relation": "manyToMany",
+      "target": "api::post.post"
     }
   }
 }
