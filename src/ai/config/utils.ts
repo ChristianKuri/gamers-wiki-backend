@@ -27,6 +27,7 @@ export const AI_ENV_KEYS = {
   ARTICLE_REVIEWER: 'AI_MODEL_ARTICLE_REVIEWER',
   ARTICLE_FIXER: 'AI_MODEL_ARTICLE_FIXER',
   ARTICLE_CLEANER: 'AI_MODEL_ARTICLE_CLEANER',
+  ARTICLE_SUMMARIZER: 'AI_MODEL_ARTICLE_SUMMARIZER',
   ARTICLE_PREFILTER: 'AI_MODEL_ARTICLE_PREFILTER',
   GAME_MATCHER: 'AI_MODEL_GAME_MATCHER',
   POST_TRANSLATION: 'AI_MODEL_POST_TRANSLATION',
@@ -66,7 +67,8 @@ export const AI_DEFAULT_MODELS = {
   ARTICLE_SPECIALIST: 'x-ai/grok-4.1-fast',
   ARTICLE_REVIEWER: 'google/gemini-3-flash-preview',
   ARTICLE_FIXER: 'google/gemini-3-flash-preview',
-  ARTICLE_CLEANER: 'google/gemini-3-flash-preview',
+  ARTICLE_CLEANER: 'google/gemini-2.5-flash-lite',
+  ARTICLE_SUMMARIZER: 'google/gemini-3-flash-preview',
   ARTICLE_PREFILTER: 'google/gemini-2.5-flash-lite',
   GAME_MATCHER: 'google/gemini-3-flash-preview',
   POST_TRANSLATION: 'google/gemini-3-flash-preview',
@@ -77,6 +79,34 @@ export const AI_DEFAULT_MODELS = {
 
 export type AITaskKey = keyof typeof AI_ENV_KEYS;
 export type AIEnvKey = typeof AI_ENV_KEYS[keyof typeof AI_ENV_KEYS];
+
+/**
+ * Feature flags for AI functionality
+ * These are boolean toggles that can be overridden via environment variables.
+ */
+export const AI_FEATURE_FLAGS = {
+  /**
+   * Enable two-step cleaning (clean first, then summarize separately).
+   * 
+   * Benefits: Better quality summaries, cleaner model sees less data.
+   * Trade-off: Two LLM calls per source instead of one.
+   * 
+   * Set via CLEANER_TWO_STEP_ENABLED env var ('true' or 'false').
+   * Default: true (recommended)
+   */
+  CLEANER_TWO_STEP_ENABLED: process.env.CLEANER_TWO_STEP_ENABLED !== 'false',
+} as const;
+
+export type AIFeatureFlagKey = keyof typeof AI_FEATURE_FLAGS;
+
+/**
+ * Get a feature flag value
+ * @param flagKey - The feature flag key
+ * @returns The boolean value of the flag
+ */
+export function getFeatureFlag(flagKey: AIFeatureFlagKey): boolean {
+  return AI_FEATURE_FLAGS[flagKey];
+}
 
 /**
  * Get the model for a specific AI task

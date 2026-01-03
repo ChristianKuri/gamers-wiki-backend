@@ -762,14 +762,25 @@ export interface CleaningDeps {
   readonly strapi: Core.Strapi;
   /** AI SDK generateObject function */
   readonly generateObject: typeof import('ai').generateObject;
-  /** Language model for full cleaning (content extraction, quality scoring) */
+  /** 
+   * Language model for content cleaning (junk removal, content extraction).
+   * Used in step 1 of two-step cleaning.
+   * @default 'google/gemini-2.5-flash-lite'
+   */
   readonly model: LanguageModel;
+  /**
+   * Language model for summarization (summary, key facts, data points extraction).
+   * Used in step 2 of two-step cleaning.
+   * If not provided, falls back to the main `model`.
+   * @default 'google/gemini-2.5-flash-lite'
+   */
+  readonly summarizerModel?: LanguageModel;
   /**
    * Optional separate model for pre-filtering.
    * Pre-filter is a simple classification task (gaming relevance + article relevance),
    * so a faster/cheaper model can be used without sacrificing quality.
    * If not provided, falls back to the main `model`.
-   * @example Use 'google/gemini-flash-2.0' for fast/cheap pre-filtering
+   * @example Use 'google/gemini-2.5-flash-lite' for fast/cheap pre-filtering
    */
   readonly prefilterModel?: LanguageModel;
   /** Logger instance */
@@ -1255,10 +1266,11 @@ export async function processSearchResultsWithCleaning(
       logger?.debug?.('LLM pre-filter disabled, skipping to full cleaning');
     }
 
-    // Step 4: Full cleaning of remaining sources
+    // Step 4: Full cleaning of remaining sources (two-step if summarizerModel provided)
     const cleanResult = await cleanSourcesBatch(sourcesAfterPreFilter, {
       generateObject,
       model,
+      summarizerModel: cleaningDeps.summarizerModel,
       logger,
       signal,
       gameName,

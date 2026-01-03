@@ -688,9 +688,10 @@ export const CLEANER_CONFIG = {
   BATCH_SIZE: 100,
   /**
    * Timeout for cleaning a single URL (ms).
-   * 90 seconds to handle large content (up to 100K chars).
+   * 180 seconds (3 min) to handle large content with two-step cleaning.
+   * Two-step does 2 LLM calls: clean (large input) + summarize (large output).
    */
-  TIMEOUT_MS: 90000,
+  TIMEOUT_MS: 180000,
   /**
    * Minimum content length (chars) to attempt cleaning.
    * Content below this is likely a scrape failure (JS-heavy site, paywall, etc.)

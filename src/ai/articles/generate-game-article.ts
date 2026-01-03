@@ -968,6 +968,7 @@ export async function generateGameArticleDraft(
   const specialistModel = getModel('ARTICLE_SPECIALIST');
   const fixerModel = getModel('ARTICLE_FIXER');
   const cleanerModel = getModel('ARTICLE_CLEANER');
+  const summarizerModel = getModel('ARTICLE_SUMMARIZER');
   const prefilterModel = getModel('ARTICLE_PREFILTER');
 
   // Create contextual logger with correlation ID for tracing
@@ -1027,6 +1028,7 @@ export async function generateGameArticleDraft(
       strapi,
       generateObject: genObject,
       model: openrouter(cleanerModel),
+      summarizerModel: openrouter(summarizerModel),
       prefilterModel: openrouter(prefilterModel),
       logger: createPrefixedLogger('[Cleaner]'),
       signal,
@@ -1036,7 +1038,7 @@ export async function generateGameArticleDraft(
       tavilyExcludedDomains,
       exaExcludedDomains,
     };
-    log.info(`Content cleaning enabled (cleaner: ${cleanerModel}, prefilter: ${prefilterModel})`);
+    log.info(`Content cleaning enabled (cleaner: ${cleanerModel}, summarizer: ${summarizerModel}, prefilter: ${prefilterModel})`);
     log.debug(`Excluded domains: ${excludedDomains.length} global, Tavily: ${tavilyExcludedDomains.length}, Exa: ${exaExcludedDomains.length}`);
   }
 
@@ -1559,7 +1561,7 @@ export async function generateGameArticleDraft(
       editor: editorModel,
       specialist: specialistModel,
       ...(shouldRunReviewer ? { reviewer: reviewerModel } : {}),
-      ...(cleaningDeps ? { cleaner: cleanerModel } : {}),
+      ...(cleaningDeps ? { cleaner: cleanerModel, summarizer: summarizerModel } : {}),
     },
     metadata,
     ...(shouldRunReviewer && reviewerOutput

@@ -10,6 +10,7 @@ import type { LanguageModel } from 'ai';
 import { z } from 'zod';
 
 import { createPrefixedLogger, type Logger } from '../../../utils/logger';
+import { getFeatureFlag } from '../../config/utils';
 import { CLEANER_CONFIG } from '../config';
 import { withRetry } from '../retry';
 import { extractDomain } from '../source-cache';
@@ -32,8 +33,10 @@ export { CLEANER_CONFIG } from '../config';
 // ============================================================================
 
 /**
- * Schema for cleaner LLM output.
+ * Schema for cleaner LLM output (single-step cleaning).
  * Validates structured response from the model.
+ * 
+ * For two-step cleaning, use PureCleanerOutputSchema + EnhancedSummarySchema instead.
  */
 const CleanerOutputSchema = z.object({
   cleanedContent: z
@@ -88,7 +91,15 @@ const CleanerOutputSchema = z.object({
 
 export interface CleanerDeps {
   readonly generateObject: typeof import('ai').generateObject;
+  /** Language model for content cleaning (junk removal) */
   readonly model: LanguageModel;
+  /** 
+   * Optional separate model for summarization (two-step cleaning).
+   * When provided, uses two-step cleaning: clean first, then summarize.
+   * This produces better summaries and costs less than single-step.
+   * If not provided, falls back to single-step cleaning using `model`.
+   */
+  readonly summarizerModel?: LanguageModel;
   readonly logger?: Logger;
   readonly signal?: AbortSignal;
   /** Game name for relevance scoring context */
@@ -110,7 +121,8 @@ export interface CleanSourcesBatchResult {
 // ============================================================================
 
 /**
- * System prompt for the cleaner agent.
+ * System prompt for the cleaner agent (single-step cleaning).
+ * Used when two-step cleaning is not enabled.
  */
 function getCleanerSystemPrompt(): string {
   return `You are a content cleaning specialist for a VIDEO GAME website. Your job is to:
@@ -186,12 +198,12 @@ RELEVANCE SCORING (0-100) - Is this about VIDEO GAMES specifically?
 VIDEO GAMES = PC games, console games (PlayStation, Xbox, Nintendo), mobile games
 NOT VIDEO GAMES = board games, card games, tabletop RPGs, gambling, sports
 
-Score guide:
-- 90-100: Video game guides, wikis, reviews, walkthroughs, tips, builds
-- 70-89: Video game news, patch notes, game announcements
-- 50-69: Tangentially related (gaming hardware, esports, game streaming)
-- 20-49: Barely related (general tech with gaming mention)
-- 0-19: NOT VIDEO GAMES (board games, tabletop, programming, cooking, sports)
+RELEVANCE SCORE (0-100) - Is this about VIDEO GAMES?
+│ 90-100 │ Video game content: guides, wikis, news, reviews, builds, walkthroughs
+│ 70-89  │ Patch notes, announcements
+│ 50-69  │ Gaming-adjacent: hardware, esports, streaming, game dev content
+│ 20-49  │ Tangential: general tech/entertainment mentioning games
+│ 0-19   │ NOT video games: board games, tabletop RPGs, D&D, cooking, coding
 
 CRITICAL: Board games, card games, tabletop games are NOT video games!
 - boardgamegeek.com content = relevance 0-10 (NOT video games)
@@ -227,29 +239,49 @@ function getCleanerUserPrompt(source: RawSourceInput, gameName?: string): string
   return `Clean the following web content and rate its quality AND relevance to VIDEO GAMES.
 ${gameContext}
 
+═══════════════════════════════════════════════════════════════════
+SOURCE
+═══════════════════════════════════════════════════════════════════
 URL: ${source.url}
 Title: ${source.title}
+Raw Length: ${source.content.length.toLocaleString()} chars
 
-=== RAW CONTENT START ===
+═══════════════════════════════════════════════════════════════════
+RAW CONTENT
+═══════════════════════════════════════════════════════════════════
 ${source.content.slice(0, CLEANER_CONFIG.MAX_INPUT_CHARS)}
-=== RAW CONTENT END ===
 
-Extract and return:
-1. cleanedContent: The content with all junk removed (keep ALL valuable content)
-2. summary: A concise 1-2 sentence summary of what this content covers
-3. detailedSummary: A rich 3-5 paragraph summary preserving ALL specific facts, names, numbers, strategies, and actionable information
-4. keyFacts: 3-7 specific, concrete facts as bullet points (include names, numbers, locations)
-5. dataPoints: Array of specific data extracted (stats, dates, character names, item names, damage values, etc.)
-6. qualityScore: 0-100 content quality rating (depth, structure, authority)
-7. relevanceScore: 0-100 VIDEO GAME relevance (PC/console/mobile games ONLY)
-8. qualityNotes: Brief explanation of BOTH scores
-9. contentType: Describe what type of content this is (be specific)
+═══════════════════════════════════════════════════════════════════
+REQUIRED OUTPUTS
+═══════════════════════════════════════════════════════════════════
 
-CRITICAL RELEVANCE RULES:
-- Video games (PC, PlayStation, Xbox, Nintendo, mobile) = HIGH relevance (70-100)
-- Board games, card games, tabletop RPGs = relevance 0-10 (NOT video games!)
-- Programming docs, recipes, sports, news = relevance 0-20
-- boardgamegeek.com, D&D content, Magic cards = relevance 0-10
+1. cleanedContent: Remove web junk, keep ALL article content (~90-100% of text)
+
+2. summary (1-2 sentences): What is this content about?
+
+3. detailedSummary (3-5 paragraphs): Preserve ALL specifics!
+   • Every proper noun (characters, bosses, items, locations)
+   • Every number (damage, HP, costs, percentages)
+   • Every strategy, tip, or procedure
+   Writers use this WITHOUT reading the original.
+
+4. keyFacts (3-7 items): Specific, actionable facts
+   ✓ "Boss X has 5,000 HP and is weak to Fire"
+   ✗ "There's a tough boss" (too vague)
+
+5. dataPoints: Every name and number mentioned
+
+6. qualityScore (0-100): Content quality
+   90+: Comprehensive wiki | 70-89: Good guide | 50-69: Basic | <50: Poor
+
+7. relevanceScore (0-100): VIDEO GAME relevance
+   90+: All video game content (guides, wikis, news, reviews, patch notes)
+   60-89: Gaming-adjacent (hardware, esports) | <60: Not gaming
+   CRITICAL: Board games, tabletop, D&D = NOT video games (0-19)
+
+8. qualityNotes: Brief explanation of both scores
+
+9. contentType: Specific type (wiki, guide, walkthrough, news, etc.)
 
 CRITICAL FOR SUMMARIES:
 - Include SPECIFIC details: character names, item names, damage numbers, percentages
@@ -337,6 +369,11 @@ export async function cleanSingleSource(
     // Calculate junk ratio
     const cleanedLength = output.cleanedContent.length;
     const junkRatio = 1 - cleanedLength / originalLength;
+    
+    // Log completion with raw→cleaned ratio
+    const preservedPct = ((cleanedLength / originalLength) * 100).toFixed(0);
+    const costStr = tokenUsage.actualCostUsd ? ` ($${tokenUsage.actualCostUsd.toFixed(4)})` : '';
+    log.info(`Single-step clean complete: ${domain} - ${originalLength.toLocaleString()}→${cleanedLength.toLocaleString()}c (${preservedPct}%), Q:${output.qualityScore}, R:${output.relevanceScore}${costStr}`);
 
     return {
       source: {
@@ -396,9 +433,15 @@ export async function cleanSingleSource(
 
 /**
  * Clean multiple sources in parallel batches.
+ * 
+ * When `summarizerModel` is provided in deps, uses two-step cleaning:
+ * 1. Clean content (remove junk, preserve full content)
+ * 2. Summarize cleaned content (extract summaries, key facts, data points)
+ * 
+ * This approach is cheaper and produces better quality summaries than single-step.
  *
  * @param sources - Raw sources to clean
- * @param deps - Cleaner dependencies
+ * @param deps - Cleaner dependencies (include summarizerModel for two-step)
  * @returns Cleaned sources with aggregated token usage
  */
 export async function cleanSourcesBatch(
@@ -406,12 +449,15 @@ export async function cleanSourcesBatch(
   deps: CleanerDeps
 ): Promise<CleanSourcesBatchResult> {
   const log = deps.logger ?? createPrefixedLogger('[Cleaner]');
+  // Use two-step if enabled in config AND summarizerModel is provided
+  const useTwoStep = getFeatureFlag('CLEANER_TWO_STEP_ENABLED') && Boolean(deps.summarizerModel);
 
   if (sources.length === 0) {
     return { sources: [], tokenUsage: createEmptyTokenUsage() };
   }
 
-  log.info(`Cleaning ${sources.length} sources in batches of ${CLEANER_CONFIG.BATCH_SIZE}...`);
+  const mode = useTwoStep ? 'two-step' : 'single-step';
+  log.info(`Cleaning ${sources.length} sources in batches of ${CLEANER_CONFIG.BATCH_SIZE} (${mode})...`);
 
   const cleanedSources: CleanedSource[] = [];
   let totalTokenUsage = createEmptyTokenUsage();
@@ -425,9 +471,28 @@ export async function cleanSourcesBatch(
 
     log.debug(`Processing batch ${batchNum}/${totalBatches} (${batch.length} sources)...`);
 
-    // Clean batch in parallel
+    // Clean batch in parallel - use two-step if summarizerModel provided
     const results = await Promise.all(
-      batch.map((source) => cleanSingleSource(source, deps))
+      batch.map((source) => {
+        if (useTwoStep && deps.summarizerModel) {
+          // Two-step cleaning: better quality, cheaper
+          const twoStepDeps: TwoStepCleanerDeps = {
+            generateObject: deps.generateObject,
+            cleanerModel: deps.model,
+            summarizerModel: deps.summarizerModel,
+            logger: deps.logger,
+            signal: deps.signal,
+            gameName: deps.gameName,
+          };
+          return cleanSourceTwoStep(source, twoStepDeps).then((r) => ({
+            source: r.source,
+            tokenUsage: r.totalTokenUsage,
+          }));
+        } else {
+          // Single-step cleaning (legacy)
+          return cleanSingleSource(source, deps);
+        }
+      })
     );
 
     // Collect successful results and aggregate token usage
@@ -457,7 +522,387 @@ export async function cleanSourcesBatch(
 }
 
 // ============================================================================
-// Summary Extraction from Already-Cleaned Content
+// TWO-STEP CLEANING: Step 1 - Pure Content Cleaning (No Summaries)
+// ============================================================================
+
+/**
+ * Schema for pure cleaning output (no summaries).
+ * Used in step 1 of two-step cleaning where summarization is separate.
+ * 
+ * Two-step process:
+ * 1. PureCleanerOutputSchema → removes junk, preserves full content
+ * 2. EnhancedSummarySchema → extracts structured summaries from cleaned content
+ */
+const PureCleanerOutputSchema = z.object({
+  cleanedContent: z
+    .string()
+    .min(1)
+    .describe('Full article content with web junk removed. Keep 90-100% of original article text. Do NOT summarize, condense, or paraphrase.'),
+  qualityScore: z
+    .number()
+    .int()
+    .min(0)
+    .max(100)
+    .describe('Content quality 0-100: 90+: Comprehensive wiki | 70-89: Good guide | 50-69: Basic | <50: Poor/junk'),
+  relevanceScore: z
+    .number()
+    .int()
+    .min(0)
+    .max(100)
+    .describe('VIDEO GAME relevance 0-100: 90+: All video game content (guides, wikis, news, reviews) | 60-89: Gaming-adjacent (hardware, esports) | <60: Not gaming. Board games/tabletop = 0-19.'),
+  qualityNotes: z
+    .string()
+    .describe('Brief explanation of both scores (1-2 sentences)'),
+  contentType: z
+    .string()
+    .min(1)
+    .max(100)
+    .describe('Specific content type: "wiki article", "strategy guide", "walkthrough", "build guide", "news", "patch notes", etc.'),
+});
+
+/**
+ * System prompt for PURE content cleaning (no summarization).
+ * Focused only on removing junk and preserving content.
+ */
+function getPureCleanerSystemPrompt(): string {
+  return `You are a surgical content extractor for video game articles. Your job is to remove web page JUNK while preserving 100% of the ARTICLE CONTENT.
+
+═══════════════════════════════════════════════════════════════════
+WHAT IS "JUNK"? (REMOVE completely)
+═══════════════════════════════════════════════════════════════════
+
+NAVIGATION & CHROME:
+✗ Headers, footers, sidebars, navigation menus
+✗ Breadcrumbs (Home > Games > Guide)
+✗ Site logos, search bars
+✗ "Back to top" links
+
+USER INTERACTION NOISE:
+✗ Cookie/consent banners, popups, modals
+✗ Login/signup prompts, paywalls
+✗ Newsletter signups, email capture forms
+✗ Social media buttons (Share, Like, Tweet)
+✗ "Print", "Save", "Bookmark" buttons
+✗ Rating widgets, voting buttons
+
+PROMOTIONAL CONTENT:
+✗ Advertisements, sponsored content, affiliate disclaimers
+✗ "You might also like", "Related articles" sections
+✗ Cross-promotion banners
+
+USER-GENERATED NOISE:
+✗ Comments sections, replies, discussions
+✗ "X users found this helpful"
+✗ User ratings/reviews (unless part of main article)
+
+BOILERPLATE:
+✗ Legal disclaimers, copyright notices
+✗ Site-wide announcements
+✗ Author bio cards (unless discussing the game)
+✗ Publication metadata (date, category tags as UI elements)
+
+═══════════════════════════════════════════════════════════════════
+WHAT IS "CONTENT"? (KEEP everything)
+═══════════════════════════════════════════════════════════════════
+
+ARTICLE TEXT:
+✓ Every paragraph of the main article - KEEP ALL
+✓ All headings (H1, H2, H3, etc.) - preserve hierarchy
+✓ Introduction, body, conclusion sections
+
+STRUCTURED INFORMATION:
+✓ Tables with data (full tables, all rows and columns)
+✓ Numbered lists (steps, rankings, orderings)
+✓ Bulleted lists (items, features, tips)
+✓ Stat blocks, character sheets, item stats
+
+SPECIAL CONTENT:
+✓ Code snippets, console commands, cheat codes
+✓ Quoted text that's part of the article narrative
+✓ Image references → convert to [Image: description]
+✓ Embedded video descriptions → [Video: description]
+
+═══════════════════════════════════════════════════════════════════
+CRITICAL RULES (Follow EXACTLY)
+═══════════════════════════════════════════════════════════════════
+
+1. NEVER SUMMARIZE: Your output should contain 90-100% of the original article text, KEEP FULL CONTENT.
+2. NEVER CONDENSE: If source has 10 paragraphs, output has ~10 paragraphs
+3. NEVER PARAPHRASE: Keep the original wording, don't rewrite
+4. PRESERVE STRUCTURE: Headings, lists, tables stay in their format
+5. OUTPUT FORMAT: Clean markdown (no HTML tags)
+6. WHEN IN DOUBT: Include the content - false positives are better than losing info
+
+═══════════════════════════════════════════════════════════════════
+SCORING GUIDELINES
+═══════════════════════════════════════════════════════════════════
+
+QUALITY SCORING (0-100):
+- Content depth (0-40): Detailed, comprehensive?
+- Structure (0-30): Well-organized, clear headings?
+- Authority (0-30): Wiki, official source, expert site?
+
+RELEVANCE SCORE (0-100) - Is this about VIDEO GAMES?
+│ 90-100 │ Video game content: guides, wikis, news, reviews, builds, walkthroughs
+│ 70-89  │ Patch notes, announcements
+│ 50-69  │ Gaming-adjacent: hardware, esports, streaming, game dev content
+│ 20-49  │ Tangential: general tech/entertainment mentioning games
+│ 0-19   │ NOT video games: board games, tabletop RPGs, D&D, cooking, coding`;
+}
+
+/**
+ * User prompt for pure content cleaning.
+ */
+function getPureCleanerUserPrompt(source: RawSourceInput, gameName?: string): string {
+  const gameContext = gameName 
+    ? `\nContext: Cleaning content for an article about "${gameName}".` 
+    : '';
+
+  return `Extract the article content from this web page. Remove web junk, keep EVERYTHING else.
+${gameContext}
+
+═══════════════════════════════════════════════════════════════════
+SOURCE METADATA
+═══════════════════════════════════════════════════════════════════
+URL: ${source.url}
+Title: ${source.title}
+Raw Length: ${source.content.length.toLocaleString()} characters
+
+═══════════════════════════════════════════════════════════════════
+RAW WEB CONTENT (extract article from this)
+═══════════════════════════════════════════════════════════════════
+${source.content.slice(0, CLEANER_CONFIG.MAX_INPUT_CHARS)}
+
+═══════════════════════════════════════════════════════════════════
+YOUR TASK
+═══════════════════════════════════════════════════════════════════
+
+cleanedContent: Extract the FULL article. Remove navigation, ads, comments, etc.
+IMPORTANT: Do NOT summarize or condense. Output should be ~90-100% of article length.
+
+QUALITY SCORING (0-100):
+- Content depth (0-40): Detailed, comprehensive?
+- Structure (0-30): Well-organized, clear headings?
+- Authority (0-30): Wiki, official source, expert site?
+
+RELEVANCE SCORE (0-100) - Is this about VIDEO GAMES?
+│ 90-100 │ Video game content: guides, wikis, news, reviews, builds, walkthroughs
+│ 70-89  │ Patch notes, announcements
+│ 50-69  │ Gaming-adjacent: hardware, esports, streaming, game dev content
+│ 20-49  │ Tangential: general tech/entertainment mentioning games
+│ 0-19   │ NOT video games: board games, tabletop RPGs, D&D, cooking, coding
+
+qualityNotes: 1-2 sentences explaining both scores
+
+contentType: What kind of content? (e.g., "wiki article", "strategy guide", "walkthrough", "news article")`;
+}
+
+// ============================================================================
+// TWO-STEP CLEANING: Step 2 - Enhanced Summarization
+// ============================================================================
+
+/**
+ * Enhanced schema for summary extraction with more detailed output.
+ * 
+ * Two-step cleaning process:
+ * 1. Cleaner extracts content (removes junk) → cleanedContent + scores
+ * 2. Summarizer extracts structured info → summary, keyFacts, dataPoints, etc.
+ * 
+ * This schema is used in step 2 (summarization).
+ */
+const EnhancedSummarySchema = z.object({
+  summary: z
+    .string()
+    .min(50)
+    .max(500)
+    .describe('Quick-reference overview: 2-4 sentences (100-400 chars) covering content type, main topic, and scope.'),
+  detailedSummary: z
+    .string()
+    .min(300)
+    .max(20000)
+    .describe('THE MOST IMPORTANT OUTPUT. 5-10 paragraphs (500+ words) preserving ALL specifics: every proper noun (characters, bosses, items, locations), every number (damage, HP, costs, percentages), every strategy/tip. Writers use this WITHOUT reading original.'),
+  keyFacts: z
+    .array(z.string())
+    .min(3)
+    .max(15)
+    .describe('5-15 standalone facts writers can directly use. Each MUST contain specifics: "Margit has 4,174 HP and is weak to Bleed" NOT "There are tough bosses."'),
+  dataPoints: z
+    .array(z.string())
+    .min(0)
+    .max(50)
+    .describe('Raw data extraction - every name and number. Names: characters, bosses, items, locations, abilities. Numbers: stats, costs, percentages, levels, versions.'),
+  procedures: z
+    .array(z.string())
+    .min(0)
+    .max(20)
+    .describe('Step-by-step instructions or strategies IF present in content. Each should be actionable: "To meet Renna: 1) Meet Melina 2) Return to Church at night 3) Speak with Renna"'),
+  requirements: z
+    .array(z.string())
+    .min(0)
+    .max(15)
+    .describe('Prerequisites and conditions IF mentioned: "Requires 2x Stonesword Key", "Level 30+ recommended", "Must defeat Margit first"'),
+});
+
+/**
+ * Enhanced system prompt for detailed, accurate summarization.
+ */
+function getEnhancedSummarySystemPrompt(): string {
+  return `You are an expert video game content summarizer. Writers will use your summaries WITHOUT reading the original - you must capture EVERYTHING important.
+
+═══════════════════════════════════════════════════════════════════
+OUTPUT 1: SUMMARY (Required: 2-4 sentences, 100-400 characters)
+═══════════════════════════════════════════════════════════════════
+A quick-reference overview covering:
+• Content type (guide, wiki, walkthrough, news, build guide, news article, patch notes, etc.)
+• Main topic/subject
+• Scope (what parts of the game it covers)
+
+Example: "A comprehensive boss guide for Elden Ring's Limgrave region, covering strategies for Margit, Godrick, and 15 mini-bosses. Includes recommended levels, weapon suggestions, and phase-by-phase breakdowns."
+
+═══════════════════════════════════════════════════════════════════
+OUTPUT 2: DETAILED SUMMARY (Required: 5-10 paragraphs, 500+ words)
+═══════════════════════════════════════════════════════════════════
+This is your MOST IMPORTANT output. Structure it as:
+
+PARAGRAPH 1 - Overview:
+• What the content covers and its purpose
+• Target audience (beginners, completionists, speedrunners)
+• How the content is organized
+
+PARAGRAPHS 2-7 - Core Information (preserve ALL specifics):
+• Every major topic, section, or game area discussed
+• ALL proper nouns: character names, boss names, NPC names
+• ALL item names: weapons, armor, consumables, key items
+• ALL location names: regions, dungeons, landmarks, Sites of Grace
+• ALL numbers: damage values, HP, costs, drop rates, percentages
+• ALL strategies: combat tactics, optimal rotations, cheese methods
+• ALL tips: warnings, common mistakes, pro advice
+
+PARAGRAPHS 8-10 - Additional Context:
+• Prerequisites and requirements
+• Rewards, drops, unlocks
+• Version/patch information
+• Related topics or follow-up content
+
+CRITICAL: If the original mentions "450 damage" or "Renna at Church of Elleh" - include it. Missing specifics = writers can't use them.
+
+═══════════════════════════════════════════════════════════════════
+OUTPUT 3: KEY FACTS (Required: 5-15 bullet points)
+═══════════════════════════════════════════════════════════════════
+Standalone facts a writer can directly use. Each MUST contain specifics:
+
+GOOD (specific, actionable):
+✓ "Margit the Fell Omen has 4,174 HP and is vulnerable to Bleed and Jump Attacks"
+✓ "Spirit Calling Bell is obtained from Renna at Church of Elleh (only appears at night)"
+✓ "Gatefront Ruins contains: Lordsworn's Greatsword, Whetstone Knife, Map: Limgrave West"
+✓ "Tree Sentinel drops Golden Halberd (requires Str 30, Dex 14, Fai 12)"
+✓ "Recommended level for Stormveil Castle: 30-40"
+
+BAD (vague, not actionable):
+✗ "There are several bosses in this area"
+✗ "The combat system is complex"
+✗ "Players should explore thoroughly"
+
+═══════════════════════════════════════════════════════════════════
+OUTPUT 4: DATA POINTS (Required: 0-30 items)
+═══════════════════════════════════════════════════════════════════
+Raw data extraction - every specific piece of information:
+
+NAMES (always include):
+• Characters: "Melina", "White-Faced Varré", "Iron Fist Alexander"
+• Bosses: "Margit", "Godrick the Grafted", "Tree Sentinel"  
+• Items: "Flask of Crimson Tears", "Stonesword Key", "Smithing Stone [1]"
+• Locations: "Church of Elleh", "Gatefront Ruins", "Stormveil Castle"
+• Skills: "Storm Stomp", "Glintstone Pebble", "Flame of the Redmanes"
+
+NUMBERS (always include):
+• Stats: "4,174 HP", "30 Strength", "18 Dexterity"
+• Costs: "2,000 Runes", "8,000 souls", "500 gold"
+• Percentages: "50% damage boost", "25% drop rate", "10% HP threshold"
+• Distances/Times: "100 meters", "5 seconds", "3 turns"
+• Versions: "Patch 1.09", "Update 1.5.0", "Version 2.0"
+
+═══════════════════════════════════════════════════════════════════
+OUTPUT 5: PROCEDURES (Optional: 0-20 items)
+═══════════════════════════════════════════════════════════════════
+Step-by-step instructions or strategies. Include ONLY if content has procedural info:
+
+Examples:
+• "To meet Renna: 1) Meet Melina at Gatefront 2) Return to Church of Elleh at night 3) Speak with Renna near the ruins"
+• "Tree Sentinel strategy: Use Torrent, maintain medium range, punish after his charge attack, avoid his shield bash"
+• "Unlock Bloody Slash: Defeat Godrick Knight at Fort Haight, loot the Ash of War"
+
+═══════════════════════════════════════════════════════════════════
+OUTPUT 6: REQUIREMENTS (Optional: 0-10 items)
+═══════════════════════════════════════════════════════════════════
+Prerequisites, conditions, and dependencies. Include ONLY if content mentions them:
+
+Examples:
+• "Requires: Meeting Melina first (automatic at third Site of Grace)"
+• "Requires: 2x Stonesword Key to unlock Fringefolk Hero's Grave"
+• "Prerequisite: Must defeat Margit to enter Stormveil Castle"
+• "Level requirement: 30+ recommended for Raya Lucaria"`;
+}
+
+/**
+ * Enhanced user prompt for detailed summarization.
+ */
+function getEnhancedSummaryUserPrompt(title: string, cleanedContent: string, gameName?: string): string {
+  const gameContext = gameName 
+    ? `Game: "${gameName}"` 
+    : 'Game: (not specified)';
+  const truncatedContent = cleanedContent.slice(0, CLEANER_CONFIG.MAX_INPUT_CHARS);
+
+  return `Create a HIGHLY DETAILED (ULTRA IMPORTANT) and ACCURATE summary of this video game content.
+
+Title: ${title}
+Content Length: ${cleanedContent.length} characters
+
+Writers will use your summary WITHOUT reading the original - include ALL important information.
+${gameContext}
+
+═══════════════════════════════════════════════════════════════════
+CLEANED CONTENT TO SUMMARIZE
+═══════════════════════════════════════════════════════════════════
+${truncatedContent}
+
+═══════════════════════════════════════════════════════════════════
+REQUIRED OUTPUTS (extract everything)
+═══════════════════════════════════════════════════════════════════
+
+1. summary (100-400 chars)
+   Quick overview: What is this content? What does it cover?
+
+2. detailedSummary (500+ words, 5-10 paragraphs)
+   THE MOST IMPORTANT OUTPUT. Preserve ALL:
+   • Every proper noun (characters, bosses, items, locations)
+   • Every number (damage, HP, costs, percentages, levels)
+   • Every strategy, tip, or procedure mentioned
+   Writers cannot use information you don't include!
+
+3. keyFacts (5-15 bullet points)
+   Standalone facts with SPECIFIC details:
+   ✓ "Boss X has 5,000 HP and is weak to Fire"
+   ✗ "There's a tough boss here" (too vague)
+
+4. dataPoints (up to 30 items)
+   Raw data extraction - every name and number:
+   Names: characters, bosses, items, locations, abilities
+   Numbers: stats, costs, percentages, levels, durations
+
+5. procedures (0-20 items, if applicable)
+   Step-by-step instructions found in the content
+
+6. requirements (0-10 items, if applicable)
+   Prerequisites, level requirements, unlock conditions
+
+═══════════════════════════════════════════════════════════════════
+REMEMBER: ITS A CRITICAL FEALURE TO MISS DETAILS. BE EXHAUSTIVE.
+═══════════════════════════════════════════════════════════════════`;
+}
+
+// ============================================================================
+// Legacy Summary Extraction (for backwards compatibility)
 // ============================================================================
 
 /**
@@ -488,8 +933,7 @@ const SummaryExtractionSchema = z.object({
 });
 
 /**
- * System prompt for extracting summaries from already-cleaned content.
- * This is lighter than full cleaning since the content is already junk-free.
+ * @deprecated Use getEnhancedSummarySystemPrompt for new code
  */
 function getSummaryExtractionSystemPrompt(): string {
   return `You are extracting summaries and key facts from ALREADY CLEANED video game content.
@@ -521,7 +965,7 @@ Return empty array if no specific data found.`;
 }
 
 /**
- * User prompt for extracting summaries from cleaned content.
+ * @deprecated Use getEnhancedSummaryUserPrompt for new code
  */
 function getSummaryExtractionUserPrompt(title: string, cleanedContent: string, gameName?: string): string {
   const gameContext = gameName ? `\nContext: This content is about the video game "${gameName}".` : '';
@@ -621,6 +1065,261 @@ export async function extractSummariesFromCleanedContent(
     log.warn(`Failed to extract summaries from "${title}": ${message}`);
     return null;
   }
+}
+
+// ============================================================================
+// TWO-STEP CLEANING: Combined Implementation
+// ============================================================================
+
+/**
+ * Dependencies for two-step cleaning.
+ * Allows using different models for cleaning vs summarization.
+ */
+export interface TwoStepCleanerDeps {
+  readonly generateObject: typeof import('ai').generateObject;
+  /** Model for step 1: content cleaning */
+  readonly cleanerModel: import('ai').LanguageModel;
+  /** Model for step 2: summarization (can be same as cleanerModel) */
+  readonly summarizerModel: import('ai').LanguageModel;
+  readonly logger?: Logger;
+  readonly signal?: AbortSignal;
+  readonly gameName?: string;
+}
+
+/**
+ * Enhanced summary result with additional fields.
+ */
+export interface EnhancedSummaryResult {
+  readonly summary: string;
+  readonly detailedSummary: string;
+  readonly keyFacts: readonly string[];
+  readonly dataPoints: readonly string[];
+  readonly procedures: readonly string[];
+  readonly requirements: readonly string[];
+  readonly tokenUsage: TokenUsage;
+}
+
+/**
+ * Result of two-step cleaning.
+ */
+export interface TwoStepCleanResult {
+  /** Cleaned source with enhanced summaries */
+  readonly source: CleanedSource | null;
+  /** Token usage from step 1 (cleaning) */
+  readonly cleaningTokenUsage: TokenUsage;
+  /** Token usage from step 2 (summarization) */
+  readonly summaryTokenUsage: TokenUsage;
+  /** Combined token usage */
+  readonly totalTokenUsage: TokenUsage;
+  /** Enhanced summary data (includes procedures, requirements) */
+  readonly enhancedSummary: EnhancedSummaryResult | null;
+}
+
+/**
+ * Step 1: Pure content cleaning (no summarization).
+ * Focused only on removing junk and preserving content.
+ */
+async function cleanContentOnly(
+  source: RawSourceInput,
+  deps: TwoStepCleanerDeps
+): Promise<{ cleanedContent: string; qualityScore: number; relevanceScore: number; qualityNotes: string; contentType: string; tokenUsage: TokenUsage } | null> {
+  const log = deps.logger ?? createPrefixedLogger('[Cleaner:Step1]');
+
+  if (!source.content || source.content.trim().length === 0) {
+    log.debug(`Skipping empty content: ${source.url}`);
+    return null;
+  }
+
+  if (source.content.length < CLEANER_CONFIG.MIN_CLEANED_CHARS) {
+    log.debug(`Skipping short content (${source.content.length} chars): ${source.url}`);
+    return null;
+  }
+
+  try {
+    const result = await withRetry(
+      async () => {
+        const timeoutSignal = AbortSignal.timeout(CLEANER_CONFIG.TIMEOUT_MS);
+        const signal = deps.signal
+          ? AbortSignal.any([deps.signal, timeoutSignal])
+          : timeoutSignal;
+
+        return deps.generateObject({
+          model: deps.cleanerModel,
+          schema: PureCleanerOutputSchema,
+          temperature: CLEANER_CONFIG.TEMPERATURE,
+          abortSignal: signal,
+          system: getPureCleanerSystemPrompt(),
+          prompt: getPureCleanerUserPrompt(source, deps.gameName),
+        });
+      },
+      {
+        context: `Cleaner Step1 [${source.content.length} chars]: ${source.url}`,
+        signal: deps.signal,
+      }
+    );
+
+    const tokenUsage = createTokenUsageFromResult(result);
+    const output = result.object;
+
+    if (output.cleanedContent.length < CLEANER_CONFIG.MIN_CLEANED_CHARS) {
+      log.debug(`Cleaned content too short (${output.cleanedContent.length} chars): ${source.url}`);
+      return null;
+    }
+
+    return {
+      cleanedContent: output.cleanedContent,
+      qualityScore: output.qualityScore,
+      relevanceScore: output.relevanceScore,
+      qualityNotes: output.qualityNotes,
+      contentType: output.contentType,
+      tokenUsage,
+    };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    log.warn(`Step 1 (cleaning) failed for ${source.url}: ${message}`);
+    return null;
+  }
+}
+
+/**
+ * Step 2: Enhanced summarization from cleaned content.
+ * Creates detailed, accurate summaries.
+ */
+async function extractEnhancedSummaries(
+  title: string,
+  cleanedContent: string,
+  deps: TwoStepCleanerDeps
+): Promise<EnhancedSummaryResult | null> {
+  const log = deps.logger ?? createPrefixedLogger('[Cleaner:Step2]');
+
+  if (cleanedContent.length < CLEANER_CONFIG.MIN_CLEANED_CHARS) {
+    log.debug(`Content too short for summarization: ${cleanedContent.length} chars`);
+    return null;
+  }
+
+  try {
+    const result = await withRetry(
+      async () => {
+        const timeoutSignal = AbortSignal.timeout(CLEANER_CONFIG.TIMEOUT_MS);
+        const signal = deps.signal
+          ? AbortSignal.any([deps.signal, timeoutSignal])
+          : timeoutSignal;
+
+        return deps.generateObject({
+          model: deps.summarizerModel,
+          schema: EnhancedSummarySchema,
+          temperature: CLEANER_CONFIG.TEMPERATURE,
+          abortSignal: signal,
+          system: getEnhancedSummarySystemPrompt(),
+          prompt: getEnhancedSummaryUserPrompt(title, cleanedContent, deps.gameName),
+        });
+      },
+      {
+        context: `Cleaner Step2 (summarize): ${title.slice(0, 50)}...`,
+        signal: deps.signal,
+      }
+    );
+
+    const tokenUsage = createTokenUsageFromResult(result);
+    const output = result.object;
+
+    return {
+      summary: output.summary,
+      detailedSummary: output.detailedSummary,
+      keyFacts: output.keyFacts,
+      dataPoints: output.dataPoints,
+      procedures: output.procedures,
+      requirements: output.requirements,
+      tokenUsage,
+    };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    log.warn(`Step 2 (summarization) failed for "${title}": ${message}`);
+    return null;
+  }
+}
+
+/**
+ * Two-step content cleaning: Clean first, then summarize.
+ * 
+ * Benefits over single-step:
+ * - Cleaner focuses ONLY on removing junk (won't over-summarize)
+ * - Summarizer gets clean input (better quality summaries)
+ * - Can use different/optimized models for each step
+ * - Often cheaper overall
+ * 
+ * @param source - Raw source input
+ * @param deps - Two-step cleaner dependencies
+ * @returns Cleaned source with enhanced summaries
+ */
+export async function cleanSourceTwoStep(
+  source: RawSourceInput,
+  deps: TwoStepCleanerDeps
+): Promise<TwoStepCleanResult> {
+  const log = deps.logger ?? createPrefixedLogger('[Cleaner:2Step]');
+  const originalLength = source.content.length;
+  const domain = extractDomain(source.url);
+
+  // Step 1: Clean content
+  log.debug(`Step 1: Cleaning ${originalLength} chars from ${domain}...`);
+  const cleanResult = await cleanContentOnly(source, deps);
+
+  if (!cleanResult) {
+    return {
+      source: null,
+      cleaningTokenUsage: createEmptyTokenUsage(),
+      summaryTokenUsage: createEmptyTokenUsage(),
+      totalTokenUsage: createEmptyTokenUsage(),
+      enhancedSummary: null,
+    };
+  }
+
+  log.debug(`Step 1 complete: ${cleanResult.cleanedContent.length} chars cleaned (${((cleanResult.cleanedContent.length / originalLength) * 100).toFixed(0)}% preserved)`);
+
+  // Step 2: Extract enhanced summaries
+  log.debug(`Step 2: Summarizing ${cleanResult.cleanedContent.length} chars...`);
+  const summaryResult = await extractEnhancedSummaries(source.title, cleanResult.cleanedContent, deps);
+
+  const totalTokenUsage = addTokenUsage(
+    cleanResult.tokenUsage,
+    summaryResult?.tokenUsage ?? createEmptyTokenUsage()
+  );
+
+  // Calculate junk ratio
+  const junkRatio = 1 - cleanResult.cleanedContent.length / originalLength;
+
+  // Build cleaned source
+  const cleanedSource: CleanedSource = {
+    url: source.url,
+    domain,
+    title: source.title,
+    summary: summaryResult?.summary ?? null,
+    detailedSummary: summaryResult?.detailedSummary ?? null,
+    keyFacts: summaryResult?.keyFacts ?? null,
+    dataPoints: summaryResult?.dataPoints ?? null,
+    cleanedContent: cleanResult.cleanedContent,
+    originalContentLength: originalLength,
+    qualityScore: cleanResult.qualityScore,
+    relevanceScore: cleanResult.relevanceScore,
+    qualityNotes: cleanResult.qualityNotes,
+    contentType: cleanResult.contentType,
+    junkRatio: Math.max(0, Math.min(1, junkRatio)),
+    searchSource: source.searchSource,
+  };
+
+  const costStr = totalTokenUsage.actualCostUsd 
+    ? ` ($${totalTokenUsage.actualCostUsd.toFixed(4)})` 
+    : '';
+  const preservedPct = ((cleanResult.cleanedContent.length / originalLength) * 100).toFixed(0);
+  log.info(`Two-step clean complete: ${domain} - ${originalLength.toLocaleString()}→${cleanResult.cleanedContent.length.toLocaleString()}c (${preservedPct}%), Q:${cleanResult.qualityScore}, R:${cleanResult.relevanceScore}${costStr}`);
+
+  return {
+    source: cleanedSource,
+    cleaningTokenUsage: cleanResult.tokenUsage,
+    summaryTokenUsage: summaryResult?.tokenUsage ?? createEmptyTokenUsage(),
+    totalTokenUsage,
+    enhancedSummary: summaryResult,
+  };
 }
 
 // ============================================================================
@@ -924,4 +1623,9 @@ export async function preFilterSourcesBatch(
 // Exports
 // ============================================================================
 
-export { CleanerOutputSchema, PreFilterOutputSchema };
+export { 
+  CleanerOutputSchema, 
+  PreFilterOutputSchema,
+  PureCleanerOutputSchema,
+  EnhancedSummarySchema,
+};
