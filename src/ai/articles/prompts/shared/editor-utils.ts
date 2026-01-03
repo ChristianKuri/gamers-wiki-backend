@@ -131,6 +131,9 @@ export function buildCategoryHintsSection(
 
 /**
  * Builds the existing research summary for Editor context.
+ * Shows what searches were already performed so the Editor can plan additional queries.
+ * 
+ * Note: Detailed source content is provided separately via sourceSummariesSection.
  */
 export function buildExistingResearchSummary(
   scoutOutput: ScoutOutput,
@@ -140,14 +143,14 @@ export function buildExistingResearchSummary(
   const categorySearches = scoutOutput.researchPool.scoutFindings.categorySpecific.map((s) => `"${s.query}"`).join(', ');
   const recentSearches = scoutOutput.researchPool.scoutFindings.recent.map((s) => `"${s.query}"`).join(', ');
   const totalSources = scoutOutput.researchPool.allUrls.size;
-  
-  // Build overview from source summaries
-  const sourceSummaries = scoutOutput.sourceSummaries ?? [];
-  const summaryOverview = sourceSummaries.length > 0
-    ? sourceSummaries.slice(0, 2).map(s => `• ${s.title}: ${s.detailedSummary.slice(0, 150)}...`).join('\n')
-    : '(See source summaries above for details)';
 
-  return `EXISTING RESEARCH COVERAGE:\nOverview searches: ${overviewSearches}\nCategory searches: ${categorySearches}\nRecent searches: ${recentSearches}\nTotal sources: ${totalSources}\n\nResearch summary:\n${summaryOverview}\n\nWhen creating research queries, focus on SPECIFIC details not yet fully covered.`;
+  return `EXISTING RESEARCH COVERAGE:
+Overview searches: ${overviewSearches || '(none)'}
+Category searches: ${categorySearches || '(none)'}
+Recent searches: ${recentSearches || '(none)'}
+Total sources: ${totalSources}
+
+When creating research queries, focus on SPECIFIC details not yet fully covered.`;
 }
 
 /**

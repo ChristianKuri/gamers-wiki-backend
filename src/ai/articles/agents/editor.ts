@@ -24,7 +24,6 @@ import {
   buildExistingResearchSummary,
   buildSourceSummariesSection,
   buildTopSourcesSummary,
-  buildTopDetailedSummaries,
   detectArticleIntent,
   getEditorSystemPrompt,
   getEditorUserPrompt,
@@ -108,10 +107,9 @@ export async function runEditor(
   const topSourcesSummary = buildTopSourcesSummary(scoutOutput);
   
   // Build research summary from source summaries
+  // This is the main research context for the Editor - contains detailed summaries,
+  // key facts, and data points from top sources (sorted by quality + relevance)
   const sourceSummariesSection = buildSourceSummariesSection(scoutOutput.sourceSummaries);
-  
-  // Build top detailed summaries from best sources (top 3 by quality + relevance)
-  const topDetailedSummaries = buildTopDetailedSummaries(scoutOutput, 3);
 
   const targetWordCount = deps.targetWordCount ?? context.targetWordCount;
 
@@ -131,7 +129,6 @@ export async function runEditor(
     categorySlug: effectiveCategorySlug,
     topSourcesSummary,
     sourceSummariesSection,
-    topDetailedSummaries,
     draftTitle: scoutOutput.queryPlan.draftTitle,
   };
 

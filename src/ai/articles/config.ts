@@ -514,6 +514,13 @@ export const SPECIALIST_CONFIG = {
   /** Maximum sources to include in article */
   MAX_SOURCES: 25,
   /**
+   * Maximum source summaries to include in each section's prompt.
+   * These are the pre-extracted summaries from Scout (detailedSummary, keyFacts, dataPoints).
+   * Higher = more context for the Specialist to draw from, but more tokens.
+   * Scout extracts up to 15 source summaries total.
+   */
+  MAX_SOURCE_SUMMARIES_IN_PROMPT: 20,
+  /**
    * Number of concurrent search queries during batch research.
    * Higher values = faster research but more API pressure.
    * Set to 3 as a balance between speed and rate limit safety.
@@ -1040,6 +1047,7 @@ function validateConfiguration(): void {
   validatePositive(SPECIALIST_CONFIG.BATCH_CONCURRENCY, 'SPECIALIST_CONFIG.BATCH_CONCURRENCY');
   validateNonNegative(SPECIALIST_CONFIG.BATCH_DELAY_MS, 'SPECIALIST_CONFIG.BATCH_DELAY_MS');
   validatePositive(SPECIALIST_CONFIG.MAX_SOURCES, 'SPECIALIST_CONFIG.MAX_SOURCES');
+  validatePositive(SPECIALIST_CONFIG.MAX_SOURCE_SUMMARIES_IN_PROMPT, 'SPECIALIST_CONFIG.MAX_SOURCE_SUMMARIES_IN_PROMPT');
 
   // Reviewer Config
   validateTemperature(REVIEWER_CONFIG.TEMPERATURE, 'REVIEWER_CONFIG.TEMPERATURE');

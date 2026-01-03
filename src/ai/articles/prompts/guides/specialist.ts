@@ -1,5 +1,6 @@
 import type { ArticlePlan } from '../../article-plan';
 import type { SpecialistPrompts, SpecialistSectionContext } from '../shared/specialist';
+import { SPECIALIST_CONFIG } from '../../config';
 
 // =============================================================================
 // Tone and Atmosphere (Hybrid Style)
@@ -294,12 +295,13 @@ ${plan.sections.map((s, idx) => `${idx + 1}. ${s.headline}${idx === ctx.sectionI
 `;
 
     // Build source summaries section if available
+    const maxSummaries = SPECIALIST_CONFIG.MAX_SOURCE_SUMMARIES_IN_PROMPT;
     const sourceSummariesSection = ctx.sourceSummaries && ctx.sourceSummaries.length > 0
-      ? ctx.sourceSummaries.slice(0, 5).map((s, i) => 
+      ? ctx.sourceSummaries.slice(0, maxSummaries).map((s, i) => 
           `=== Source ${i + 1}: "${s.title}" ===
 Summary: ${s.detailedSummary}
-Key Facts: ${s.keyFacts.length > 0 ? s.keyFacts.slice(0, 5).map(f => `• ${f}`).join('\n') : '(none)'}
-Data Points: ${s.dataPoints.length > 0 ? s.dataPoints.slice(0, 5).join(' | ') : '(none)'}`
+Key Facts: ${s.keyFacts.length > 0 ? s.keyFacts.slice(0, 10).map(f => `• ${f}`).join('\n') : '(none)'}
+Data Points: ${s.dataPoints.length > 0 ? s.dataPoints.slice(0, 10).join(' | ') : '(none)'}`
         ).join('\n\n')
       : null;
 

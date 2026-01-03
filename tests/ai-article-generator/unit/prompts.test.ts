@@ -182,13 +182,14 @@ describe('Editor Prompts', () => {
       expect(summary).toContain('Total sources: 2');
     });
 
-    it('includes briefing overview in summary', () => {
+    it('includes search query categories', () => {
       const scoutOutput = createMockScoutOutput();
 
       const summary = buildExistingResearchSummary(scoutOutput, 3);
 
-      // Should include research summary from query briefings
-      expect(summary).toContain('Research summary');
+      // Should list what searches were performed
+      expect(summary).toContain('Overview searches:');
+      expect(summary).toContain('Category searches:');
     });
 
     it('includes guidance about avoiding duplicate queries', () => {

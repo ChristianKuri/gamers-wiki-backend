@@ -8,7 +8,6 @@ import {
   buildExistingResearchSummary, 
   buildTopSourcesSummary,
   buildSourceSummariesSection,
-  buildTopDetailedSummaries,
 } from './shared/editor-utils';
 import type { EditorPromptContext, EditorPrompts } from './shared/editor';
 import { ArticleCategorySlug } from '../article-plan';
@@ -27,7 +26,6 @@ export {
   buildExistingResearchSummary, 
   buildTopSourcesSummary,
   buildSourceSummariesSection,
-  buildTopDetailedSummaries,
 };
 export type { EditorPromptContext };
 

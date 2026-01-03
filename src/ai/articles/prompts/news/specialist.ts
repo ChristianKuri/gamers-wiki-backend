@@ -1,5 +1,6 @@
 import type { ArticlePlan } from '../../article-plan';
 import type { SpecialistPrompts, SpecialistSectionContext } from '../shared/specialist';
+import { SPECIALIST_CONFIG } from '../../config';
 
 const TONE_GUIDE = `Professional and objective reporting tone.
 - Use inverted pyramid structure: most important information first
@@ -41,11 +42,12 @@ ${TONE_GUIDE}`;
     maxParagraphs: number
   ): string {
     // Build source summaries section
+    const maxSummaries = SPECIALIST_CONFIG.MAX_SOURCE_SUMMARIES_IN_PROMPT;
     const sourceSummariesSection = (ctx.sourceSummaries ?? []).length > 0
-      ? ctx.sourceSummaries!.slice(0, 5).map((s, i) => 
+      ? ctx.sourceSummaries!.slice(0, maxSummaries).map((s, i) => 
           `Source ${i + 1}: "${s.title}"
-Summary: ${s.detailedSummary.slice(0, 300)}...
-Key Facts: ${s.keyFacts.length > 0 ? s.keyFacts.slice(0, 3).join('; ') : '(none)'}`
+Summary: ${s.detailedSummary}
+Key Facts: ${s.keyFacts.length > 0 ? s.keyFacts.slice(0, 10).join('; ') : '(none)'}`
         ).join('\n\n')
       : '(No source summaries available)';
 
