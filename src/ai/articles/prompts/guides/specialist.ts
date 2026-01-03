@@ -293,14 +293,13 @@ All sections in this article:
 ${plan.sections.map((s, idx) => `${idx + 1}. ${s.headline}${idx === ctx.sectionIndex ? ' ← YOU ARE WRITING THIS ONE' : ''}`).join('\n')}
 `;
 
-    // Build query briefings section if available (NEW format)
-    const queryBriefingsSection = ctx.queryBriefings && ctx.queryBriefings.length > 0
-      ? ctx.queryBriefings.map((b, i) => 
-          `=== Research Query ${i + 1}: "${b.query}" ===
-Purpose: ${b.purpose}
-Findings: ${b.findings}
-Key Facts: ${b.keyFacts.length > 0 ? b.keyFacts.map(f => `• ${f}`).join('\n') : '(none)'}
-Gaps: ${b.gaps.length > 0 ? b.gaps.map(g => `⚠️ ${g}`).join('\n') : '(none)'}`
+    // Build source summaries section if available
+    const sourceSummariesSection = ctx.sourceSummaries && ctx.sourceSummaries.length > 0
+      ? ctx.sourceSummaries.slice(0, 5).map((s, i) => 
+          `=== Source ${i + 1}: "${s.title}" ===
+Summary: ${s.detailedSummary}
+Key Facts: ${s.keyFacts.length > 0 ? s.keyFacts.slice(0, 5).map(f => `• ${f}`).join('\n') : '(none)'}
+Data Points: ${s.dataPoints.length > 0 ? s.dataPoints.slice(0, 5).join(' | ') : '(none)'}`
         ).join('\n\n')
       : null;
 
@@ -308,8 +307,8 @@ Gaps: ${b.gaps.length > 0 ? b.gaps.map(g => `⚠️ ${g}`).join('\n') : '(none)'
 RESEARCH (Your Source of Truth):
 ${ctx.researchContext || '(Using general knowledge only)'}
 
-=== SCOUT BRIEFINGS (Synthesized Research) ===
-${queryBriefingsSection || '(No briefings available)'}
+=== SOURCE SUMMARIES (Top Sources by Quality) ===
+${sourceSummariesSection || '(No source summaries available)'}
 `;
 
     const previouslyWritten = ctx.crossReferenceContext ? `

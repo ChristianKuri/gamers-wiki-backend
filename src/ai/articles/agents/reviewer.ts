@@ -17,7 +17,7 @@ import type { ArticlePlan } from '../article-plan';
 import { REVIEWER_CONFIG } from '../config';
 import { withRetry } from '../retry';
 import {
-  buildResearchSummaryWithBriefings,
+  buildResearchSummaryForReviewer,
   getReviewerSystemPrompt,
   getReviewerUserPrompt,
 } from '../prompts/reviewer-prompts';
@@ -333,9 +333,9 @@ export async function runReviewer(
     REVIEWER_CONFIG.MAX_ARTICLE_CONTENT_LENGTH
   );
 
-  // Use new queryBriefings format when available, otherwise fall back to old briefing
-  const researchSummary = buildResearchSummaryWithBriefings(
-    scoutOutput.queryBriefings,
+  // Build research summary from source summaries
+  const researchSummary = buildResearchSummaryForReviewer(
+    scoutOutput.sourceSummaries,
     REVIEWER_CONFIG.MAX_RESEARCH_CONTEXT_LENGTH
   );
 
@@ -344,8 +344,6 @@ export async function runReviewer(
     markdown: truncatedMarkdown,
     researchSummary,
     categorySlug: plan.categorySlug,
-    // NEW: Include query briefings for enhanced fact-checking
-    queryBriefings: scoutOutput.queryBriefings,
     sourceSummaries: scoutOutput.sourceSummaries,
   };
 

@@ -29,8 +29,8 @@ Suggested title from Scout (STARTING POINT ONLY): "${ctx.draftTitle}"
 === USER DIRECTIVE ===
 ${ctx.instruction?.trim() || '(No specific directive — determine best article type from context)'}
 
-=== RESEARCH BRIEFINGS ===
-${ctx.queryBriefingsSummary}
+=== SOURCE SUMMARIES ===
+${ctx.sourceSummariesSection}
 
 ${ctx.topDetailedSummaries ? `${ctx.topDetailedSummaries}\n` : ''}
 === ${ctx.existingResearchSummary}

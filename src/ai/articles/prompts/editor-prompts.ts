@@ -7,7 +7,7 @@ import {
   buildCategoryHintsSection, 
   buildExistingResearchSummary, 
   buildTopSourcesSummary,
-  buildQueryBriefingsSummary,
+  buildSourceSummariesSection,
   buildTopDetailedSummaries,
 } from './shared/editor-utils';
 import type { EditorPromptContext, EditorPrompts } from './shared/editor';
@@ -26,7 +26,7 @@ export {
   buildCategoryHintsSection, 
   buildExistingResearchSummary, 
   buildTopSourcesSummary,
-  buildQueryBriefingsSummary,
+  buildSourceSummariesSection,
   buildTopDetailedSummaries,
 };
 export type { EditorPromptContext };

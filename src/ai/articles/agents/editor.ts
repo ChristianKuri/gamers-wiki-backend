@@ -22,7 +22,7 @@ import { withRetry } from '../retry';
 import {
   buildCategoryHintsSection,
   buildExistingResearchSummary,
-  buildQueryBriefingsSummary,
+  buildSourceSummariesSection,
   buildTopSourcesSummary,
   buildTopDetailedSummaries,
   detectArticleIntent,
@@ -107,8 +107,8 @@ export async function runEditor(
   );
   const topSourcesSummary = buildTopSourcesSummary(scoutOutput);
   
-  // Build query briefings summary when available
-  const queryBriefingsSummary = buildQueryBriefingsSummary(scoutOutput.queryBriefings);
+  // Build research summary from source summaries
+  const sourceSummariesSection = buildSourceSummariesSection(scoutOutput.sourceSummaries);
   
   // Build top detailed summaries from best sources (top 3 by quality + relevance)
   const topDetailedSummaries = buildTopDetailedSummaries(scoutOutput, 3);
@@ -130,7 +130,7 @@ export async function runEditor(
     validationFeedback: deps.validationFeedback,
     categorySlug: effectiveCategorySlug,
     topSourcesSummary,
-    queryBriefingsSummary,
+    sourceSummariesSection,
     topDetailedSummaries,
     draftTitle: scoutOutput.queryPlan.draftTitle,
   };

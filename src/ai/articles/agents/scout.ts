@@ -52,8 +52,6 @@ import {
   type DuplicateUrlInfo,
   type FilteredSourceSummary,
   type GameArticleContext,
-  type PlannedQuery,
-  type QueryBriefing,
   type QueryPlan,
   type ResearchConfidence,
   type ResearchPool,
@@ -94,12 +92,12 @@ export interface ScoutSearchResult {
 /**
  * Callback for monitoring Scout agent progress.
  *
- * @param step - Current step type ('search' or 'briefing')
+ * @param step - Current step type ('search')
  * @param current - Number of completed items in this step
  * @param total - Total number of items in this step
  */
 export type ScoutProgressCallback = (
-  step: 'search' | 'briefing',
+  step: 'search',
   current: number,
   total: number
 ) => void;
@@ -114,13 +112,6 @@ export interface ScoutDeps {
    */
   readonly generateObject?: typeof import('ai').generateObject;
   readonly model: LanguageModel;
-  /**
-   * Optional separate model for briefing generation.
-   * Briefings are free-form text (no Zod schema), so can use models
-   * that are better at creative writing but worse at structured output.
-   * Defaults to `model` if not provided.
-   */
-  readonly briefingModel?: LanguageModel;
   readonly logger?: Logger;
   /** Optional AbortSignal for cancellation support */
   readonly signal?: AbortSignal;
@@ -332,7 +323,7 @@ export async function executeExaSearch(
 }
 
 // ============================================================================
-// Per-Query Briefing Generation
+// Source Summaries Extraction
 // ============================================================================
 
 /**
@@ -353,194 +344,63 @@ function safeParseJsonArray(value: unknown): string[] {
 }
 
 /**
- * Builds context for briefing generation based on config.
- * When USE_SUMMARIES_FOR_BRIEFINGS is true, uses pre-extracted summaries.
- * When false (default), uses raw cleanedContent (classic mode).
- */
-function buildBriefingContext(results: CategorizedSearchResult['results'], useSummaries: boolean): string {
-  const topResults = results.slice(0, 5);
-
-  if (useSummaries) {
-    // Optimized mode: Use pre-extracted summaries from Cleaner
-    return topResults
-      .map((r, i) => {
-        const parts: string[] = [`[${i + 1}] ${r.title}`];
-        
-        // Use detailedSummary if available, otherwise fall back to full content
-        if (r.detailedSummary) {
-          parts.push(`Summary: ${r.detailedSummary}`);
-        } else if (r.content) {
-          parts.push(`Content: ${r.content}`);
-        }
-        
-        // Include pre-extracted key facts if available (safely parse in case it's JSON string)
-        const keyFacts = safeParseJsonArray(r.keyFacts);
-        if (keyFacts.length > 0) {
-          parts.push(`Key Facts:\n${keyFacts.map(f => `• ${f}`).join('\n')}`);
-        }
-        
-        // Include data points if available (safely parse in case it's JSON string)
-        const dataPoints = safeParseJsonArray(r.dataPoints);
-        if (dataPoints.length > 0) {
-          parts.push(`Data Points: ${dataPoints.join(', ')}`);
-        }
-        
-        return parts.join('\n');
-      })
-      .join('\n\n---\n\n');
-  }
-
-  // Classic mode: Use full cleanedContent
-  return topResults
-    .map((r, i) => `[${i + 1}] ${r.title}\n${r.content}`)
-    .join('\n\n---\n\n');
-}
-
-/**
- * Generates a per-query briefing from search results.
- * Each briefing synthesizes findings for a specific query based on expected findings.
+ * Extracts the top source summaries from all search results.
+ * Returns sources sorted by (qualityScore + relevanceScore), limited to maxSources.
  * 
- * When SCOUT_CONFIG.USE_SUMMARIES_FOR_BRIEFINGS is true (optimized mode):
- * - Uses pre-extracted detailedSummary, keyFacts, dataPoints from Cleaner
- * - More efficient since extraction already happened
+ * This replaces the queryBriefings LLM step - directly uses Cleaner's output
+ * (detailedSummary, keyFacts, dataPoints) without additional LLM synthesis.
  * 
- * When false (classic mode, default):
- * - Uses raw cleanedContent truncated to 800 chars
- * - Original behavior for A/B testing comparison
+ * @param allResults - All categorized search results from the Scout phase
+ * @param maxSources - Maximum number of sources to include (default: 15)
+ * @returns Array of source summaries, sorted by quality + relevance
  */
-export async function generateQueryBriefing(
-  planned: PlannedQuery,
-  searchResult: CategorizedSearchResult,
-  deps: {
-    readonly generateText: typeof import('ai').generateText;
-    readonly model: import('ai').LanguageModel;
-    readonly temperature?: number;
-    readonly signal?: AbortSignal;
-  }
-): Promise<{ briefing: QueryBriefing; tokenUsage: TokenUsage }> {
-  // Check config for briefing mode
-  const useSummaries = SCOUT_CONFIG.USE_SUMMARIES_FOR_BRIEFINGS;
-  
-  // Build context from search results based on config
-  const resultsContext = buildBriefingContext(searchResult.results, useSummaries);
+export function extractSourceSummaries(
+  allResults: readonly CategorizedSearchResult[],
+  maxSources: number = 15
+): SourceSummary[] {
+  const sourceSummaries: SourceSummary[] = [];
+  const seenUrls = new Set<string>();
 
-  const systemPrompt = `You are a research analyst synthesizing search results for an article.
-Your job is to extract specific findings relevant to the query's purpose.
+  for (const result of allResults) {
+    for (const item of result.results) {
+      // Skip duplicates
+      if (seenUrls.has(item.url)) continue;
+      seenUrls.add(item.url);
 
-Output format:
-1. FINDINGS: A comprehensive summary of what was found (5-8 sentences). Include specific details, mechanics, names, numbers, locations, and strategies. This is the main content that will inform article writing.
-2. KEY FACTS: 5-7 bullet points of specific facts (names, numbers, dates, locations)
-3. GAPS: What information was NOT found that would be useful
+      // Skip sources without quality/relevance scores or detailed summary
+      if (
+        item.qualityScore === undefined ||
+        item.relevanceScore === undefined ||
+        !item.detailedSummary
+      ) {
+        continue;
+      }
 
-Be thorough and specific. Prioritize actionable information and concrete details from the sources. Include actual names, numbers, and details from the sources.`;
+      // Parse keyFacts and dataPoints (may be JSON strings)
+      const keyFacts = safeParseJsonArray(item.keyFacts);
+      const dataPoints = safeParseJsonArray(item.dataPoints);
 
-  const userPrompt = `Query: "${planned.query}"
-Purpose: ${planned.purpose}
-Expected to find: ${planned.expectedFindings.join(', ')}
-
-=== SEARCH RESULTS ===
-${resultsContext}
-
-Synthesize the findings for this query:`;
-
-  const result = await deps.generateText({
-    model: deps.model,
-    temperature: deps.temperature ?? 0.2,
-    system: systemPrompt,
-    prompt: userPrompt,
-    abortSignal: deps.signal,
-  });
-
-  // Parse the response to extract findings, key facts, and gaps
-  const text = result.text.trim();
-  
-  // Simple parsing - look for sections
-  const findingsMatch = text.match(/FINDINGS?:?\s*([\s\S]*?)(?=KEY\s*FACTS?|GAPS?|$)/i);
-  const keyFactsMatch = text.match(/KEY\s*FACTS?:?\s*([\s\S]*?)(?=GAPS?|$)/i);
-  const gapsMatch = text.match(/GAPS?:?\s*([\s\S]*?)$/i);
-
-  const findings = findingsMatch?.[1]?.trim() || text;
-  const keyFactsRaw = keyFactsMatch?.[1]?.trim() || '';
-  const gapsRaw = gapsMatch?.[1]?.trim() || '';
-
-  // Extract bullet points
-  const extractBullets = (raw: string): string[] => {
-    return raw
-      .split(/\n/)
-      .map(line => line.replace(/^[-•*]\s*/, '').trim())
-      .filter(line => line.length > 0);
-  };
-
-  const briefing: QueryBriefing = {
-    query: planned.query,
-    engine: planned.engine,
-    purpose: planned.purpose,
-    findings,
-    keyFacts: extractBullets(keyFactsRaw).slice(0, 7),
-    gaps: extractBullets(gapsRaw).slice(0, 5),
-    sourceCount: searchResult.results.length,
-  };
-
-  return {
-    briefing,
-    tokenUsage: createTokenUsageFromResult(result),
-  };
-}
-
-/**
- * Generates briefings for all queries in the plan.
- * Executes briefing generation in parallel for efficiency.
- */
-export async function generateAllQueryBriefings(
-  queryPlan: QueryPlan,
-  searchResults: Map<string, CategorizedSearchResult>,
-  deps: {
-    readonly generateText: typeof import('ai').generateText;
-    readonly model: import('ai').LanguageModel;
-    readonly temperature?: number;
-    readonly signal?: AbortSignal;
-    readonly logger?: Logger;
-  }
-): Promise<{ briefings: QueryBriefing[]; tokenUsage: TokenUsage }> {
-  const { logger } = deps;
-  
-  logger?.debug?.(`Generating ${queryPlan.queries.length} per-query briefings...`);
-
-  const briefingPromises = queryPlan.queries.map(async (planned) => {
-    const searchResult = searchResults.get(planned.query);
-    if (!searchResult || searchResult.results.length === 0) {
-      // No results for this query - create empty briefing
-      return {
-        briefing: {
-          query: planned.query,
-          engine: planned.engine,
-          purpose: planned.purpose,
-          findings: 'No relevant results found for this query.',
-          keyFacts: [],
-          gaps: planned.expectedFindings,
-          sourceCount: 0,
-        } as QueryBriefing,
-        tokenUsage: createEmptyTokenUsage(),
-      };
+      sourceSummaries.push({
+        url: item.url,
+        title: item.title,
+        detailedSummary: item.detailedSummary,
+        keyFacts,
+        contentType: 'guide', // Default to 'guide', could be improved with Cleaner contentType
+        dataPoints,
+        query: result.query,
+        qualityScore: item.qualityScore,
+        relevanceScore: item.relevanceScore,
+      });
     }
-
-    return withRetry(
-      () => generateQueryBriefing(planned, searchResult, deps),
-      { context: `Query briefing: "${planned.query.slice(0, 40)}..."`, signal: deps.signal }
-    );
-  });
-
-  const results = await Promise.all(briefingPromises);
-  
-  const briefings = results.map(r => r.briefing);
-  let totalTokenUsage = createEmptyTokenUsage();
-  for (const r of results) {
-    totalTokenUsage = addTokenUsage(totalTokenUsage, r.tokenUsage);
   }
 
-  logger?.info?.(`Generated ${briefings.length} query briefings`);
+  // Sort by combined score (quality + relevance) descending
+  sourceSummaries.sort(
+    (a, b) => (b.qualityScore + b.relevanceScore) - (a.qualityScore + a.relevanceScore)
+  );
 
-  return { briefings, tokenUsage: totalTokenUsage };
+  // Limit to maxSources
+  return sourceSummaries.slice(0, maxSources);
 }
 
 // ============================================================================
@@ -661,10 +521,8 @@ export interface AssembleScoutOutputOptions {
  *
  * @param queryPlan - Query plan from the Scout Query Planner
  * @param discoveryCheck - Discovery check result
- * @param queryBriefings - Per-query briefings
  * @param researchPool - Built research pool
  * @param queryPlanningTokenUsage - Token usage from query planning LLM calls
- * @param briefingTokenUsage - Token usage from briefing generation LLM calls
  * @param confidence - Research confidence level
  * @param searchApiCosts - Aggregated search API costs
  * @param options - Optional additional data (cleaning usage, filtered sources, duplicates)
@@ -673,10 +531,8 @@ export interface AssembleScoutOutputOptions {
 export function assembleScoutOutput(
   queryPlan: QueryPlan,
   discoveryCheck: DiscoveryCheck,
-  queryBriefings: readonly QueryBriefing[],
   researchPool: ResearchPool,
   queryPlanningTokenUsage: TokenUsage,
-  briefingTokenUsage: TokenUsage,
   confidence: ResearchConfidence,
   searchApiCosts: SearchApiCosts,
   options: AssembleScoutOutputOptions = {}
@@ -691,20 +547,15 @@ export function assembleScoutOutput(
     sourceSummaries,
   } = options;
 
-  // Combine query planning and briefing for backwards-compatible tokenUsage field
-  const combinedTokenUsage = addTokenUsage(queryPlanningTokenUsage, briefingTokenUsage);
-
   const output: ScoutOutput = {
     queryPlan,
     discoveryCheck,
-    queryBriefings,
     ...(discoveryResult ? { discoveryResult } : {}),
     ...(sourceSummaries && sourceSummaries.length > 0 ? { sourceSummaries } : {}),
     researchPool,
     sourceUrls: Array.from(researchPool.allUrls),
     queryPlanningTokenUsage,
-    briefingTokenUsage,
-    tokenUsage: combinedTokenUsage,
+    tokenUsage: queryPlanningTokenUsage,
     confidence,
     searchApiCosts,
     filteredSources,
@@ -1046,57 +897,21 @@ export async function runScout(
     }
   }
 
-  // ===== PER-QUERY BRIEFING GENERATION =====
-  // Build a map of search results by query for per-query briefing generation
-  const searchResultsByQuery = new Map<string, CategorizedSearchResult>();
-  
-  // Map Tavily results
-  tavilyQueries.forEach((planned, index) => {
-    if (tavilyResults[index]) {
-      searchResultsByQuery.set(planned.query, tavilyResults[index].result);
-    }
-  });
-  
-  // Map Exa results (only if Exa was used)
-  if (useExa) {
-    exaQueries.forEach((planned, index) => {
-      if (exaResults[index]) {
-        searchResultsByQuery.set(planned.query, exaResults[index].result);
-      }
-    });
-  }
-
-  // Generate per-query briefings
-  // Use separate briefingModel if provided (allows using creative models for free-form text)
-  log.info('Generating per-query briefings...');
-  deps.onProgress?.('briefing', 0, queryPlan.queries.length);
-  
-  const briefingsResult = await generateAllQueryBriefings(
-    queryPlan,
-    searchResultsByQuery,
-    {
-      generateText: deps.generateText,
-      model: deps.briefingModel ?? deps.model,
-      temperature,
-      signal,
-      logger: log,
-    }
-  );
-  const queryBriefings = briefingsResult.briefings;
-  const queryBriefingsTokenUsage = briefingsResult.tokenUsage;
-  log.info(`Generated ${queryBriefings.length} per-query briefings`);
-  deps.onProgress?.('briefing', queryBriefings.length, queryPlan.queries.length);
-
-  // Token usages are now passed separately to assembleScoutOutput
-  // queryPlanningTokenUsage and queryBriefingsTokenUsage are tracked above
+  // ===== SOURCE SUMMARIES EXTRACTION =====
+  // Extract top source summaries directly from Cleaner's output
+  // This replaces the old queryBriefings LLM step - saves ~$0.07/article and ~20s
+  log.info('Extracting source summaries from cleaned content...');
+  const sourceSummaries = extractSourceSummaries(allResults, 15);
+  log.info(`Extracted ${sourceSummaries.length} source summaries (top by quality + relevance)`);
 
   // ===== CALCULATE CONFIDENCE =====
-  // Calculate based on source count, query count, and briefing quality
-  const totalBriefingLength = queryBriefings.reduce((sum, b) => sum + b.findings.length, 0);
+  // Calculate based on source count, query count, and source summaries quality
+  // Use total summary length instead of briefing length (summaries are more comprehensive)
+  const totalSummaryLength = sourceSummaries.reduce((sum, s) => sum + s.detailedSummary.length, 0);
   const confidence = calculateResearchConfidence(
     poolBuilder.urlCount,
     poolBuilder.queryCount,
-    totalBriefingLength
+    totalSummaryLength
   );
 
   if (confidence === 'low') {
@@ -1128,10 +943,8 @@ export async function runScout(
   return assembleScoutOutput(
     queryPlan,
     discoveryCheck,
-    queryBriefings,
     researchPool,
     queryPlanningTokenUsage,
-    queryBriefingsTokenUsage,
     confidence,
     searchApiCosts,
     {
@@ -1141,6 +954,7 @@ export async function runScout(
       queryStats,
       topSourcesPerQuery,
       discoveryResult,
+      sourceSummaries,
     }
   );
 }

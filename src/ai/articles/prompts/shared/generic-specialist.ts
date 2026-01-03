@@ -45,14 +45,14 @@ ${localeInstruction}`;
     minParagraphs: number,
     maxParagraphs: number
   ): string {
-    // Build query briefings section
-    const queryBriefingsSection = ctx.queryBriefings.length > 0
-      ? ctx.queryBriefings.map((b, i) => 
-          `Query ${i + 1}: "${b.query}"
-Findings: ${b.findings}
-Key Facts: ${b.keyFacts.length > 0 ? b.keyFacts.join('; ') : '(none)'}`
+    // Build source summaries section
+    const sourceSummariesSection = (ctx.sourceSummaries ?? []).length > 0
+      ? ctx.sourceSummaries!.slice(0, 5).map((s, i) => 
+          `Source ${i + 1}: "${s.title}"
+Summary: ${s.detailedSummary.slice(0, 300)}...
+Key Facts: ${s.keyFacts.length > 0 ? s.keyFacts.slice(0, 3).join('; ') : '(none)'}`
         ).join('\n\n')
-      : '(No briefings available)';
+      : '(No source summaries available)';
 
     const positionText = ctx.isFirst
       ? 'Opening section (set the stage, no preamble needed)'
@@ -73,8 +73,8 @@ Headline: ${ctx.headline}
 Internal Goal: ${ctx.goal}
 Position: ${positionText}
 
-=== SCOUT BRIEFINGS ===
-${queryBriefingsSection}
+=== SOURCE SUMMARIES ===
+${sourceSummariesSection}
 
 Section-Specific Research:
 ${ctx.researchContext || '(Using Scout research only for this section)'}

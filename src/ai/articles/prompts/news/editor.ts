@@ -25,8 +25,8 @@ ${localeInstruction}`;
 ${validationFeedbackSection}
 Suggested title from Scout (STARTING POINT ONLY): "${ctx.draftTitle}"
 
-=== RESEARCH BRIEFINGS ===
-${ctx.queryBriefingsSummary}
+=== SOURCE SUMMARIES ===
+${ctx.sourceSummariesSection}
 
 ${ctx.topDetailedSummaries ? `${ctx.topDetailedSummaries}\n` : ''}
 === ${ctx.existingResearchSummary}

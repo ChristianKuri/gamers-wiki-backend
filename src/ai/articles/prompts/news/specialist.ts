@@ -40,14 +40,14 @@ ${TONE_GUIDE}`;
     minParagraphs: number,
     maxParagraphs: number
   ): string {
-    // Build query briefings section
-    const queryBriefingsSection = ctx.queryBriefings.length > 0
-      ? ctx.queryBriefings.map((b, i) => 
-          `Query ${i + 1}: "${b.query}"
-Findings: ${b.findings}
-Key Facts: ${b.keyFacts.length > 0 ? b.keyFacts.join('; ') : '(none)'}`
+    // Build source summaries section
+    const sourceSummariesSection = (ctx.sourceSummaries ?? []).length > 0
+      ? ctx.sourceSummaries!.slice(0, 5).map((s, i) => 
+          `Source ${i + 1}: "${s.title}"
+Summary: ${s.detailedSummary.slice(0, 300)}...
+Key Facts: ${s.keyFacts.length > 0 ? s.keyFacts.slice(0, 3).join('; ') : '(none)'}`
         ).join('\n\n')
-      : '(No briefings available)';
+      : '(No source summaries available)';
 
     // Build awareness of what OTHER sections will cover
     const otherSectionsCoverage = plan.sections
@@ -76,8 +76,8 @@ ${otherSectionsCoverage}
 === RESEARCH ===
 ${ctx.researchContext || '(Using general context only)'}
 
-=== SCOUT BRIEFINGS ===
-${queryBriefingsSection}
+=== SOURCE SUMMARIES ===
+${sourceSummariesSection}
 
 === WRITING INSTRUCTIONS ===
 - You MUST cover everything in "MUST COVER" above

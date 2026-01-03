@@ -531,8 +531,7 @@ interface PhaseContext {
  */
 async function executeScoutPhase(
   phaseContext: PhaseContext,
-  scoutModel: string,
-  scoutBriefingModel: string
+  scoutModel: string
 ): Promise<PhaseResult<ScoutOutput>> {
   const { context, deps, basePhaseOptions, log, progressTracker, phaseTimer, temperatureOverrides, cleaningDeps } = phaseContext;
 
@@ -549,7 +548,6 @@ async function executeScoutPhase(
         generateText: deps.generateText,
         generateObject: deps.generateObject,
         model: deps.openrouter(scoutModel),
-        briefingModel: deps.openrouter(scoutBriefingModel),
         logger: createPrefixedLogger('[Scout]'),
         signal: basePhaseOptions.signal,
         temperature: temperatureOverrides?.scout,
@@ -963,7 +961,6 @@ export async function generateGameArticleDraft(
   const { openrouter, search, generateText: genText, generateObject: genObject, strapi } = mergedDeps;
 
   const scoutModel = getModel('ARTICLE_SCOUT');
-  const scoutBriefingModel = getModel('ARTICLE_SCOUT_BRIEFING');
   const editorModel = getModel('ARTICLE_EDITOR');
   const specialistModel = getModel('ARTICLE_SPECIALIST');
   const fixerModel = getModel('ARTICLE_FIXER');
@@ -1055,7 +1052,7 @@ export async function generateGameArticleDraft(
   };
 
   // ===== PHASE 1: SCOUT =====
-  const scoutResult = await executeScoutPhase(phaseContext, scoutModel, scoutBriefingModel);
+  const scoutResult = await executeScoutPhase(phaseContext, scoutModel);
   const scoutOutput = scoutResult.output;
 
   // ===== PHASE 2: EDITOR (with retry) =====
@@ -1366,7 +1363,6 @@ export async function generateGameArticleDraft(
   // Build ScoutTokenUsage with sub-phase breakdown
   const scoutTokenUsageBreakdown: ScoutTokenUsage = {
     queryPlanning: scoutOutput.queryPlanningTokenUsage,
-    briefing: scoutOutput.briefingTokenUsage,
     total: scoutOutput.tokenUsage,
   };
   const cleanerTokenUsage = scoutOutput.cleaningTokenUsage;
@@ -1547,10 +1543,6 @@ export async function generateGameArticleDraft(
       : {}),
     ...(scoutOutput.queryStats && scoutOutput.queryStats.length > 0
       ? { queryStats: scoutOutput.queryStats }
-      : {}),
-    // Include query briefings for debugging/analysis
-    ...(scoutOutput.queryBriefings.length > 0
-      ? { queryBriefings: scoutOutput.queryBriefings }
       : {}),
   };
 

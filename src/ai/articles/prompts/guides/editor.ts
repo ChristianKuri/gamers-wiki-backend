@@ -65,7 +65,7 @@ ${localeInstruction}`;
 
 
     const titleHint = `\nSuggested title from Scout (STARTING POINT ONLY): "${ctx.draftTitle}"\n`;
-    const researchSection = `=== RESEARCH BRIEFINGS (Per-Query Synthesis) ===\n${ctx.queryBriefingsSummary}`;
+    const researchSection = `=== SOURCE SUMMARIES (Top Sources by Quality) ===\n${ctx.sourceSummariesSection}`;
 
     return `Create a COMPLETE guide plan for "${ctx.gameName}".
 ${validationFeedbackSection}${titleHint}

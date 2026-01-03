@@ -20,10 +20,10 @@ export interface EditorPromptContext {
    */
   readonly topSourcesSummary?: string;
   /**
-   * Formatted summary of per-query briefings from Scout.
-   * Contains synthesized findings, key facts, and gaps for each query.
+   * Formatted summary of source summaries from Scout.
+   * Contains detailed summaries, key facts, and data points from top sources.
    */
-  readonly queryBriefingsSummary: string;
+  readonly sourceSummariesSection: string;
   /**
    * Top detailed summaries from best sources (ranked by quality + relevance).
    * Contains comprehensive source-level summaries with key facts and data points.

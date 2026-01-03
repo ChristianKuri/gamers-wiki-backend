@@ -6,7 +6,7 @@ import {
 } from '../../../src/ai/articles/agents/scout.internals';
 import { createEmptyResearchPool, ResearchPoolBuilder } from '../../../src/ai/articles/research-pool';
 import { createEmptyTokenUsage, createEmptySearchApiCosts } from '../../../src/ai/articles/types';
-import type { QueryPlan, DiscoveryCheck, QueryBriefing } from '../../../src/ai/articles/types';
+import type { QueryPlan, DiscoveryCheck } from '../../../src/ai/articles/types';
 
 // ============================================================================
 // Test Fixtures
@@ -25,27 +25,6 @@ const createMockDiscoveryCheck = (): DiscoveryCheck => ({
   discoveryReason: 'none',
 });
 
-const createMockQueryBriefings = (): QueryBriefing[] => [
-  {
-    query: '"Test Game" guide',
-    engine: 'tavily',
-    purpose: 'General overview',
-    findings: 'Found comprehensive information about the game.',
-    keyFacts: ['Fact 1', 'Fact 2'],
-    gaps: ['Gap 1'],
-    sourceCount: 3,
-  },
-  {
-    query: '"Test Game" tips',
-    engine: 'exa',
-    purpose: 'Tips and tricks',
-    findings: 'Found useful tips and strategies.',
-    keyFacts: ['Tip 1'],
-    gaps: [],
-    sourceCount: 2,
-  },
-];
-
 // ============================================================================
 // Tests
 // ============================================================================
@@ -55,29 +34,24 @@ describe('Scout Helper Functions', () => {
     it('creates a properly structured ScoutOutput', () => {
       const queryPlan = createMockQueryPlan();
       const discoveryCheck = createMockDiscoveryCheck();
-      const queryBriefings = createMockQueryBriefings();
       const pool = createEmptyResearchPool();
       const queryPlanningTokenUsage = createEmptyTokenUsage();
-      const briefingTokenUsage = createEmptyTokenUsage();
       const searchApiCosts = createEmptySearchApiCosts();
       
       const output = assembleScoutOutput(
         queryPlan,
         discoveryCheck,
-        queryBriefings,
         pool,
         queryPlanningTokenUsage,
-        briefingTokenUsage,
         'high',
         searchApiCosts
       );
 
       expect(output.queryPlan).toBe(queryPlan);
       expect(output.discoveryCheck).toBe(discoveryCheck);
-      expect(output.queryBriefings).toBe(queryBriefings);
       expect(output.researchPool).toBe(pool);
       expect(output.queryPlanningTokenUsage).toBe(queryPlanningTokenUsage);
-      expect(output.briefingTokenUsage).toBe(briefingTokenUsage);
+      expect(output.tokenUsage).toBe(queryPlanningTokenUsage);
       expect(output.confidence).toBe('high');
     });
 
@@ -98,9 +72,7 @@ describe('Scout Helper Functions', () => {
       const output = assembleScoutOutput(
         createMockQueryPlan(),
         createMockDiscoveryCheck(),
-        createMockQueryBriefings(),
         pool,
-        createEmptyTokenUsage(),
         createEmptyTokenUsage(),
         'medium',
         createEmptySearchApiCosts()
@@ -115,15 +87,13 @@ describe('Scout Helper Functions', () => {
     it('includes confidence level in output', () => {
       const queryPlan = createMockQueryPlan();
       const discoveryCheck = createMockDiscoveryCheck();
-      const queryBriefings = createMockQueryBriefings();
       const pool = createEmptyResearchPool();
       const queryPlanningTokenUsage = createEmptyTokenUsage();
-      const briefingTokenUsage = createEmptyTokenUsage();
       const searchApiCosts = createEmptySearchApiCosts();
       
-      const highOutput = assembleScoutOutput(queryPlan, discoveryCheck, queryBriefings, pool, queryPlanningTokenUsage, briefingTokenUsage, 'high', searchApiCosts);
-      const mediumOutput = assembleScoutOutput(queryPlan, discoveryCheck, queryBriefings, pool, queryPlanningTokenUsage, briefingTokenUsage, 'medium', searchApiCosts);
-      const lowOutput = assembleScoutOutput(queryPlan, discoveryCheck, queryBriefings, pool, queryPlanningTokenUsage, briefingTokenUsage, 'low', searchApiCosts);
+      const highOutput = assembleScoutOutput(queryPlan, discoveryCheck, pool, queryPlanningTokenUsage, 'high', searchApiCosts);
+      const mediumOutput = assembleScoutOutput(queryPlan, discoveryCheck, pool, queryPlanningTokenUsage, 'medium', searchApiCosts);
+      const lowOutput = assembleScoutOutput(queryPlan, discoveryCheck, pool, queryPlanningTokenUsage, 'low', searchApiCosts);
 
       expect(highOutput.confidence).toBe('high');
       expect(mediumOutput.confidence).toBe('medium');
@@ -149,9 +119,7 @@ describe('Scout Helper Functions', () => {
       const output = assembleScoutOutput(
         queryPlan,
         discoveryCheck,
-        createMockQueryBriefings(),
         createEmptyResearchPool(),
-        createEmptyTokenUsage(),
         createEmptyTokenUsage(),
         'high',
         createEmptySearchApiCosts(),
@@ -202,15 +170,15 @@ describe('Scout Helper Functions', () => {
       expect(['medium', 'high']).toContain(goodQueriesConfidence);
     });
 
-    it('considers briefing length in confidence calculation', () => {
-      // Good sources and queries but short briefing
-      const shortBriefing = calculateResearchConfidence(15, 8, 10);
-      // Same but with adequate briefing
-      const longBriefing = calculateResearchConfidence(15, 8, 300);
+    it('considers summary length in confidence calculation', () => {
+      // Good sources and queries but short summary
+      const shortSummary = calculateResearchConfidence(15, 8, 10);
+      // Same but with adequate summary
+      const longSummary = calculateResearchConfidence(15, 8, 300);
 
-      // Short briefing should decrease confidence
-      expect(['low', 'medium']).toContain(shortBriefing);
-      expect(['medium', 'high']).toContain(longBriefing);
+      // Short summary should decrease confidence
+      expect(['low', 'medium']).toContain(shortSummary);
+      expect(['medium', 'high']).toContain(longSummary);
     });
   });
 });

@@ -13,7 +13,7 @@
  * describe('assembleScoutOutput', () => {
  *   it('should build correct output structure', () => {
  *     const result = assembleScoutOutput(...);
- *     expect(result.queryBriefings).toBeDefined();
+ *     expect(result.sourceSummaries).toBeDefined();
  *   });
  * });
  */
@@ -28,7 +28,7 @@ export {
   assembleScoutOutput,
   calculateResearchConfidence,
   
-  // Per-query briefing generation
-  generateQueryBriefing,
-  generateAllQueryBriefings,
+  // Source summaries extraction (replaces queryBriefings generation)
+  extractSourceSummaries,
+  extractTopSourcesPerQuery,
 } from './scout';

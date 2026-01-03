@@ -19,6 +19,8 @@
 // Public API exports
 export {
   runScout,
+  extractSourceSummaries,
+  extractTopSourcesPerQuery,
   SCOUT_CONFIG,
   type ScoutDeps,
   type ScoutProgressCallback,

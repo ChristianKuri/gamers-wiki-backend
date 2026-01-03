@@ -746,10 +746,10 @@ async function writeSection(
 
   // Guard: Check if we have any meaningful research
   const hasAnyResearch = sectionResearch.some((r) => r.results.length > 0);
-  const hasBriefings = scoutOutput.queryBriefings.length > 0;
-  if (!hasAnyResearch && !hasBriefings) {
+  const hasSourceSummaries = (scoutOutput.sourceSummaries?.length ?? 0) > 0;
+  if (!hasAnyResearch && !hasSourceSummaries) {
     log.warn(
-      `Section "${section.headline}" has no research and no query briefings - quality may be compromised`
+      `Section "${section.headline}" has no research and no source summaries - quality may be compromised`
     );
   }
 
@@ -775,7 +775,6 @@ async function writeSection(
     researchContentLength,
     crossReferenceContext: options.crossReferenceContext,
     mustCover: section.mustCover,
-    queryBriefings: scoutOutput.queryBriefings,
     sourceSummaries: scoutOutput.sourceSummaries,
   };
 

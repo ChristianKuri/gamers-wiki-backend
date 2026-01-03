@@ -47,15 +47,17 @@ const createMockScoutOutput = (): ScoutOutput => ({
     needsDiscovery: false,
     discoveryReason: 'none',
   },
-  queryBriefings: [
+  sourceSummaries: [
     {
-      query: '"Elden Ring" beginner guide',
-      engine: 'tavily',
-      purpose: 'General overview',
-      findings: 'Elden Ring is an action RPG developed by FromSoftware with open world exploration.',
+      url: 'https://ign.com',
+      title: 'IGN Review',
+      detailedSummary: 'Elden Ring is an action RPG developed by FromSoftware with open world exploration.',
       keyFacts: ['Open world', 'Challenging combat'],
-      gaps: [],
-      sourceCount: 3,
+      contentType: 'guide',
+      dataPoints: ['2022 release'],
+      query: '"Elden Ring" beginner guide',
+      qualityScore: 85,
+      relevanceScore: 90,
     },
   ],
   researchPool: {
@@ -84,6 +86,7 @@ const createMockScoutOutput = (): ScoutOutput => ({
     queryCache: new Map(),
   },
   sourceUrls: ['https://ign.com', 'https://guide.com'],
+  queryPlanningTokenUsage: createEmptyTokenUsage(),
   tokenUsage: createEmptyTokenUsage(),
   confidence: 'high',
   searchApiCosts: { totalUsd: 0, exaSearchCount: 0, tavilySearchCount: 1, exaCostUsd: 0, tavilyCostUsd: 0.008, tavilyCredits: 1 },
@@ -470,15 +473,17 @@ describe('Specialist Prompts', () => {
       isThinResearch: false,
       researchContentLength: 1000,
       mustCover: ['Game basics', 'Starting tips'],
-      queryBriefings: [
+      sourceSummaries: [
         {
-          query: '"Elden Ring" guide',
-          engine: 'tavily',
-          purpose: 'General overview',
-          findings: 'Found comprehensive guide information.',
+          url: 'https://guide.com',
+          title: 'Elden Ring Guide',
+          detailedSummary: 'Found comprehensive guide information.',
           keyFacts: ['Key fact 1', 'Key fact 2'],
-          gaps: [],
-          sourceCount: 3,
+          contentType: 'guide',
+          dataPoints: ['2022 release'],
+          query: '"Elden Ring" guide',
+          qualityScore: 85,
+          relevanceScore: 90,
         },
       ],
       ...overrides,
@@ -591,26 +596,28 @@ describe('Specialist Prompts', () => {
       expect(prompt).toContain('FIRST mention');
     });
 
-    it('includes query briefings in prompt', () => {
+    it('includes source summaries in prompt', () => {
       const plan = createMockArticlePlan();
       const ctx = createSectionContext({
-        queryBriefings: [
+        sourceSummaries: [
           {
-            query: 'test query',
-            engine: 'tavily',
-            purpose: 'Test purpose',
-            findings: 'Test findings',
+            url: 'https://example.com',
+            title: 'Test Source Title',
+            detailedSummary: 'Test detailed summary with specific facts.',
             keyFacts: ['Fact A', 'Fact B'],
-            gaps: [],
-            sourceCount: 2,
+            contentType: 'guide' as const,
+            dataPoints: ['Data point 1'],
+            query: 'test query',
+            qualityScore: 85,
+            relevanceScore: 90,
           },
         ],
       });
 
       const prompt = getSpecialistSectionUserPrompt(ctx, plan, 'Elden Ring', 100, 2, 5);
 
-      expect(prompt).toContain('test query');
-      expect(prompt).toContain('Test findings');
+      expect(prompt).toContain('Test Source Title');
+      expect(prompt).toContain('Test detailed summary');
     });
 
     it('includes section information and headline in prompt', () => {

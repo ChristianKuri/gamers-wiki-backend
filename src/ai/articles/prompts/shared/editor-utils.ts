@@ -1,5 +1,5 @@
 import type { ArticleCategorySlug } from '../../article-plan';
-import type { CategoryHint, QueryBriefing, ScoutOutput } from '../../types';
+import type { CategoryHint, ScoutOutput, SourceSummary } from '../../types';
 
 // ============================================================================ 
 // Required Elements Hints
@@ -141,69 +141,70 @@ export function buildExistingResearchSummary(
   const recentSearches = scoutOutput.researchPool.scoutFindings.recent.map((s) => `"${s.query}"`).join(', ');
   const totalSources = scoutOutput.researchPool.allUrls.size;
   
-  // Build overview from query briefings
-  const briefingOverview = scoutOutput.queryBriefings.length > 0
-    ? scoutOutput.queryBriefings.slice(0, 2).map(b => `• ${b.purpose}: ${b.findings.slice(0, 150)}...`).join('\n')
-    : '(See query briefings above for details)';
+  // Build overview from source summaries
+  const sourceSummaries = scoutOutput.sourceSummaries ?? [];
+  const summaryOverview = sourceSummaries.length > 0
+    ? sourceSummaries.slice(0, 2).map(s => `• ${s.title}: ${s.detailedSummary.slice(0, 150)}...`).join('\n')
+    : '(See source summaries above for details)';
 
-  return `EXISTING RESEARCH COVERAGE:\nOverview searches: ${overviewSearches}\nCategory searches: ${categorySearches}\nRecent searches: ${recentSearches}\nTotal sources: ${totalSources}\n\nResearch summary:\n${briefingOverview}\n\nWhen creating research queries, focus on SPECIFIC details not yet fully covered.`;
+  return `EXISTING RESEARCH COVERAGE:\nOverview searches: ${overviewSearches}\nCategory searches: ${categorySearches}\nRecent searches: ${recentSearches}\nTotal sources: ${totalSources}\n\nResearch summary:\n${summaryOverview}\n\nWhen creating research queries, focus on SPECIFIC details not yet fully covered.`;
 }
 
 /**
- * Builds the query briefings summary for Editor context.
- * Shows synthesized findings, key facts, and gaps for each search query.
+ * Builds a summary of source summaries for Editor context.
+ * Shows key facts, data points, and detailed summaries from top sources.
  * 
- * This is the NEW format that replaces the old briefing structure.
+ * This replaces the old queryBriefings format - uses Cleaner's output directly
+ * without an additional LLM synthesis step.
  *
- * @param queryBriefings - Array of per-query briefings from Scout
- * @returns Formatted string with query briefings, or empty string if none available
+ * @param sourceSummaries - Array of source summaries from Scout
+ * @returns Formatted string with source summaries, or empty string if none available
  */
-export function buildQueryBriefingsSummary(queryBriefings: readonly QueryBriefing[] | undefined): string {
-  if (!queryBriefings || queryBriefings.length === 0) {
+export function buildSourceSummariesSection(sourceSummaries: readonly SourceSummary[] | undefined): string {
+  if (!sourceSummaries || sourceSummaries.length === 0) {
     return '';
   }
 
   const sections: string[] = [
-    '=== RESEARCH BRIEFINGS (Per-Query Synthesis) ===',
-    'Each briefing synthesizes findings from multiple sources for a specific research query.',
-    'Use these to understand what information is available and what gaps exist.',
+    '=== RESEARCH SUMMARIES (Top Sources by Quality + Relevance) ===',
+    'These are detailed summaries extracted from the highest-quality sources.',
+    'Use these to understand what specific information is available for planning.',
     '',
   ];
 
-  for (let i = 0; i < queryBriefings.length; i++) {
-    const briefing = queryBriefings[i];
-    const engineIcon = briefing.engine === 'exa' ? '🔍' : '📍';
+  for (let i = 0; i < sourceSummaries.length; i++) {
+    const source = sourceSummaries[i];
 
-    sections.push(`--- BRIEFING ${i + 1}: "${briefing.query}" [${briefing.engine}] ---`);
-    sections.push(`${engineIcon} Purpose: ${briefing.purpose}`);
-    sections.push(`Sources: ${briefing.sourceCount}`);
+    sections.push(`--- SOURCE ${i + 1}: "${source.title}" ---`);
+    sections.push(`🔗 ${source.url}`);
+    sections.push(`📊 Query: "${source.query}"`);
+    sections.push(`⭐ Quality: ${source.qualityScore}/100 | Relevance: ${source.relevanceScore}/100`);
     sections.push('');
-    sections.push('FINDINGS:');
-    sections.push(briefing.findings);
+    sections.push('DETAILED SUMMARY:');
+    sections.push(source.detailedSummary);
     sections.push('');
     
-    if (briefing.keyFacts.length > 0) {
+    if (source.keyFacts.length > 0) {
       sections.push('KEY FACTS:');
-      for (const fact of briefing.keyFacts) {
+      for (const fact of source.keyFacts.slice(0, 7)) {
         sections.push(`• ${fact}`);
       }
       sections.push('');
     }
     
-    if (briefing.gaps.length > 0) {
-      sections.push('GAPS (not found):');
-      for (const gap of briefing.gaps) {
-        sections.push(`⚠️ ${gap}`);
-      }
+    if (source.dataPoints.length > 0) {
+      sections.push('DATA POINTS:');
+      sections.push(source.dataPoints.slice(0, 10).join(' | '));
       sections.push('');
     }
     
-    sections.push('--- END OF BRIEFING ---');
+    sections.push('--- END OF SOURCE ---');
     sections.push('');
   }
 
   return sections.join('\n');
 }
+
 
 /**
  * Builds the top sources content for Editor context.

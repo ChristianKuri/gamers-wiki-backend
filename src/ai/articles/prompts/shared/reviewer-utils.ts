@@ -1,16 +1,11 @@
 import type { ArticleCategorySlug, ArticlePlan } from '../../article-plan';
-import type { QueryBriefing, SourceSummary } from '../../types';
+import type { SourceSummary } from '../../types';
 
 export interface ReviewerPromptContext {
   readonly plan: ArticlePlan;
   readonly markdown: string;
   readonly researchSummary: string;
   readonly categorySlug: ArticleCategorySlug;
-  /**
-   * Per-query briefings from Scout.
-   * Contains synthesized findings for fact-checking.
-   */
-  readonly queryBriefings?: readonly QueryBriefing[];
   /**
    * Detailed per-source summaries from Scout.
    * Contains specific facts for verification.
@@ -19,37 +14,36 @@ export interface ReviewerPromptContext {
 }
 
 /**
- * Builds a research summary from per-query briefings for the Reviewer.
- * Provides more structured information for fact-checking.
+ * Builds a research summary from source summaries for the Reviewer.
+ * Provides detailed, structured information for fact-checking.
  */
-export function buildResearchSummaryWithBriefings(
-  queryBriefings: readonly QueryBriefing[],
+export function buildResearchSummaryFromSourceSummaries(
+  sourceSummaries: readonly SourceSummary[],
   maxLength: number
 ): string {
-  const parts: string[] = ['=== RESEARCH BRIEFINGS (Per-Query Synthesis) ==='];
+  const parts: string[] = ['=== RESEARCH SUMMARIES (Top Sources by Quality) ==='];
 
-  for (const briefing of queryBriefings) {
+  for (const source of sourceSummaries) {
     const section: string[] = [
-      `--- Query: "${briefing.query}" [${briefing.engine}] ---`,
-      `Purpose: ${briefing.purpose}`,
-      `Sources: ${briefing.sourceCount}`,
+      `--- Source: "${source.title}" ---`,
+      `URL: ${source.url}`,
+      `Query: "${source.query}"`,
+      `Quality: ${source.qualityScore}/100 | Relevance: ${source.relevanceScore}/100`,
       '',
-      'FINDINGS:',
-      briefing.findings,
+      'DETAILED SUMMARY:',
+      source.detailedSummary,
     ];
 
-    if (briefing.keyFacts.length > 0) {
+    if (source.keyFacts.length > 0) {
       section.push('', 'KEY FACTS:');
-      for (const fact of briefing.keyFacts) {
+      for (const fact of source.keyFacts.slice(0, 7)) {
         section.push(`• ${fact}`);
       }
     }
 
-    if (briefing.gaps.length > 0) {
-      section.push('', 'GAPS:');
-      for (const gap of briefing.gaps) {
-        section.push(`⚠️ ${gap}`);
-      }
+    if (source.dataPoints.length > 0) {
+      section.push('', 'DATA POINTS:');
+      section.push(source.dataPoints.slice(0, 10).join(' | '));
     }
 
     parts.push(section.join('\n'));
@@ -63,4 +57,21 @@ export function buildResearchSummaryWithBriefings(
   }
 
   return combined;
+}
+
+/**
+ * Builds a research summary for the Reviewer.
+ * 
+ * @param sourceSummaries - Source summaries from Scout
+ * @param maxLength - Maximum length of the output
+ */
+export function buildResearchSummaryForReviewer(
+  sourceSummaries: readonly SourceSummary[] | undefined,
+  maxLength: number
+): string {
+  if (sourceSummaries && sourceSummaries.length > 0) {
+    return buildResearchSummaryFromSourceSummaries(sourceSummaries, maxLength);
+  }
+  
+  return '';
 }

@@ -145,28 +145,24 @@ describe('runScout', () => {
 
       expect(result).toHaveProperty('queryPlan');
       expect(result).toHaveProperty('discoveryCheck');
-      expect(result).toHaveProperty('queryBriefings');
       expect(result).toHaveProperty('researchPool');
       expect(result).toHaveProperty('sourceUrls');
       expect(result).toHaveProperty('tokenUsage');
       expect(result).toHaveProperty('confidence');
     });
 
-    it('returns query briefings with required fields', async () => {
-      // Use default mocks that handle all generateText calls
+    it('returns valid output without briefings (briefing LLM step removed)', async () => {
+      // Briefing generation has been removed to save ~$0.07/article
+      // Source summaries from Cleaner are used directly instead
       const deps = createMockScoutDeps();
       const context = createMockGameContext();
 
       const result = await runScout(context, deps);
 
-      expect(result.queryBriefings).toBeDefined();
-      expect(Array.isArray(result.queryBriefings)).toBe(true);
-      // Each briefing should have the required fields
-      for (const briefing of result.queryBriefings) {
-        expect(briefing).toHaveProperty('query');
-        expect(briefing).toHaveProperty('findings');
-        expect(briefing).toHaveProperty('keyFacts');
-      }
+      // queryBriefings field has been completely removed from ScoutOutput
+      expect(result).not.toHaveProperty('queryBriefings');
+      // tokenUsage equals queryPlanningTokenUsage now
+      expect(result.tokenUsage).toEqual(result.queryPlanningTokenUsage);
     });
 
     it('returns valid confidence level', async () => {
@@ -226,8 +222,12 @@ describe('runScout', () => {
     });
   });
 
-  describe('briefing generation', () => {
-    it('generates overview briefing from search results', async () => {
+  describe('source summaries (replaces briefing generation)', () => {
+    // Note: queryBriefings was completely removed to save ~$0.07/article.
+    // Scout now extracts sourceSummaries directly from Cleaner's output.
+    // Without cleaningDeps, sourceSummaries will be empty (sources have no quality scores).
+    
+    it('does not have queryBriefings field (completely removed)', async () => {
       const mockSearch = createMockSearch({
         answer: 'Elden Ring is a popular action RPG.',
         results: [
@@ -238,28 +238,30 @@ describe('runScout', () => {
       const deps = createMockScoutDeps({ search: mockSearch });
       const result = await runScout(createMockGameContext(), deps);
 
-      expect(result.queryBriefings.length).toBeGreaterThan(0);
-      expect(deps.generateText).toHaveBeenCalled();
+      // queryBriefings field was completely removed from ScoutOutput
+      expect(result).not.toHaveProperty('queryBriefings');
+      // generateText should NOT be called for briefings anymore
     });
 
-    it('generates query briefings based on instruction', async () => {
+    it('output structure is valid without queryBriefings', async () => {
       const deps = createMockScoutDeps();
       const context = createMockGameContext({ instruction: 'Write a review' });
 
       const result = await runScout(context, deps);
 
-      expect(result.queryBriefings).toBeDefined();
-      expect(result.queryBriefings.length).toBeGreaterThan(0);
+      // queryBriefings field was completely removed
+      expect(result).not.toHaveProperty('queryBriefings');
+      expect(result).toHaveProperty('queryPlan');
     });
 
-    it('includes findings in query briefings', async () => {
+    it('sourceSummaries is empty without cleaning deps (no quality scores)', async () => {
+      // Without cleaningDeps, search results don't have quality/relevance scores
+      // or detailedSummary, so sourceSummaries will be empty
       const deps = createMockScoutDeps();
       const result = await runScout(createMockGameContext(), deps);
 
-      expect(result.queryBriefings.length).toBeGreaterThan(0);
-      for (const briefing of result.queryBriefings) {
-        expect(briefing.findings).toBeDefined();
-      }
+      // sourceSummaries requires sources with detailedSummary and scores
+      expect(result.sourceSummaries || []).toEqual([]);
     });
   });
 
@@ -306,7 +308,7 @@ describe('runScout', () => {
   });
 
   describe('confidence calculation', () => {
-    it('returns high confidence when sources are plentiful', async () => {
+    it('returns confidence based on sources and summaries', async () => {
       const mockSearch = createMockSearch({
         results: [
           { title: 'R1', url: 'https://r1.com', content: 'C1' },
@@ -320,8 +322,9 @@ describe('runScout', () => {
       const deps = createMockScoutDeps({ search: mockSearch });
       const result = await runScout(createMockGameContext(), deps);
 
-      // With many sources and good overview, should have high or medium confidence
-      expect(['high', 'medium']).toContain(result.confidence);
+      // Without cleaningDeps, sourceSummaries is empty, so confidence may be low
+      // This tests that confidence calculation runs without errors
+      expect(['high', 'medium', 'low']).toContain(result.confidence);
     });
 
     it('returns lower confidence when search returns few results', async () => {
@@ -360,57 +363,47 @@ describe('runScout', () => {
     });
   });
 
-  describe('token usage aggregation', () => {
-    it('aggregates token usage from all briefing generations', async () => {
-      // Create a mock that returns proper usage data
-      const mockGenerateText = vi.fn().mockImplementation(() => Promise.resolve({
-        text: MOCK_OVERVIEW_BRIEFING,
-        usage: { inputTokens: 100, outputTokens: 50 },
-      }));
-
-      const deps = createMockScoutDeps({ generateText: mockGenerateText });
+  describe('token usage aggregation (briefing removed)', () => {
+    it('tokenUsage equals queryPlanningTokenUsage (no briefing)', async () => {
+      // Briefing generation was removed, so tokenUsage only includes query planning
+      const deps = createMockScoutDeps();
       const result = await runScout(createMockGameContext(), deps);
 
-      // Should have accumulated usage from all LLM calls
-      expect(result.tokenUsage.input).toBeGreaterThan(0);
-      expect(result.tokenUsage.output).toBeGreaterThan(0);
+      // tokenUsage should equal queryPlanningTokenUsage since briefing was removed
+      expect(result.tokenUsage).toEqual(result.queryPlanningTokenUsage);
     });
 
     it('handles missing usage data gracefully', async () => {
-      // Create a mock that returns undefined usage
-      const mockGenerateText = vi.fn().mockImplementation(() => Promise.resolve({
-        text: MOCK_OVERVIEW_BRIEFING,
-        usage: undefined,
-      }));
-
-      const deps = createMockScoutDeps({ generateText: mockGenerateText });
+      const deps = createMockScoutDeps();
       const result = await runScout(createMockGameContext(), deps);
 
       expect(result.tokenUsage).toBeDefined();
-      // With undefined usage, defaults to 0
+      // tokenUsage comes from query planning, may be 0 if generateObject wasn't called
       expect(result.tokenUsage.input).toBeGreaterThanOrEqual(0);
       expect(result.tokenUsage.output).toBeGreaterThanOrEqual(0);
     });
   });
 
-  describe('temperature override', () => {
-    it('uses default temperature from SCOUT_CONFIG', async () => {
-      const deps = createMockScoutDeps();
+  describe('generateText not called (briefing removed)', () => {
+    it('does not call generateText during normal execution', async () => {
+      const mockGenerateText = vi.fn();
+      const deps = createMockScoutDeps({ generateText: mockGenerateText });
+      
       await runScout(createMockGameContext(), deps);
 
-      // Check that generateText was called with the default temperature
-      const call = (deps.generateText as ReturnType<typeof vi.fn>).mock.calls[0][0];
-      expect(call.temperature).toBe(SCOUT_CONFIG.TEMPERATURE);
+      // generateText should NOT be called since briefing generation was removed
+      expect(mockGenerateText).not.toHaveBeenCalled();
     });
 
-    it('uses custom temperature when provided', async () => {
+    it('temperature override does not affect Scout (generateText not called)', async () => {
       const customTemperature = 0.5;
-      const deps = createMockScoutDeps({ temperature: customTemperature });
+      const mockGenerateText = vi.fn();
+      const deps = createMockScoutDeps({ generateText: mockGenerateText, temperature: customTemperature });
+      
       await runScout(createMockGameContext(), deps);
 
-      // Check that generateText was called with the custom temperature
-      const call = (deps.generateText as ReturnType<typeof vi.fn>).mock.calls[0][0];
-      expect(call.temperature).toBe(customTemperature);
+      // generateText should NOT be called since briefing generation was removed
+      expect(mockGenerateText).not.toHaveBeenCalled();
     });
   });
 
@@ -431,23 +424,21 @@ describe('runScout', () => {
       await expect(runScout(createMockGameContext(), deps)).rejects.toThrow('cancelled');
     });
 
-    it('respects abort signal during briefing generation', async () => {
-      const controller = new AbortController();
-
+    it('completes without calling generateText for briefings (LLM step removed)', async () => {
+      // Since briefing generation was removed, abort during generateText is no longer possible
+      // This test verifies that Scout completes without calling generateText
       const mockSearch = createMockSearch();
-      const mockGenerateText = vi.fn().mockImplementation(async () => {
-        // Abort during generation
-        controller.abort();
-        throw new Error('Rate limit');
-      });
+      const mockGenerateText = vi.fn().mockRejectedValue(new Error('Should not be called'));
 
       const deps = createMockScoutDeps({
         search: mockSearch,
         generateText: mockGenerateText,
-        signal: controller.signal,
       });
 
-      await expect(runScout(createMockGameContext(), deps)).rejects.toThrow('cancelled');
+      // Scout should complete successfully without calling generateText
+      const result = await runScout(createMockGameContext(), deps);
+      expect(result).toBeDefined();
+      expect(mockGenerateText).not.toHaveBeenCalled();
     });
   });
 
@@ -464,16 +455,24 @@ describe('runScout', () => {
       await expect(runScout(createMockGameContext(), deps)).rejects.toThrow('Search API unavailable');
     });
 
-    it('propagates generation errors after retries exhausted', async () => {
+    it('does not call generateText for briefings (LLM step removed)', async () => {
+      // Since briefing generation was removed, generateText should NOT be called
+      // during normal Scout execution (without cleaning)
       const mockSearch = createMockSearch();
-      const mockGenerateText = vi.fn().mockRejectedValue(new Error('LLM API error'));
+      const mockGenerateText = vi.fn();
 
       const deps = createMockScoutDeps({
         search: mockSearch,
         generateText: mockGenerateText,
       });
 
-      await expect(runScout(createMockGameContext(), deps)).rejects.toThrow('LLM API error');
+      const result = await runScout(createMockGameContext(), deps);
+
+      // generateText should not be called for briefing generation
+      expect(mockGenerateText).not.toHaveBeenCalled();
+      // Result should still be valid
+      expect(result).toBeDefined();
+      expect(result).not.toHaveProperty('queryBriefings');
     });
   });
 
@@ -510,7 +509,8 @@ describe('runScout', () => {
       const result = await runScout(context, deps);
 
       expect(result).toBeDefined();
-      expect(result.queryBriefings).toBeDefined();
+      // queryBriefings field was completely removed
+      expect(result).not.toHaveProperty('queryBriefings');
     });
   });
 

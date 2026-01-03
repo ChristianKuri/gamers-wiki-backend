@@ -45,15 +45,17 @@ const createMockScoutOutput = (): ScoutOutput => ({
     needsDiscovery: false,
     discoveryReason: 'none',
   },
-  queryBriefings: [
+  sourceSummaries: [
     {
-      query: '"Elden Ring" beginner guide',
-      engine: 'tavily',
-      purpose: 'General overview',
-      findings: 'Elden Ring is an action RPG developed by FromSoftware with open world exploration.',
+      url: 'https://ign.com',
+      title: 'IGN Review',
+      detailedSummary: 'Elden Ring is an action RPG developed by FromSoftware with open world exploration.',
       keyFacts: ['Open world', 'Challenging combat'],
-      gaps: [],
-      sourceCount: 3,
+      contentType: 'guide',
+      dataPoints: ['2022 release'],
+      query: '"Elden Ring" beginner guide',
+      qualityScore: 85,
+      relevanceScore: 90,
     },
   ],
   researchPool: {
@@ -74,6 +76,7 @@ const createMockScoutOutput = (): ScoutOutput => ({
     queryCache: new Map(),
   },
   sourceUrls: ['https://ign.com'],
+  queryPlanningTokenUsage: createEmptyTokenUsage(),
   tokenUsage: createEmptyTokenUsage(),
   confidence: 'high',
   searchApiCosts: { totalUsd: 0, exaSearchCount: 0, tavilySearchCount: 1, exaCostUsd: 0, tavilyCostUsd: 0.008, tavilyCredits: 1 },
@@ -84,7 +87,9 @@ const createMockArticlePlan = (overrides: Record<string, any> = {}) => ({
   title: 'Elden Ring: Complete Beginner Guide',
   categorySlug: 'guides',
   excerpt: 'Master the Lands Between with this comprehensive guide covering builds and exploration tips.',
+  description: 'Everything you need to know to get started in Elden Ring.',
   tags: ['beginner', 'guide', 'tips'],
+  requiredElements: ['Game basics', 'Build types', 'Exploration tips'],
   sections: [
     { headline: 'Getting Started', goal: 'Help new players', researchQueries: ['elden ring basics'], mustCover: ['Game basics'] },
     { headline: 'Character Builds', goal: 'Cover builds', researchQueries: ['elden ring builds'], mustCover: ['Build types'] },
