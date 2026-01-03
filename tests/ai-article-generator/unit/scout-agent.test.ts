@@ -574,9 +574,9 @@ describe('SCOUT_CONFIG', () => {
     expect(SCOUT_CONFIG.RECENT_SEARCH_RESULTS).toBeGreaterThanOrEqual(1);
   });
 
-  it('exports MIN_SOURCES_WARNING threshold', () => {
-    expect(SCOUT_CONFIG.MIN_SOURCES_WARNING).toBeDefined();
-    expect(typeof SCOUT_CONFIG.MIN_SOURCES_WARNING).toBe('number');
+  it('exports MIN_SOURCES_FOR_MEDIUM threshold', () => {
+    expect(SCOUT_CONFIG.MIN_SOURCES_FOR_MEDIUM).toBeDefined();
+    expect(typeof SCOUT_CONFIG.MIN_SOURCES_FOR_MEDIUM).toBe('number');
   });
 
   it('exports MIN_OVERVIEW_LENGTH threshold', () => {

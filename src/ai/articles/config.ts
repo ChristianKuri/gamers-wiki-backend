@@ -390,10 +390,12 @@ export const SCOUT_CONFIG = {
   RECENT_RESULTS_LIMIT: 5,
   /** @deprecated Use SUPPLEMENTARY_CONTENT_LENGTH instead */
   RECENT_CONTENT_LENGTH: 500,
-  /** Minimum sources before warning */
-  MIN_SOURCES_WARNING: 5,
-  /** Minimum queries before warning */
-  MIN_QUERIES_WARNING: 3,
+  /** Minimum sources for medium confidence */
+  MIN_SOURCES_FOR_MEDIUM: 5,
+  /** Minimum queries the Scout must generate */
+  MIN_QUERIES: 1,
+  /** Maximum queries the Scout can generate per article */
+  MAX_QUERIES: 4,
   /** Minimum overview length to consider valid */
   MIN_OVERVIEW_LENGTH: 50,
 } as const;

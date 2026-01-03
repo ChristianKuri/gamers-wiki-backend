@@ -28,6 +28,7 @@ import {
   type TokenUsage,
   type SearchSource,
 } from './types';
+import { SCOUT_CONFIG } from './config';
 
 // ============================================================================
 // Types
@@ -95,7 +96,7 @@ const queryPlanSchema = z.object({
     engine: z.enum(['tavily', 'exa']).describe('Which search engine to use'),
     purpose: z.string().min(10).describe('Why this query is needed for the article'),
     expectedFindings: z.array(z.string().min(5)).min(1).max(5).describe('What information this query should provide (1-5 items)'),
-  })).min(3).max(6).describe('Strategic queries to execute (3-6 queries)'),
+  })).min(SCOUT_CONFIG.MIN_QUERIES).max(SCOUT_CONFIG.MAX_QUERIES).describe(`Strategic queries to execute (${SCOUT_CONFIG.MIN_QUERIES}-${SCOUT_CONFIG.MAX_QUERIES} queries)`),
 });
 
 // ============================================================================
@@ -123,17 +124,17 @@ REASONS TO REQUEST DISCOVERY:
    - Example: A live-service game that gets frequent balance changes
    - Discovery query: "[Game] patch notes update changes 2024"
 
-4. NONE: You have sufficient knowledge to plan 6 effective queries
+4. NONE: You have sufficient knowledge to plan ${SCOUT_CONFIG.MAX_QUERIES} effective queries
    - Example: Well-known game with clear article intent
 
-Discovery is FREE - it's separate from your 6 strategic queries.
+Discovery is FREE - it's separate from your ${SCOUT_CONFIG.MAX_QUERIES} strategic queries.
 When in doubt, prefer discovery to get better context.`;
 }
 
 function buildQueryPlanSystemPrompt(): string {
   return `You are the Scout agent planning strategic research for a game article.
 
-SEARCH BUDGET: Up to 6 searches (flexible distribution between engines)
+SEARCH BUDGET: Up to ${SCOUT_CONFIG.MAX_QUERIES} searches (flexible distribution between engines)
 
 SEARCH ENGINES:
 📍 TAVILY (up to 10 results each): Keyword-based web search
@@ -256,7 +257,7 @@ function buildQueryPlanUserPrompt(
   parts.push('');
   parts.push('=== YOUR TASK ===');
   parts.push('1. Create a draft title for the article');
-  parts.push('2. Plan 3-6 strategic queries with engine selection');
+  parts.push(`2. Plan ${SCOUT_CONFIG.MIN_QUERIES}-${SCOUT_CONFIG.MAX_QUERIES} strategic queries with engine selection`);
   parts.push('3. For each query, specify expected findings');
   parts.push('');
   parts.push('Remember:');

@@ -422,13 +422,17 @@ export function calculateResearchConfidence(
   overviewLength: number
 ): ResearchConfidence {
   // Thresholds for confidence levels
-  const HIGH_SOURCE_THRESHOLD = SCOUT_CONFIG.MIN_SOURCES_WARNING * 2; // 10 sources
-  const HIGH_QUERY_THRESHOLD = SCOUT_CONFIG.MIN_QUERIES_WARNING * 2; // 6 queries
-  const HIGH_OVERVIEW_THRESHOLD = SCOUT_CONFIG.MIN_OVERVIEW_LENGTH * 4; // 200 chars
+  // Sources: HIGH = 2x medium threshold, MEDIUM = config value
+  const HIGH_SOURCE_THRESHOLD = SCOUT_CONFIG.MIN_SOURCES_FOR_MEDIUM * 2; // 10 sources
+  const MEDIUM_SOURCE_THRESHOLD = SCOUT_CONFIG.MIN_SOURCES_FOR_MEDIUM;   // 5 sources
 
-  const MEDIUM_SOURCE_THRESHOLD = SCOUT_CONFIG.MIN_SOURCES_WARNING; // 5 sources
-  const MEDIUM_QUERY_THRESHOLD = SCOUT_CONFIG.MIN_QUERIES_WARNING; // 3 queries
-  const MEDIUM_OVERVIEW_THRESHOLD = SCOUT_CONFIG.MIN_OVERVIEW_LENGTH; // 50 chars
+  // Queries: HIGH = max queries, MEDIUM = half of max
+  const HIGH_QUERY_THRESHOLD = SCOUT_CONFIG.MAX_QUERIES;                      // 4 queries
+  const MEDIUM_QUERY_THRESHOLD = Math.ceil(SCOUT_CONFIG.MAX_QUERIES / 2);     // 2 queries
+
+  // Overview: HIGH = 4x min, MEDIUM = min
+  const HIGH_OVERVIEW_THRESHOLD = SCOUT_CONFIG.MIN_OVERVIEW_LENGTH * 4; // 200 chars
+  const MEDIUM_OVERVIEW_THRESHOLD = SCOUT_CONFIG.MIN_OVERVIEW_LENGTH;   // 50 chars
 
   // Score each dimension
   let score = 0;

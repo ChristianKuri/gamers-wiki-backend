@@ -306,7 +306,7 @@ export interface PlannedQuery {
 export interface QueryPlan {
   /** Working title for the article */
   readonly draftTitle: string;
-  /** Strategic queries to execute (3-6) */
+  /** Strategic queries to execute (see SCOUT_CONFIG.MAX_QUERIES) */
   readonly queries: readonly PlannedQuery[];
 }
 
