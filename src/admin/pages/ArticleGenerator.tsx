@@ -600,7 +600,7 @@ const ArticleGenerator: React.FC = () => {
     setSearchResults([]);
     
     try {
-      const response = await fetch(`/api/game-fetcher/search?q=${encodeURIComponent(searchQuery)}&limit=10`);
+      const response = await fetch(`/api/game-fetcher/search?q=${encodeURIComponent(searchQuery)}&limit=24`);
       const data = await response.json();
       
       if (data.results) {
@@ -879,8 +879,8 @@ const ArticleGenerator: React.FC = () => {
         {/* Left Column - Wizard */}
         <Box 
           style={{ 
-            width: '400px', 
-            flexShrink: 0,
+            flex: '0 0 75%',
+            maxWidth: '75%',
             display: 'flex',
             flexDirection: 'column',
           }}
@@ -955,115 +955,406 @@ const ArticleGenerator: React.FC = () => {
                   {/* Search Results */}
                   {searchResults.length > 0 && (
                     <Box marginTop={4}>
-                      <Typography variant="sigma" textColor="neutral600" marginBottom={2}>
-                        {searchResults.length} RESULTS
-                      </Typography>
-                      <Flex direction="column" gap={2}>
+                      <Flex justifyContent="space-between" alignItems="center" marginBottom={4}>
+                        <Typography variant="sigma" textColor="neutral600">
+                          {searchResults.length} RESULTS
+                        </Typography>
+                      </Flex>
+                      <Box
+                        style={{
+                          display: 'grid',
+                          gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))',
+                          gap: '20px',
+                        }}
+                      >
                         {searchResults.map((game) => (
                           <Box
                             key={game.igdbId}
-                            padding={3}
-                            hasRadius
                             onClick={() => handleSelectGame(game)}
                             style={{
                               cursor: 'pointer',
-                              border: '1px solid #dcdce4',
-                              transition: 'all 0.15s ease',
+                              borderRadius: '16px',
+                              overflow: 'hidden',
+                              background: 'linear-gradient(145deg, #1a1a2e 0%, #16213e 50%, #0f172a 100%)',
+                              boxShadow: '0 4px 20px rgba(0, 0, 0, 0.25)',
+                              transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
+                              transform: 'translateY(0) scale(1)',
+                              position: 'relative',
                             }}
                             onMouseEnter={(e: React.MouseEvent<HTMLDivElement>) => {
-                              e.currentTarget.style.borderColor = '#4945ff';
-                              e.currentTarget.style.background = '#f0f0ff';
+                              e.currentTarget.style.transform = 'translateY(-6px) scale(1.02)';
+                              e.currentTarget.style.boxShadow = '0 16px 48px rgba(73, 69, 255, 0.4)';
                             }}
                             onMouseLeave={(e: React.MouseEvent<HTMLDivElement>) => {
-                              e.currentTarget.style.borderColor = '#dcdce4';
-                              e.currentTarget.style.background = 'transparent';
+                              e.currentTarget.style.transform = 'translateY(0) scale(1)';
+                              e.currentTarget.style.boxShadow = '0 4px 20px rgba(0, 0, 0, 0.25)';
                             }}
                           >
-                            <Flex gap={3} alignItems="center">
+                            {/* Cover Image Section - Portrait 3:4 ratio */}
+                            <Box style={{ position: 'relative', paddingTop: '133.33%' }}>
                               {game.coverUrl ? (
                                 <img
                                   src={game.coverUrl}
                                   alt={game.name}
                                   style={{
-                                    width: '36px',
-                                    height: '48px',
+                                    position: 'absolute',
+                                    top: 0,
+                                    left: 0,
+                                    width: '100%',
+                                    height: '100%',
                                     objectFit: 'cover',
-                                    borderRadius: '4px',
-                                    flexShrink: 0,
+                                    display: 'block',
                                   }}
                                 />
                               ) : (
                                 <Box
                                   style={{
-                                    width: '36px',
-                                    height: '48px',
-                                    background: '#eaeaef',
-                                    borderRadius: '4px',
-                                    flexShrink: 0,
+                                    position: 'absolute',
+                                    top: 0,
+                                    left: 0,
+                                    width: '100%',
+                                    height: '100%',
+                                    background: 'linear-gradient(135deg, #2d2d44 0%, #1a1a2e 100%)',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    justifyContent: 'center',
                                   }}
-                                />
+                                >
+                                  <Typography style={{ color: '#4a4a6a', fontSize: '48px' }}>
+                                    🎮
+                                  </Typography>
+                                </Box>
                               )}
-                              <Box style={{ minWidth: 0 }}>
-                                <Typography variant="omega" fontWeight="bold" ellipsis>
+                              {/* Gradient Overlay */}
+                              <Box
+                                style={{
+                                  position: 'absolute',
+                                  bottom: 0,
+                                  left: 0,
+                                  right: 0,
+                                  height: '50%',
+                                  background: 'linear-gradient(to top, rgba(15, 23, 42, 0.95) 0%, rgba(15, 23, 42, 0.5) 50%, transparent 100%)',
+                                  pointerEvents: 'none',
+                                }}
+                              />
+                              {/* Rating Badge */}
+                              {game.rating && game.rating > 0 && (
+                                <Box
+                                  style={{
+                                    position: 'absolute',
+                                    top: '10px',
+                                    right: '10px',
+                                    background: game.rating >= 80 
+                                      ? 'linear-gradient(135deg, #22c55e 0%, #16a34a 100%)' 
+                                      : game.rating >= 60 
+                                        ? 'linear-gradient(135deg, #eab308 0%, #ca8a04 100%)' 
+                                        : 'linear-gradient(135deg, #ef4444 0%, #dc2626 100%)',
+                                    borderRadius: '8px',
+                                    padding: '5px 8px',
+                                    fontSize: '13px',
+                                    fontWeight: '700',
+                                    color: '#fff',
+                                    boxShadow: '0 4px 12px rgba(0,0,0,0.4)',
+                                  }}
+                                >
+                                  ★ {Math.round(game.rating)}
+                                </Box>
+                              )}
+                              {/* Content overlay at bottom */}
+                              <Box
+                                style={{
+                                  position: 'absolute',
+                                  bottom: 0,
+                                  left: 0,
+                                  right: 0,
+                                  padding: '14px',
+                                }}
+                              >
+                                <Typography 
+                                  variant="delta" 
+                                  fontWeight="bold"
+                                  style={{ 
+                                    color: '#ffffff',
+                                    marginBottom: '4px',
+                                    fontSize: '15px',
+                                    lineHeight: '1.3',
+                                    display: '-webkit-box',
+                                    WebkitLineClamp: 2,
+                                    WebkitBoxOrient: 'vertical',
+                                    overflow: 'hidden',
+                                    textShadow: '0 2px 4px rgba(0,0,0,0.5)',
+                                  }}
+                                >
                                   {game.name}
                                 </Typography>
-                                <Typography variant="pi" textColor="neutral500">
-                                  {game.releaseDate ? new Date(game.releaseDate).getFullYear() : 'TBA'}
-                                  {game.platforms.length > 0 && ` · ${game.platforms.slice(0, 2).join(', ')}`}
+                                
+                                <Typography 
+                                  style={{ 
+                                    color: '#cbd5e1',
+                                    fontSize: '12px',
+                                    textShadow: '0 1px 2px rgba(0,0,0,0.5)',
+                                  }}
+                                >
+                                  {game.releaseDate ? new Date(game.releaseDate).getFullYear() : 'Coming Soon'}
                                 </Typography>
+
+                                {/* Platform Tags */}
+                                {game.platforms.length > 0 && (
+                                  <Flex gap={1} style={{ flexWrap: 'wrap', marginTop: '10px' }}>
+                                    {game.platforms.slice(0, 3).map((platform, idx) => (
+                                      <Box
+                                        key={idx}
+                                        style={{
+                                          background: 'rgba(0, 0, 0, 0.5)',
+                                          backdropFilter: 'blur(4px)',
+                                          borderRadius: '4px',
+                                          padding: '3px 6px',
+                                          fontSize: '9px',
+                                          color: '#e2e8f0',
+                                          fontWeight: '600',
+                                          textTransform: 'uppercase',
+                                          letterSpacing: '0.3px',
+                                        }}
+                                      >
+                                        {platform}
+                                      </Box>
+                                    ))}
+                                    {game.platforms.length > 3 && (
+                                      <Box
+                                        style={{
+                                          background: 'rgba(0, 0, 0, 0.4)',
+                                          borderRadius: '4px',
+                                          padding: '3px 6px',
+                                          fontSize: '9px',
+                                          color: '#94a3b8',
+                                          fontWeight: '600',
+                                        }}
+                                      >
+                                        +{game.platforms.length - 3}
+                                      </Box>
+                                    )}
+                                  </Flex>
+                                )}
                               </Box>
-                            </Flex>
+                            </Box>
                           </Box>
                         ))}
-                      </Flex>
+                      </Box>
                     </Box>
                   )}
 
                   {/* Selected Game */}
                   {selectedGame && searchResults.length === 0 && (
                     <Box marginTop={4}>
-                      <Typography variant="sigma" textColor="neutral600" marginBottom={2}>
-                        SELECTED
-                      </Typography>
+                      <Flex justifyContent="space-between" alignItems="center" marginBottom={4}>
+                        <Typography variant="sigma" textColor="neutral600">
+                          SELECTED GAME
+                        </Typography>
+                        <Box
+                          style={{
+                            background: 'linear-gradient(135deg, #22c55e 0%, #16a34a 100%)',
+                            borderRadius: '12px',
+                            padding: '6px 14px',
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '6px',
+                            boxShadow: '0 4px 12px rgba(34, 197, 94, 0.3)',
+                          }}
+                        >
+                          <Check width={14} height={14} color="#fff" />
+                          <Typography style={{ color: '#fff', fontSize: '12px', fontWeight: '600' }}>
+                            Ready to Generate
+                          </Typography>
+                        </Box>
+                      </Flex>
+                      
                       <Box
-                        padding={3}
-                        hasRadius
-                        style={{ border: '2px solid #328048', background: '#f0faf0' }}
+                        style={{
+                          borderRadius: '20px',
+                          overflow: 'hidden',
+                          background: 'linear-gradient(145deg, #0f172a 0%, #1e293b 50%, #0f172a 100%)',
+                          boxShadow: '0 12px 48px rgba(34, 197, 94, 0.25), 0 0 0 2px rgba(34, 197, 94, 0.5)',
+                          position: 'relative',
+                        }}
                       >
-                        <Flex gap={3} alignItems="center">
-                          {selectedGame.coverUrl && (
-                            <img
-                              src={selectedGame.coverUrl}
-                              alt={selectedGame.name}
+                        {/* Background Glow Effect */}
+                        <Box
+                          style={{
+                            position: 'absolute',
+                            top: 0,
+                            left: 0,
+                            right: 0,
+                            bottom: 0,
+                            background: 'radial-gradient(circle at top left, rgba(34, 197, 94, 0.15) 0%, transparent 40%)',
+                            pointerEvents: 'none',
+                          }}
+                        />
+                        
+                        <Flex style={{ position: 'relative' }}>
+                          {/* Cover Image */}
+                          <Box style={{ position: 'relative', flexShrink: 0 }}>
+                            {selectedGame.coverUrl ? (
+                              <img
+                                src={selectedGame.coverUrl}
+                                alt={selectedGame.name}
+                                style={{
+                                  width: '160px',
+                                  height: '213px',
+                                  objectFit: 'cover',
+                                  display: 'block',
+                                }}
+                              />
+                            ) : (
+                              <Box
+                                style={{
+                                  width: '160px',
+                                  height: '213px',
+                                  background: 'linear-gradient(135deg, #334155 0%, #1e293b 100%)',
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  justifyContent: 'center',
+                                }}
+                              >
+                                <Typography style={{ fontSize: '48px' }}>🎮</Typography>
+                              </Box>
+                            )}
+                            {/* Check Badge */}
+                            <Box
                               style={{
-                                width: '48px',
-                                height: '64px',
-                                objectFit: 'cover',
-                                borderRadius: '4px',
+                                position: 'absolute',
+                                top: '12px',
+                                left: '12px',
+                                width: '32px',
+                                height: '32px',
+                                borderRadius: '50%',
+                                background: 'linear-gradient(135deg, #22c55e 0%, #16a34a 100%)',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                boxShadow: '0 4px 12px rgba(34, 197, 94, 0.5)',
                               }}
-                            />
-                          )}
-                          <Box flex="1">
-                            <Typography variant="omega" fontWeight="bold">
+                            >
+                              <Check width={18} height={18} color="#fff" />
+                            </Box>
+                            {/* Rating Badge */}
+                            {selectedGame.rating && selectedGame.rating > 0 && (
+                              <Box
+                                style={{
+                                  position: 'absolute',
+                                  bottom: '12px',
+                                  right: '12px',
+                                  background: selectedGame.rating >= 80 ? 'linear-gradient(135deg, #22c55e 0%, #16a34a 100%)' : 
+                                              selectedGame.rating >= 60 ? 'linear-gradient(135deg, #eab308 0%, #ca8a04 100%)' : 
+                                              'linear-gradient(135deg, #ef4444 0%, #dc2626 100%)',
+                                  borderRadius: '8px',
+                                  padding: '6px 10px',
+                                  fontSize: '14px',
+                                  fontWeight: '700',
+                                  color: '#fff',
+                                  boxShadow: '0 4px 12px rgba(0,0,0,0.4)',
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  gap: '4px',
+                                }}
+                              >
+                                <span style={{ fontSize: '12px' }}>★</span>
+                                {Math.round(selectedGame.rating)}
+                              </Box>
+                            )}
+                          </Box>
+
+                          {/* Content */}
+                          <Box style={{ flex: 1, padding: '24px', minWidth: 0 }}>
+                            <Typography 
+                              variant="beta" 
+                              fontWeight="bold"
+                              style={{ 
+                                color: '#ffffff',
+                                marginBottom: '8px',
+                                fontSize: '22px',
+                                lineHeight: '1.3',
+                              }}
+                            >
                               {selectedGame.name}
                             </Typography>
-                            <Typography variant="pi" textColor="neutral600">
-                              {selectedGame.releaseDate
-                                ? new Date(selectedGame.releaseDate).getFullYear()
-                                : 'TBA'}
+                            
+                            <Typography 
+                              style={{ 
+                                color: '#94a3b8',
+                                fontSize: '15px',
+                                marginBottom: '16px',
+                              }}
+                            >
+                              {selectedGame.releaseDate 
+                                ? new Date(selectedGame.releaseDate).toLocaleDateString('en-US', { 
+                                    year: 'numeric', 
+                                    month: 'long',
+                                    day: 'numeric'
+                                  })
+                                : 'Release date TBA'}
                             </Typography>
+
+                            {/* Platform Tags */}
+                            {selectedGame.platforms.length > 0 && (
+                              <Flex gap={2} style={{ flexWrap: 'wrap' }}>
+                                {selectedGame.platforms.slice(0, 5).map((platform, idx) => (
+                                  <Box
+                                    key={idx}
+                                    style={{
+                                      background: 'rgba(34, 197, 94, 0.15)',
+                                      border: '1px solid rgba(34, 197, 94, 0.35)',
+                                      borderRadius: '8px',
+                                      padding: '6px 12px',
+                                      fontSize: '11px',
+                                      color: '#4ade80',
+                                      fontWeight: '600',
+                                      textTransform: 'uppercase',
+                                      letterSpacing: '0.5px',
+                                    }}
+                                  >
+                                    {platform}
+                                  </Box>
+                                ))}
+                                {selectedGame.platforms.length > 5 && (
+                                  <Box
+                                    style={{
+                                      background: 'rgba(148, 163, 184, 0.15)',
+                                      borderRadius: '8px',
+                                      padding: '6px 12px',
+                                      fontSize: '11px',
+                                      color: '#64748b',
+                                      fontWeight: '600',
+                                    }}
+                                  >
+                                    +{selectedGame.platforms.length - 5}
+                                  </Box>
+                                )}
+                              </Flex>
+                            )}
                           </Box>
-                          <Check width={20} height={20} color="#328048" />
                         </Flex>
                       </Box>
-                      <Button 
-                        variant="tertiary" 
-                        fullWidth 
-                        marginTop={3}
-                        onClick={() => setWizardStep(2)}
-                      >
-                        Continue
-                      </Button>
+                      
+                      <Flex gap={3} marginTop={5}>
+                        <Button 
+                          variant="tertiary"
+                          onClick={() => {
+                            setSelectedGame(null);
+                            setSearchQuery('');
+                          }}
+                          style={{ flex: 0 }}
+                        >
+                          Change Game
+                        </Button>
+                        <Button 
+                          flex="1"
+                          onClick={() => setWizardStep(2)}
+                          startIcon={<Check />}
+                          size="L"
+                        >
+                          Continue with this game
+                        </Button>
+                      </Flex>
                     </Box>
                   )}
                 </Box>
@@ -1079,29 +1370,94 @@ const ArticleGenerator: React.FC = () => {
 
                   {selectedGame && (
                     <Box 
-                      padding={3} 
-                      marginBottom={4} 
-                      hasRadius 
-                      background="neutral100"
+                      marginBottom={5}
+                      style={{
+                        borderRadius: '16px',
+                        overflow: 'hidden',
+                        background: 'linear-gradient(145deg, #1e293b 0%, #0f172a 100%)',
+                        border: '1px solid rgba(99, 102, 241, 0.25)',
+                        boxShadow: '0 4px 16px rgba(0, 0, 0, 0.2)',
+                      }}
                     >
-                      <Flex gap={2} alignItems="center">
-                        {selectedGame.coverUrl && (
+                      <Flex alignItems="center">
+                        {selectedGame.coverUrl ? (
                           <img
                             src={selectedGame.coverUrl}
                             alt={selectedGame.name}
-                            style={{ width: '32px', height: '42px', objectFit: 'cover', borderRadius: '4px' }}
+                            style={{ 
+                              width: '80px', 
+                              height: '107px', 
+                              objectFit: 'cover',
+                              display: 'block',
+                            }}
                           />
-                        )}
-                        <Box>
-                          <Typography variant="omega" fontWeight="bold">{selectedGame.name}</Typography>
-                          <Typography 
-                            variant="pi" 
-                            textColor="primary600" 
-                            style={{ cursor: 'pointer' }}
-                            onClick={() => setWizardStep(1)}
+                        ) : (
+                          <Box
+                            style={{
+                              width: '80px',
+                              height: '107px',
+                              background: '#334155',
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                            }}
                           >
-                            Change game
+                            <Typography style={{ fontSize: '28px' }}>🎮</Typography>
+                          </Box>
+                        )}
+                        <Box style={{ flex: 1, padding: '16px 18px', minWidth: 0 }}>
+                          <Typography 
+                            variant="delta" 
+                            fontWeight="bold"
+                            ellipsis
+                            style={{ color: '#fff', marginBottom: '4px', fontSize: '16px' }}
+                          >
+                            {selectedGame.name}
                           </Typography>
+                          <Flex alignItems="center" gap={3}>
+                            <Typography 
+                              style={{ color: '#94a3b8', fontSize: '13px' }}
+                            >
+                              {selectedGame.releaseDate 
+                                ? new Date(selectedGame.releaseDate).getFullYear() 
+                                : 'TBA'}
+                            </Typography>
+                            {selectedGame.rating && selectedGame.rating > 0 && (
+                              <Box
+                                style={{
+                                  background: selectedGame.rating >= 80 ? 'rgba(34, 197, 94, 0.2)' : 
+                                             selectedGame.rating >= 60 ? 'rgba(234, 179, 8, 0.2)' : 'rgba(239, 68, 68, 0.2)',
+                                  borderRadius: '6px',
+                                  padding: '3px 8px',
+                                  fontSize: '12px',
+                                  fontWeight: '600',
+                                  color: selectedGame.rating >= 80 ? '#4ade80' : 
+                                         selectedGame.rating >= 60 ? '#facc15' : '#f87171',
+                                }}
+                              >
+                                ★ {Math.round(selectedGame.rating)}
+                              </Box>
+                            )}
+                          </Flex>
+                        </Box>
+                        <Box
+                          onClick={() => setWizardStep(1)}
+                          style={{
+                            padding: '16px 18px',
+                            cursor: 'pointer',
+                            color: '#818cf8',
+                            fontSize: '13px',
+                            fontWeight: '600',
+                            transition: 'color 0.15s ease',
+                          }}
+                          onMouseEnter={(e: React.MouseEvent<HTMLDivElement>) => {
+                            e.currentTarget.style.color = '#a5b4fc';
+                          }}
+                          onMouseLeave={(e: React.MouseEvent<HTMLDivElement>) => {
+                            e.currentTarget.style.color = '#818cf8';
+                          }}
+                        >
+                          Change
                         </Box>
                       </Flex>
                     </Box>
@@ -1115,9 +1471,9 @@ const ArticleGenerator: React.FC = () => {
                       disabled={isGenerating}
                       style={{ minHeight: '120px' }}
                     />
-                    <Field.Hint>
+                    <Typography variant="pi" textColor="neutral500" marginTop={1}>
                       Leave empty to let AI decide the focus
-                    </Field.Hint>
+                    </Typography>
                   </Field.Root>
 
                   <Flex gap={2} marginTop={4}>
