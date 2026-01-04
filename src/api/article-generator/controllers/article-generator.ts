@@ -285,20 +285,20 @@ export default ({ strapi }: { strapi: Core.Strapi }) => ({
   /**
    * Generate a new draft Post for a game.
    * POST /api/article-generator/generate
-   * Header: x-ai-generation-secret: <AI_GENERATION_SECRET>
+   * Auth: Either x-ai-generation-secret header OR logged-in admin user
    * Body: { gameDocumentId?: string, igdbId?: number, gameQuery?: string, instruction?: string }
    *
    * NOTE: Content is always generated in English first. Spanish locale is generated after publish.
    */
   async generate(ctx: any) {
     const secret = process.env.AI_GENERATION_SECRET;
-    if (!secret) {
-      return ctx.internalServerError('AI_GENERATION_SECRET is not configured');
-    }
+    
+    // Check for either admin authentication OR valid secret
+    const isAdminAuthenticated = ctx.state?.auth?.isAuthenticated === true;
+    const hasValidSecret = secret && getSecretFromHeader(ctx) === secret;
 
-    const provided = getSecretFromHeader(ctx);
-    if (!provided || provided !== secret) {
-      return ctx.unauthorized('Invalid AI generation secret');
+    if (!isAdminAuthenticated && !hasValidSecret) {
+      return ctx.unauthorized('Unauthorized: Provide valid AI generation secret or log in as admin');
     }
 
     if (!isAIConfigured()) {

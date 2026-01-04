@@ -14,5 +14,14 @@ export default {
         policies: [],
       },
     },
+    {
+      method: 'POST',
+      path: '/article-generator/generate-sse',
+      handler: 'article-generator-sse.generateSSE',
+      config: {
+        auth: false,
+        policies: [],
+      },
+    },
   ],
 };
