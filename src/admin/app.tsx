@@ -1,5 +1,5 @@
 import type { StrapiApp } from '@strapi/strapi/admin';
-import { Download } from '@strapi/icons';
+import { Download, Feather } from '@strapi/icons';
 
 export default {
   config: {
@@ -20,6 +20,22 @@ export default {
         return component.default;
       },
       position: 5,
+      permissions: [],
+    });
+
+    // Add AI Article Generator to the main menu
+    app.addMenuLink({
+      to: 'plugins/article-generator',
+      icon: Feather,
+      intlLabel: {
+        id: 'article-generator.plugin.name',
+        defaultMessage: 'AI Article Generator',
+      },
+      Component: async () => {
+        const component = await import('./pages/ArticleGenerator');
+        return component.default;
+      },
+      position: 6,
       permissions: [],
     });
   },
