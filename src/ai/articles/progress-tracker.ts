@@ -9,6 +9,7 @@
 
 import { GENERATOR_CONFIG } from './config';
 import type { ArticleGenerationPhase, ArticleProgressCallback } from './types';
+import type { LogForwardCallback, LogLevel } from '../../utils/logger';
 
 // ============================================================================
 // Types
@@ -58,6 +59,8 @@ interface ProgressTrackerConfig {
 export class ProgressTracker {
   private readonly config: ProgressTrackerConfig;
   private currentPhase: ArticleGenerationPhase = 'scout';
+  /** Track last known progress for each phase (for log forwarding) */
+  private phaseProgress: Map<ArticleGenerationPhase, number> = new Map();
 
   constructor(
     private readonly onProgress?: ArticleProgressCallback,
@@ -80,6 +83,7 @@ export class ProgressTracker {
    */
   log(phase: ArticleGenerationPhase, progress: number, message: string, terminalOnly = false): void {
     this.currentPhase = phase;
+    this.phaseProgress.set(phase, progress);
     this.logger?.info(message);
     if (!terminalOnly) {
       this.onProgress?.(phase, progress, message);
@@ -91,6 +95,7 @@ export class ProgressTracker {
    */
   warn(phase: ArticleGenerationPhase, progress: number, message: string): void {
     this.currentPhase = phase;
+    this.phaseProgress.set(phase, progress);
     this.logger?.warn(message);
     this.onProgress?.(phase, progress, `⚠️ ${message}`);
   }
@@ -110,6 +115,7 @@ export class ProgressTracker {
    */
   startPhase(phase: ArticleGenerationPhase, message?: string): void {
     this.currentPhase = phase;
+    this.phaseProgress.set(phase, 0);
     const msg = message ?? this.getDefaultStartMessage(phase);
     this.logger?.info(msg);
     this.onProgress?.(phase, 0, msg);
@@ -123,6 +129,7 @@ export class ProgressTracker {
    */
   completePhase(phase: ArticleGenerationPhase, message: string): void {
     this.currentPhase = phase;
+    this.phaseProgress.set(phase, 100);
     this.logger?.info(message);
     this.onProgress?.(phase, 100, message);
   }
@@ -141,6 +148,7 @@ export class ProgressTracker {
     const { specialistProgressStart, specialistProgressEnd } = this.config;
     const progressRange = specialistProgressEnd - specialistProgressStart;
     const sectionProgress = Math.round(specialistProgressStart + (current / total) * progressRange);
+    this.phaseProgress.set('specialist', sectionProgress);
     const message = `Writing section ${current}/${total}: ${headline}`;
     this.logger?.info(message);
     this.onProgress?.('specialist', sectionProgress, message);
@@ -156,7 +164,50 @@ export class ProgressTracker {
    */
   report(phase: ArticleGenerationPhase, progress: number, message?: string): void {
     this.currentPhase = phase;
+    this.phaseProgress.set(phase, progress);
     this.onProgress?.(phase, progress, message);
+  }
+
+  /**
+   * Forward a log message from a sub-agent to the UI.
+   * Used by createForwardingLogger callbacks to send sub-agent logs to UI.
+   *
+   * @param phase - The phase this log belongs to
+   * @param level - Log level (info, warn, error, debug)
+   * @param message - The log message (without prefix - already logged to terminal)
+   */
+  forwardLog(phase: ArticleGenerationPhase, level: LogLevel, message: string): void {
+    // Don't forward debug logs to UI - too noisy
+    if (level === 'debug') {
+      return;
+    }
+
+    // Add warning emoji for warn level
+    const displayMessage = level === 'warn' ? `⚠️ ${message}` : message;
+    
+    // Use the last known progress for this phase (default to 50 if unknown)
+    const progress = this.phaseProgress.get(phase) ?? 50;
+    
+    this.onProgress?.(phase, progress, displayMessage);
+  }
+
+  /**
+   * Creates a LogForwardCallback that can be passed to createForwardingLogger.
+   * Logs from sub-agents will be forwarded to the UI progress display.
+   *
+   * @param phase - The phase these logs belong to (e.g., 'scout', 'editor')
+   * @returns A callback compatible with createForwardingLogger's onLog parameter
+   *
+   * @example
+   * const scoutLogger = createForwardingLogger(
+   *   '[Scout]',
+   *   progressTracker.createLogForwarder('scout')
+   * );
+   */
+  createLogForwarder(phase: ArticleGenerationPhase): LogForwardCallback {
+    return (level: LogLevel, message: string) => {
+      this.forwardLog(phase, level, message);
+    };
   }
 
   /**

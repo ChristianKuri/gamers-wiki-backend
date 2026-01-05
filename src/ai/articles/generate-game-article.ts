@@ -53,7 +53,7 @@ import { getModel } from '../config';
 import { tavilySearch } from '../tools/tavily';
 import {
   createContextualLogger,
-  createPrefixedLogger,
+  createForwardingLogger,
   generateCorrelationId,
   type ContextualLogger,
   type Logger,
@@ -547,7 +547,7 @@ async function executeScoutPhase(
         generateText: deps.generateText,
         generateObject: deps.generateObject,
         model: deps.openrouter(scoutModel),
-        logger: createPrefixedLogger('[Scout]'),
+        logger: createForwardingLogger('[Scout]', progressTracker.createLogForwarder('scout')),
         signal: basePhaseOptions.signal,
         temperature: temperatureOverrides?.scout,
         cleaningDeps,
@@ -602,7 +602,7 @@ async function executeEditorPhase(
       runEditor(context, scoutOutput, {
         generateObject: deps.generateObject,
         model: deps.openrouter(editorModel),
-        logger: createPrefixedLogger('[Editor]'),
+        logger: createForwardingLogger('[Editor]', progressTracker.createLogForwarder('editor')),
         signal: basePhaseOptions.signal,
         temperature: temperatureOverrides?.editor,
         targetWordCount,
@@ -699,7 +699,7 @@ async function executeEditorPhaseWithRetry(
           runEditor(context, scoutOutput, {
             generateObject: deps.generateObject,
             model: deps.openrouter(editorModel),
-            logger: createPrefixedLogger('[Editor]'),
+            logger: createForwardingLogger('[Editor]', progressTracker.createLogForwarder('editor')),
             signal: basePhaseOptions.signal,
             temperature: temperatureOverrides?.editor,
             targetWordCount,
@@ -827,7 +827,7 @@ async function executeSpecialistPhase(
         search: deps.search,
         generateText: deps.generateText,
         model: deps.openrouter(specialistModel),
-        logger: createPrefixedLogger('[Specialist]'),
+        logger: createForwardingLogger('[Specialist]', progressTracker.createLogForwarder('specialist')),
         parallelSections,
         signal: basePhaseOptions.signal,
         temperature: temperatureOverrides?.specialist,
@@ -1019,7 +1019,8 @@ export async function generateGameArticleDraft(
       model: openrouter(cleanerModel),
       summarizerModel: openrouter(summarizerModel),
       prefilterModel: openrouter(prefilterModel),
-      logger: createPrefixedLogger('[Cleaner]'),
+      // Forward cleaner logs to scout phase (where most cleaning happens)
+      logger: createForwardingLogger('[Cleaner]', progressTracker.createLogForwarder('scout')),
       signal,
       gameName: context.gameName,
       gameDocumentId: context.gameDocumentId,
@@ -1119,7 +1120,7 @@ export async function generateGameArticleDraft(
       generateText: resolvedDeps.generateText,
       generateObject: resolvedDeps.generateObject,
       model: resolvedDeps.openrouter(fixerModel),
-      logger: createPrefixedLogger('[Fixer]'),
+      logger: createForwardingLogger('[Fixer]', progressTracker.createLogForwarder('reviewer')),
       signal: basePhaseOptions.signal,
       temperature: FIXER_CONFIG.TEMPERATURE,
     };
@@ -1134,7 +1135,7 @@ export async function generateGameArticleDraft(
         runReviewer(currentMarkdown, plan, scoutOutput, {
           generateObject: resolvedDeps.generateObject,
           model: resolvedDeps.openrouter(reviewerModel),
-          logger: createPrefixedLogger('[Reviewer]'),
+          logger: createForwardingLogger('[Reviewer]', progressTracker.createLogForwarder('reviewer')),
           signal: basePhaseOptions.signal,
           // Don't pass temperature override - let Reviewer use its default (REVIEWER_CONFIG.TEMPERATURE)
         }),
@@ -1203,7 +1204,7 @@ export async function generateGameArticleDraft(
           runReviewer(currentMarkdown, plan, scoutOutput, {
             generateObject: resolvedDeps.generateObject,
             model: resolvedDeps.openrouter(reviewerModel),
-            logger: createPrefixedLogger('[Reviewer]'),
+            logger: createForwardingLogger('[Reviewer]', progressTracker.createLogForwarder('reviewer')),
             signal: basePhaseOptions.signal,
           }),
         { ...basePhaseOptions, modelName: reviewerModel }

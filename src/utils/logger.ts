@@ -101,6 +101,66 @@ export function createPrefixedLogger(prefix: string): Logger {
 }
 
 // ============================================================================
+// Forwarding Logger (for UI progress tracking)
+// ============================================================================
+
+/**
+ * Callback type for log forwarding.
+ * Called with log level and the full formatted message.
+ */
+export type LogForwardCallback = (level: LogLevel, message: string) => void;
+
+/**
+ * Creates a forwarding logger that logs to both terminal and a callback.
+ * Useful for sending logs to a UI progress tracker while keeping terminal output.
+ *
+ * @param prefix - The prefix to add to all log messages (e.g., '[Scout]')
+ * @param onLog - Optional callback that receives all log messages
+ * @returns A logger that forwards to both terminal and callback
+ *
+ * @example
+ * // Create forwarding logger for Scout that sends to UI
+ * const log = createForwardingLogger('[Scout]', (level, message) => {
+ *   progressTracker.log('scout', 50, message);
+ * });
+ * log.info('Found 25 sources'); // logs to terminal AND calls onLog callback
+ */
+export function createForwardingLogger(
+  prefix: string,
+  onLog?: LogForwardCallback
+): Logger {
+  const logAndForward = (level: LogLevel, message: string): void => {
+    const fullMessage = `${prefix} ${message}`;
+    
+    // Log to terminal
+    switch (level) {
+      case 'debug':
+        logger.debug(fullMessage);
+        break;
+      case 'info':
+        logger.info(fullMessage);
+        break;
+      case 'warn':
+        logger.warn(fullMessage);
+        break;
+      case 'error':
+        logger.error(fullMessage);
+        break;
+    }
+    
+    // Forward to callback (without prefix for cleaner UI display)
+    onLog?.(level, message);
+  };
+
+  return {
+    info: (message: string) => logAndForward('info', message),
+    warn: (message: string) => logAndForward('warn', message),
+    error: (message: string) => logAndForward('error', message),
+    debug: (message: string) => logAndForward('debug', message),
+  };
+}
+
+// ============================================================================
 // Structured Logger
 // ============================================================================
 

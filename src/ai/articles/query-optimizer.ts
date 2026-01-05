@@ -368,7 +368,7 @@ export async function checkDiscovery(
 ): Promise<DiscoveryCheckResult> {
   const { generateObject: generate, model, logger, signal } = deps;
 
-  logger?.debug?.(`Discovery check for "${context.gameName}"`);
+  logger?.info?.(`Evaluating if discovery research is needed for "${context.gameName}"...`);
 
   const result = await generate({
     model,
@@ -388,7 +388,7 @@ export async function checkDiscovery(
   if (discoveryCheck.needsDiscovery) {
     logger?.info?.(`Discovery needed (${discoveryCheck.discoveryReason}): "${discoveryCheck.discoveryQuery}"`);
   } else {
-    logger?.debug?.('Discovery not needed - sufficient knowledge to plan queries');
+    logger?.info?.('Discovery not needed - sufficient knowledge to plan queries');
   }
 
   return {
@@ -408,7 +408,7 @@ export async function planQueries(
 ): Promise<QueryPlanResult> {
   const { generateObject: generate, model, logger, signal } = deps;
 
-  logger?.debug?.(`Planning queries for "${context.gameName}"`);
+  logger?.info?.(`Planning ${SCOUT_CONFIG.MAX_QUERIES} strategic search queries...`);
 
   const result = await generate({
     model,
