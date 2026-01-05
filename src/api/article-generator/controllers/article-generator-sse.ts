@@ -9,6 +9,7 @@ import type { ArticleGenerationPhase, GameArticleDraft } from '../../../ai/artic
 import { slugify } from '../../../utils/slug';
 import { importOrGetGameByIgdbId, GameImportError } from '../../game-fetcher/services/import-game-programmatic';
 import { resolveIGDBGameIdFromQuery } from '../../game-fetcher/services/game-resolver';
+import { isAuthenticated } from '../utils/admin-auth';
 
 /**
  * SSE Event Types for article generation progress streaming.
@@ -295,11 +296,6 @@ const bodySchema = z.object({
 
 type GenerateBody = z.infer<typeof bodySchema>;
 
-function getSecretFromHeader(ctx: any): string | undefined {
-  const value = ctx.request?.headers?.['x-ai-generation-secret'];
-  return typeof value === 'string' ? value : undefined;
-}
-
 /**
  * Format an SSE event for streaming.
  */
@@ -311,7 +307,7 @@ export default ({ strapi }: { strapi: Core.Strapi }) => ({
   /**
    * Generate a new draft Post for a game with SSE progress streaming.
    * POST /api/article-generator/generate-sse
-   * Auth: Either x-ai-generation-secret header OR logged-in admin user
+   * Auth: Either x-ai-generation-secret header OR admin JWT token
    * Body: { gameDocumentId?: string, igdbId?: number, gameQuery?: string, instruction?: string }
    *
    * Streams SSE events:
@@ -321,15 +317,11 @@ export default ({ strapi }: { strapi: Core.Strapi }) => ({
    * - error: { code, message }
    */
   async generateSSE(ctx: any) {
-    const secret = process.env.AI_GENERATION_SECRET;
-    
-    // Check for either admin authentication OR valid secret
-    const isAdminAuthenticated = ctx.state?.auth?.isAuthenticated === true;
-    const hasValidSecret = secret && getSecretFromHeader(ctx) === secret;
-
-    if (!isAdminAuthenticated && !hasValidSecret) {
+    // Check for either admin JWT authentication OR valid secret header
+    const authenticated = isAuthenticated(strapi, ctx);
+    if (!authenticated) {
       ctx.status = 401;
-      ctx.body = { error: 'Unauthorized: Provide valid AI generation secret or log in as admin' };
+      ctx.body = { error: 'Unauthorized: Provide valid admin JWT token or AI generation secret' };
       return;
     }
 

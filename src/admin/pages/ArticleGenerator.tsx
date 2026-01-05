@@ -442,6 +442,15 @@ const ResultModal: React.FC<{
   );
 };
 
+/**
+ * Get the admin JWT token from Strapi's storage.
+ * Strapi 5 stores the token in sessionStorage with the key 'jwtToken'.
+ */
+function getAdminToken(): string | null {
+  // Try sessionStorage first (Strapi 5 default), then localStorage as fallback
+  return sessionStorage.getItem('jwtToken') || localStorage.getItem('jwtToken');
+}
+
 const ArticleGenerator: React.FC = () => {
   const [wizardStep, setWizardStep] = React.useState<WizardStep>(1);
   const [searchQuery, setSearchQuery] = React.useState('');
@@ -511,12 +520,16 @@ const ArticleGenerator: React.FC = () => {
     setResult(null);
 
     try {
+      // Get admin token for authentication
+      const adminToken = getAdminToken();
+      
       const response = await fetch('/api/article-generator/generate-sse', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
+          // Include admin JWT for authentication
+          ...(adminToken ? { 'Authorization': `Bearer ${adminToken}` } : {}),
         },
-        credentials: 'include',
         body: JSON.stringify({
           igdbId: selectedGame.igdbId,
           instruction: instruction || undefined,
