@@ -680,8 +680,23 @@ const ArticleGenerator: React.FC = () => {
 
   const canGenerate = selectedGame !== null;
 
+  // Responsive layout CSS for state-based visibility
+  const layoutStyles = `
+    @media (max-width: 1023px) {
+      .layout-config-panel.layout-generating { display: none !important; }
+      .layout-progress-panel.layout-idle { display: none !important; }
+      .layout-config-panel.layout-idle { flex: 1 1 100% !important; max-width: 100% !important; }
+      .layout-progress-panel.layout-generating { flex: 1 1 100% !important; max-width: 100% !important; }
+      .config-form-layout { flex-direction: column !important; }
+      .config-form-layout > * { flex: 1 1 auto !important; }
+      .selected-game-container { overflow: visible !important; }
+      .layout-main-container { overflow: auto !important; }
+    }
+  `;
+
   return (
     <Main style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
+      <style>{layoutStyles}</style>
       <Layouts.Header
         title="AI Article Generator"
         subtitle="Generate high-quality game articles with AI"
@@ -704,6 +719,7 @@ const ArticleGenerator: React.FC = () => {
 
       <Box
         padding={6}
+        className="layout-main-container"
         style={{
           flex: 1,
           display: 'flex',
@@ -713,11 +729,14 @@ const ArticleGenerator: React.FC = () => {
         }}
       >
         <Box
+          className={`layout-config-panel ${isGenerating ? 'layout-generating' : 'layout-idle'}`}
           style={{
-            flex: '0 0 70%',
-            maxWidth: '70%',
+            flex: isGenerating ? '0 0 25%' : '0 0 70%',
+            maxWidth: isGenerating ? '25%' : '70%',
             display: 'flex',
             flexDirection: 'column',
+            minHeight: 0,
+            transition: 'flex 0.3s ease, max-width 0.3s ease',
           }}
         >
           <Box
@@ -725,7 +744,7 @@ const ArticleGenerator: React.FC = () => {
             background="neutral0"
             hasRadius
             shadow="filterShadow"
-            style={{ height: '100%', display: 'flex', flexDirection: 'column' }}
+            style={{ height: '100%', display: 'flex', flexDirection: 'column', overflowY: 'auto' }}
           >
             {!selectedGame && (
               <>
@@ -976,6 +995,7 @@ const ArticleGenerator: React.FC = () => {
 
                 <Box
                   marginBottom={5}
+                  className="selected-game-container"
                   style={{
                     borderRadius: '16px',
                     overflow: 'hidden',
@@ -984,7 +1004,7 @@ const ArticleGenerator: React.FC = () => {
                     boxShadow: '0 4px 16px rgba(0, 0, 0, 0.2)',
                   }}
                 >
-                  <Flex alignItems="center">
+                  <Flex alignItems="center" className="selected-game-card">
                     {selectedGame.coverUrl ? (
                       <img
                         src={selectedGame.coverUrl}
@@ -994,6 +1014,7 @@ const ArticleGenerator: React.FC = () => {
                           height: '107px',
                           objectFit: 'cover',
                           display: 'block',
+                          flexShrink: 0,
                         }}
                       />
                     ) : (
@@ -1005,12 +1026,13 @@ const ArticleGenerator: React.FC = () => {
                           display: 'flex',
                           alignItems: 'center',
                           justifyContent: 'center',
+                          flexShrink: 0,
                         }}
                       >
                         <Typography style={{ fontSize: '28px' }}>🎮</Typography>
                       </Box>
                     )}
-                    <Box style={{ flex: 1, padding: '16px 18px', minWidth: 0 }}>
+                    <Box className="selected-game-info" style={{ flex: 1, padding: '16px 18px', minWidth: 0 }}>
                       <Typography
                         variant="delta"
                         fontWeight="bold"
@@ -1044,8 +1066,44 @@ const ArticleGenerator: React.FC = () => {
                           </Box>
                         )}
                       </Flex>
+                      {selectedGame.platforms.length > 0 && (
+                        <Flex gap={1} style={{ flexWrap: 'wrap', marginTop: '8px' }}>
+                          {selectedGame.platforms.slice(0, 4).map((platform, idx) => (
+                            <Box
+                              key={idx}
+                              style={{
+                                background: 'rgba(51, 65, 85, 0.8)',
+                                borderRadius: '4px',
+                                padding: '3px 6px',
+                                fontSize: '10px',
+                                color: '#cbd5e1',
+                                fontWeight: '600',
+                                textTransform: 'uppercase',
+                                letterSpacing: '0.3px',
+                              }}
+                            >
+                              {platform}
+                            </Box>
+                          ))}
+                          {selectedGame.platforms.length > 4 && (
+                            <Box
+                              style={{
+                                background: 'rgba(51, 65, 85, 0.5)',
+                                borderRadius: '4px',
+                                padding: '3px 6px',
+                                fontSize: '10px',
+                                color: '#94a3b8',
+                                fontWeight: '600',
+                              }}
+                            >
+                              +{selectedGame.platforms.length - 4}
+                            </Box>
+                          )}
+                        </Flex>
+                      )}
                     </Box>
                     <Box
+                      className="selected-game-change"
                       onClick={() => {
                         setSelectedGame(null);
                         setSearchQuery('');
@@ -1072,7 +1130,7 @@ const ArticleGenerator: React.FC = () => {
                   </Flex>
                 </Box>
 
-                <Flex gap={5} alignItems="stretch">
+                <Flex gap={5} alignItems="stretch" className="config-form-layout">
                   <Box style={{ flex: 2 }}>
                     <Typography variant="pi" textColor="neutral600" fontWeight="bold" marginBottom={2}>
                       Instructions
@@ -1082,7 +1140,7 @@ const ArticleGenerator: React.FC = () => {
                       value={instruction}
                       onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => setInstruction(e.target.value)}
                       disabled={isGenerating}
-                      style={{ minHeight: '400px' }}
+                      style={{ minHeight: '370px' }}
                     />
                     <Typography variant="pi" textColor="neutral500" marginTop={1}>
                       Optional – Leave empty to let AI decide focus
@@ -1182,12 +1240,15 @@ const ArticleGenerator: React.FC = () => {
         </Box>
 
         <Box
+          className={`layout-progress-panel ${isGenerating ? 'layout-generating' : 'layout-idle'}`}
           style={{
-            flex: 1,
+            flex: isGenerating ? '0 0 75%' : 1,
+            maxWidth: isGenerating ? '75%' : '30%',
             display: 'flex',
             flexDirection: 'column',
             minWidth: 0,
             gap: '16px',
+            transition: 'flex 0.3s ease, max-width 0.3s ease',
           }}
         >
           <Box
