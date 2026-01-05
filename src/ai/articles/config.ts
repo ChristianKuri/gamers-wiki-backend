@@ -202,14 +202,29 @@ export const ARTICLE_PLAN_CONSTRAINTS = {
   // Excerpt constraints (for SEO meta description)
   // Google typically shows 150-160 chars, but can display up to 300
   // MUST be keyword-rich, start with primary keyword, include CTA
-  EXCERPT_MIN_LENGTH: 120,
-  EXCERPT_RECOMMENDED_MAX_LENGTH: 160, // Ideal for SEO - used in prompts
-  EXCERPT_MAX_LENGTH: 200, // Hard cap for schema - allows some flexibility
+  EXCERPT_MIN_LENGTH: 100,
+  EXCERPT_MAX_LENGTH: 180,
+  // Prompt constraints: give LLM a tighter target with buffer room
+  EXCERPT_BUFFER: 20,
+  get EXCERPT_PROMPT_MIN() {
+    return this.EXCERPT_MIN_LENGTH + this.EXCERPT_BUFFER; // 100 + 20 = 120
+  },
+  get EXCERPT_PROMPT_MAX() {
+    return this.EXCERPT_MAX_LENGTH - this.EXCERPT_BUFFER; // 180 - 20 = 160
+  },
 
   // Description constraints (for UI card previews, user-facing)
   // Shorter, more casual, describes what user will learn
   DESCRIPTION_MIN_LENGTH: 80,
-  DESCRIPTION_MAX_LENGTH: 150,
+  DESCRIPTION_MAX_LENGTH: 170,
+  // Prompt constraints: give LLM a tighter target with buffer room
+  DESCRIPTION_BUFFER: 20,
+  get DESCRIPTION_PROMPT_MIN() {
+    return this.DESCRIPTION_MIN_LENGTH + this.DESCRIPTION_BUFFER; //  80 + 20 = 100
+  },
+  get DESCRIPTION_PROMPT_MAX() {
+    return this.DESCRIPTION_MAX_LENGTH - this.DESCRIPTION_BUFFER; // 170 - 20 = 150
+  },
 
   // Section constraints
   MIN_SECTIONS: 4,
@@ -507,7 +522,7 @@ export const SPECIALIST_CONFIG = {
    * Higher = more context for the Specialist to draw from, but more tokens.
    * Scout extracts up to 15 source summaries total.
    */
-  MAX_SOURCE_SUMMARIES_IN_PROMPT: 40,
+  MAX_SOURCE_SUMMARIES_IN_PROMPT: 20,
   /**
    * Number of concurrent search queries during batch research.
    * Higher values = faster research but more API pressure.

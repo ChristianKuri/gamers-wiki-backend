@@ -1,4 +1,5 @@
 import type { EditorPromptContext, EditorPrompts } from '../shared/editor';
+import { ARTICLE_PLAN_CONSTRAINTS } from '../../config';
 import { buildRequiredElementHints, SEO_TITLE_GUIDANCE, SEO_EXCERPT_DESCRIPTION_GUIDANCE } from '../shared/editor-utils';
 
 export const editorPrompts: EditorPrompts = {
@@ -219,8 +220,8 @@ OUTPUT STRUCTURE:
 {
   "title": "How to Beat Boss Name in Game Name: Complete Strategy" // 55-65 chars, descriptive, natural flow!
   "categorySlug": "guides",
-  "excerpt": "SEO meta description (120-160 chars). Start with primary keyword, be keyword-rich, end with CTA.",
-  "description": "Card preview (80-150 chars). Casual summary for users browsing the site. What will they learn?",
+  "excerpt": "SEO meta description (${ARTICLE_PLAN_CONSTRAINTS.EXCERPT_PROMPT_MIN}-${ARTICLE_PLAN_CONSTRAINTS.EXCERPT_PROMPT_MAX} chars). Start with primary keyword, be keyword-rich, end with CTA.",
+  "description": "Card preview (${ARTICLE_PLAN_CONSTRAINTS.DESCRIPTION_PROMPT_MIN}-${ARTICLE_PLAN_CONSTRAINTS.DESCRIPTION_PROMPT_MAX} chars). Casual summary for users browsing the site. What will they learn?",
   "tags": ["game-name", "topic", "key-item-or-ability"],
   "requiredElements": [
     "Item: Archaic Tunic (Great Sky Island > Pondside Cave, chest in main chamber)",

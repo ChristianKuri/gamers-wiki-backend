@@ -224,9 +224,9 @@ function validateStructureWarnings(draft: {
   }
 
   // Excerpt length recommendation (warning, not error)
-  // SEO best practice is 150-160 chars, but we allow up to 200 in schema
-  if (draft.excerpt.length > C.EXCERPT_RECOMMENDED_MAX_LENGTH) {
-    issues.push(issue('warning', `Excerpt is quite long: ${draft.excerpt.length} characters (recommended: ≤${C.EXCERPT_RECOMMENDED_MAX_LENGTH} for optimal SEO)`));
+  // LLM targets EXCERPT_PROMPT_MAX, schema allows up to EXCERPT_MAX_LENGTH
+  if (draft.excerpt.length > C.EXCERPT_PROMPT_MAX) {
+    issues.push(issue('warning', `Excerpt is quite long: ${draft.excerpt.length} characters (recommended: ≤${C.EXCERPT_PROMPT_MAX} for optimal SEO)`));
   }
 
   // Section count check (warning)

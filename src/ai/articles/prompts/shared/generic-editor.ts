@@ -1,4 +1,5 @@
 import type { EditorPromptContext, EditorPrompts } from './editor';
+import { ARTICLE_PLAN_CONSTRAINTS } from '../../config';
 import { buildRequiredElementHints, SEO_TITLE_GUIDANCE } from './editor-utils';
 
 export const genericEditorPrompts: EditorPrompts = {
@@ -51,7 +52,7 @@ ${SEO_TITLE_GUIDANCE}
 
 === STRUCTURAL REQUIREMENTS ===
 - title: SEO-optimized (50-65 chars, game name + key topic)
-- excerpt: Meta description (120-160 chars)
+- excerpt: Meta description (${ARTICLE_PLAN_CONSTRAINTS.EXCERPT_PROMPT_MIN}-${ARTICLE_PLAN_CONSTRAINTS.EXCERPT_PROMPT_MAX} chars)
 - tags: 3-8 topic tags
 - sections: Use as many sections as needed for completeness
 
