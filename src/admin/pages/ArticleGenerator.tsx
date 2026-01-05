@@ -705,6 +705,13 @@ const ArticleGenerator: React.FC = () => {
       .selected-game-container { overflow: visible !important; }
       .layout-main-container { overflow: auto !important; }
     }
+    /* When generating, use column layout (like small screens) since config panel is narrower */
+    .layout-config-panel.layout-generating .config-form-layout {
+      flex-direction: column !important;
+    }
+    .layout-config-panel.layout-generating .config-form-layout > * {
+      flex: 1 1 auto !important;
+    }
   `;
 
   return (

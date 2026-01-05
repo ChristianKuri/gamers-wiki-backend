@@ -535,8 +535,7 @@ async function executeScoutPhase(
 ): Promise<PhaseResult<ScoutOutput>> {
   const { context, deps, basePhaseOptions, log, progressTracker, phaseTimer, temperatureOverrides, cleaningDeps } = phaseContext;
 
-  log.info(`Phase 1: Scout - Deep multi-query research (model: ${scoutModel})...`);
-  progressTracker.startPhase('scout');
+  progressTracker.startPhase('scout', `Phase 1: Scout - Deep multi-query research (model: ${scoutModel})...`);
   phaseTimer.start('scout');
 
   const result = await runPhase(
@@ -552,18 +551,23 @@ async function executeScoutPhase(
         signal: basePhaseOptions.signal,
         temperature: temperatureOverrides?.scout,
         cleaningDeps,
+        onProgress: (step, current, total) => {
+          if (step === 'search') {
+            const pct = Math.round(10 + (current / total) * 80); // 10-90%
+            progressTracker.log('scout', pct, `Searching: ${current}/${total} queries completed`);
+          }
+        },
       }),
     { ...basePhaseOptions, modelName: scoutModel }
   );
 
   phaseTimer.end('scout');
-  log.info(
-    `Scout (${scoutModel}) complete in ${result.durationMs}ms: ` +
-      `${result.output.researchPool.allUrls.size} sources, ` +
-      `${result.output.researchPool.queryCache.size} unique queries, ` +
-      `confidence: ${result.output.confidence}`
+  const { researchPool } = result.output;
+  progressTracker.log('scout', 95, `Collected ${researchPool.allUrls.size} sources from ${researchPool.queryCache.size} queries`);
+  progressTracker.completePhase(
+    'scout',
+    `Scout complete in ${result.durationMs}ms: ${researchPool.allUrls.size} sources, confidence: ${result.output.confidence}`
   );
-  progressTracker.completePhase('scout', `Found ${result.output.researchPool.allUrls.size} sources`);
 
   return result;
 }
@@ -588,8 +592,7 @@ async function executeEditorPhase(
 ): Promise<EditorPhaseResult> {
   const { context, deps, basePhaseOptions, log, progressTracker, phaseTimer, temperatureOverrides, targetWordCount } = phaseContext;
 
-  log.info(`Phase 2: Editor - Planning article (model: ${editorModel})...`);
-  progressTracker.startPhase('editor');
+  progressTracker.startPhase('editor', `Phase 2: Editor - Planning article (model: ${editorModel})...`);
   phaseTimer.start('editor');
 
   const result = await runPhase(
@@ -609,19 +612,16 @@ async function executeEditorPhase(
 
   phaseTimer.end('editor');
   const { plan, tokenUsage } = result.output;
-  log.info(
-    `Editor (${editorModel}) complete in ${result.durationMs}ms: ` +
-      `${plan.categorySlug} article with ${plan.sections.length} sections`
-  );
-  progressTracker.completePhase('editor', `Planned ${plan.sections.length} sections`);
+  progressTracker.log('editor', 70, `Created ${plan.categorySlug} plan with ${plan.sections.length} sections in ${result.durationMs}ms`);
 
   // Validate plan structure before expensive Specialist phase
+  progressTracker.log('editor', 80, 'Validating article plan...');
   const planIssues = validateArticlePlan(plan);
   const planErrors = getErrors(planIssues);
   const planWarnings = getWarnings(planIssues);
 
   if (planWarnings.length > 0) {
-    log.warn(`Plan validation warnings: ${planWarnings.map((w) => w.message).join('; ')}`);
+    progressTracker.warn('editor', 90, `Plan has ${planWarnings.length} warnings: ${planWarnings.map((w) => w.message).join('; ')}`);
   }
 
   if (planErrors.length > 0) {
@@ -631,6 +631,8 @@ async function executeEditorPhase(
       `Article plan validation failed: ${planErrors.map((e) => e.message).join('; ')}`
     );
   }
+  
+  progressTracker.completePhase('editor', `Planned ${plan.sections.length} sections: ${plan.sections.map(s => s.headline).join(', ')}`);
 
   return { result, plan, tokenUsage };
 }
@@ -683,10 +685,9 @@ async function executeEditorPhaseWithRetry(
     const isRetry = attempt > 0;
 
     if (isRetry) {
-      log.warn(`Editor phase retry ${attempt}/${maxRetries} with validation feedback...`);
+      progressTracker.warn('editor', 20, `Retry ${attempt}/${maxRetries}: Regenerating plan with validation feedback`);
     } else {
-      log.info(`Phase 2: Editor - Planning article (model: ${editorModel})...`);
-      progressTracker.startPhase('editor');
+      progressTracker.startPhase('editor', `Phase 2: Editor - Planning article (model: ${editorModel})...`);
       phaseTimer.start('editor');
     }
 
@@ -713,31 +714,22 @@ async function executeEditorPhaseWithRetry(
       // Always end timer (includes retry time since timer started on first attempt)
       const editorDurationMs = phaseTimer.end('editor');
 
-      // Report progress (user-visible completion message)
-      if (!isRetry) {
-        log.info(
-          `Editor (${editorModel}) complete in ${editorDurationMs}ms: ` +
-            `${plan.categorySlug} article with ${plan.sections.length} sections`
-        );
-      } else {
-        log.info(
-          `Editor (${editorModel}) complete in ${editorDurationMs}ms after ${attempt} retry(s): ` +
-            `${plan.categorySlug} article with ${plan.sections.length} sections`
-        );
-      }
-      progressTracker.completePhase('editor', `Planned ${plan.sections.length} sections`);
+      const retryLabel = isRetry ? ` after ${attempt} retry(s)` : '';
+      progressTracker.log('editor', 70, `Created ${plan.categorySlug} plan with ${plan.sections.length} sections in ${editorDurationMs}ms${retryLabel}`);
 
       // Validate plan structure before expensive Specialist phase
+      progressTracker.log('editor', 80, 'Validating article plan...');
       const planIssues = validateArticlePlan(plan);
       const planErrors = getErrors(planIssues);
       const planWarnings = getWarnings(planIssues);
 
       if (planWarnings.length > 0) {
-        log.warn(`Plan validation warnings: ${planWarnings.map((w) => w.message).join('; ')}`);
+        progressTracker.warn('editor', 85, `Plan has ${planWarnings.length} warnings: ${planWarnings.map((w) => w.message).join('; ')}`);
       }
 
       if (planErrors.length === 0) {
         // Success! Return with retry metadata
+        progressTracker.completePhase('editor', `Planned ${plan.sections.length} sections: ${plan.sections.map(s => s.headline).join(', ')}`);
         return {
           result,
           plan,
@@ -755,7 +747,7 @@ async function executeEditorPhaseWithRetry(
         validationErrors: errorMessages,
         timestamp: new Date().toISOString(),
       });
-      log.error(`Plan validation errors (attempt ${attempt + 1}): ${errorMessages.join('; ')}`);
+      progressTracker.warn('editor', 50, `Plan validation errors (attempt ${attempt + 1}): ${errorMessages.join('; ')}`);
 
       // Prepare for retry
       lastErrors = errorMessages;
@@ -819,11 +811,10 @@ async function executeSpecialistPhase(
   const { context, deps, basePhaseOptions, log, progressTracker, phaseTimer, temperatureOverrides, cleaningDeps } = phaseContext;
 
   const modeLabel = parallelSections ? 'parallel' : 'sequential';
-  log.info(
-    `Phase 3: Specialist - Batch research + section writing in ${modeLabel} mode (model: ${specialistModel})...`
+  progressTracker.startPhase(
+    'specialist',
+    `Phase 3: Specialist - Writing ${plan.sections.length} sections in ${modeLabel} mode (~${effectiveWordCount} words)`
   );
-  log.info(`Target word count: ~${effectiveWordCount} words`);
-  progressTracker.startPhase('specialist');
   phaseTimer.start('specialist');
 
   // Note: Specialist doesn't use top-level retry because it's a long operation.
@@ -843,7 +834,7 @@ async function executeSpecialistPhase(
         targetWordCount: effectiveWordCount,
         cleaningDeps,
         onSectionProgress: (current, total, headline) => {
-          // Delegate to ProgressTracker for consistent progress calculation
+          // Delegate to ProgressTracker for consistent progress calculation (logs to both terminal and UI)
           progressTracker.reportSectionProgress(current, total, headline);
         },
       }),
@@ -851,11 +842,11 @@ async function executeSpecialistPhase(
   );
 
   phaseTimer.end('specialist');
-  log.info(
-    `Specialist (${specialistModel}) complete in ${result.durationMs}ms: ` +
-      `${countContentH2Sections(result.output.markdown)} sections written, ${result.output.sources.length} total sources`
+  const sectionsWritten = countContentH2Sections(result.output.markdown);
+  progressTracker.completePhase(
+    'specialist',
+    `Specialist complete in ${result.durationMs}ms: ${sectionsWritten} sections, ${result.output.sources.length} sources`
   );
-  progressTracker.completePhase('specialist', `Wrote ${countContentH2Sections(result.output.markdown)} sections`);
 
   return result;
 }
@@ -975,7 +966,8 @@ export async function generateGameArticleDraft(
     gameName: context.gameName,
   });
 
-  const progressTracker = new ProgressTracker(options?.onProgress);
+  // Pass logger to ProgressTracker for unified terminal+UI logging
+  const progressTracker = new ProgressTracker(options?.onProgress, undefined, log);
   const phaseTimer = new PhaseTimer(options?.clock ?? systemClock);
   const timeoutMs = options?.timeoutMs ?? GENERATOR_CONFIG.DEFAULT_TIMEOUT_MS;
   const signal = options?.signal;
@@ -1112,8 +1104,7 @@ export async function generateGameArticleDraft(
   let initialReviewerIssues: ReviewerOutput['issues'] | undefined;
 
   if (shouldRunReviewer) {
-    log.info(`Phase 4: Reviewer - Quality control check (model: ${reviewerModel})...`);
-    progressTracker.startPhase('reviewer');
+    progressTracker.startPhase('reviewer', `Phase 4: Reviewer - Quality control check (model: ${reviewerModel})...`);
     phaseTimer.start('reviewer');
 
     // Build Fixer context (used if Fixer loop is needed)
@@ -1162,10 +1153,11 @@ export async function generateGameArticleDraft(
       return `${critical} critical, ${major} major, ${minor} minor`;
     };
 
-    log.info(
-      `Reviewer (${reviewerModel}) complete in ${reviewerResult.durationMs}ms: ` +
-        `${reviewerOutput.approved ? 'APPROVED' : 'NEEDS ATTENTION'} ` +
-        `(${logIssueCounts(reviewerOutput.issues)} issues)`
+    const issueCountStr = logIssueCounts(reviewerOutput.issues);
+    progressTracker.log(
+      'reviewer',
+      30,
+      `Review complete in ${reviewerResult.durationMs}ms: ${reviewerOutput.approved ? 'APPROVED' : 'NEEDS ATTENTION'} (${issueCountStr})`
     );
 
     // ===== FIXER LOOP =====
@@ -1203,7 +1195,7 @@ export async function generateGameArticleDraft(
 
     // Helper to re-review
     const reReview = async () => {
-      log.info('Re-reviewing article after fixes...');
+      progressTracker.log('reviewer', 60, 'Re-reviewing article after fixes...');
       reviewerResult = await runPhase(
         'Reviewer',
         'VALIDATION_FAILED',
@@ -1220,9 +1212,10 @@ export async function generateGameArticleDraft(
       reviewerOutput = reviewerResult.output;
       reviewerTokenUsage = addTokenUsage(reviewerTokenUsage, reviewerOutput.tokenUsage);
 
-      log.info(
-        `Re-review complete: ${reviewerOutput.approved ? 'APPROVED' : 'NEEDS ATTENTION'} ` +
-          `(${logIssueCounts(reviewerOutput.issues)} issues)`
+      progressTracker.log(
+        'reviewer',
+        70,
+        `Re-review: ${reviewerOutput.approved ? 'APPROVED' : 'NEEDS ATTENTION'} (${logIssueCounts(reviewerOutput.issues)})`
       );
 
       // Update actionable issues
@@ -1238,18 +1231,20 @@ export async function generateGameArticleDraft(
       fixerIterations < FIXER_CONFIG.MAX_FIXER_ITERATIONS
     ) {
       fixerIterations++;
-      log.info(`Fixer iteration ${fixerIterations}/${FIXER_CONFIG.MAX_FIXER_ITERATIONS}...`);
+      progressTracker.log('reviewer', 40, `Fixer iteration ${fixerIterations}/${FIXER_CONFIG.MAX_FIXER_ITERATIONS}...`);
 
       const fixerResult = await runFixIteration(reviewerOutput.issues);
       const successfulFixes = fixerResult.fixesApplied.filter((f) => f.success).length;
-      log.info(
+      progressTracker.log(
+        'reviewer',
+        50,
         `Fixer iteration ${fixerIterations}: ${successfulFixes}/${fixerResult.fixesApplied.length} fixes applied`
       );
 
       if (successfulFixes > 0) {
         await reReview();
       } else {
-        log.warn('No fixes were successful, stopping Fixer loop');
+        progressTracker.warn('reviewer', 55, 'No fixes were successful, stopping Fixer loop');
         break;
       }
     }
@@ -1262,30 +1257,35 @@ export async function generateGameArticleDraft(
       fixerIterations < FIXER_CONFIG.MAX_CRITICAL_FIX_ITERATIONS
     ) {
       fixerIterations++;
-      log.info(
-        `Critical fix iteration ${fixerIterations}/${FIXER_CONFIG.MAX_CRITICAL_FIX_ITERATIONS} ` +
-          `(${criticalIssues.length} critical issues remaining)...`
+      progressTracker.log(
+        'reviewer',
+        75,
+        `Critical fix iteration ${fixerIterations}/${FIXER_CONFIG.MAX_CRITICAL_FIX_ITERATIONS} (${criticalIssues.length} critical remaining)`
       );
 
       const fixerResult = await runFixIteration(criticalIssues);
       const successfulFixes = fixerResult.fixesApplied.filter((f) => f.success).length;
-      log.info(
-        `Critical fix iteration ${fixerIterations}: ${successfulFixes}/${fixerResult.fixesApplied.length} fixes applied`
+      progressTracker.log(
+        'reviewer',
+        80,
+        `Critical fix ${fixerIterations}: ${successfulFixes}/${fixerResult.fixesApplied.length} fixes applied`
       );
 
       if (successfulFixes > 0) {
         await reReview();
         criticalIssues = reviewerOutput.issues.filter((i) => i.severity === 'critical');
       } else {
-        log.warn('No critical fixes were successful, stopping');
+        progressTracker.warn('reviewer', 85, 'No critical fixes were successful, stopping');
         break;
       }
     }
 
     // Final warning if critical issues remain
     if (countCritical(reviewerOutput.issues) > 0) {
-      log.warn(
-        `⚠️ ${countCritical(reviewerOutput.issues)} critical issue(s) remain after ${fixerIterations} iterations!`
+      progressTracker.warn(
+        'reviewer',
+        90,
+        `${countCritical(reviewerOutput.issues)} critical issue(s) remain after ${fixerIterations} iterations!`
       );
     }
 
@@ -1299,27 +1299,27 @@ export async function generateGameArticleDraft(
       const afterCounts = reviewerOutput
         ? `${reviewerOutput.issues.filter((i) => i.severity === 'critical').length}C/${reviewerOutput.issues.filter((i) => i.severity === 'major').length}M`
         : '?';
-      log.info(
-        `Fixer complete: ${fixerIterations} iteration(s), ${allFixesApplied.length} operations ` +
-          `(${opsSucceeded} succeeded). Issues: ${beforeCounts} → ${afterCounts} (critical/major)`
+      progressTracker.log(
+        'reviewer',
+        95,
+        `Fixer: ${fixerIterations} iterations, ${opsSucceeded}/${allFixesApplied.length} succeeded. Issues: ${beforeCounts} → ${afterCounts}`
       );
     }
 
     progressTracker.completePhase(
       'reviewer',
       reviewerOutput.approved
-        ? 'Approved'
+        ? 'Approved - article quality verified'
         : `${fixerIterations} fix iterations, ${reviewerOutput.issues.length} remaining issues`
     );
   } else {
-    log.debug('Reviewer phase skipped (not enabled for this article type)');
+    progressTracker.debug('Reviewer phase skipped (not enabled for this article type)');
     phaseTimer.start('reviewer');
     phaseTimer.end('reviewer'); // Record 0 duration
   }
 
   // ===== PHASE 5: VALIDATION =====
-  log.info('Phase 5: Validation - Checking content quality...');
-  progressTracker.startPhase('validation');
+  progressTracker.startPhase('validation', 'Phase 5: Validation - Final quality checks...');
   phaseTimer.start('validation');
 
   const draft = {
@@ -1334,6 +1334,7 @@ export async function generateGameArticleDraft(
   };
 
   // Pass gameName to enable SEO validation (game name in title, keyword density, etc.)
+  progressTracker.log('validation', 30, 'Running SEO and content validation...');
   const validationIssues = validateArticleDraft(draft, context.gameName);
   const errors = getErrors(validationIssues);
   const warnings = getWarnings(validationIssues);
@@ -1341,7 +1342,7 @@ export async function generateGameArticleDraft(
   phaseTimer.end('validation');
 
   if (warnings.length > 0) {
-    log.warn(`Article validation warnings: ${warnings.map((w) => w.message).join('; ')}`);
+    progressTracker.warn('validation', 80, `${warnings.length} warnings: ${warnings.map((w) => w.message).join('; ')}`);
   }
 
   if (errors.length > 0) {
@@ -1353,12 +1354,12 @@ export async function generateGameArticleDraft(
   }
 
   const totalDurationMs = clock.now() - totalStartTime;
-  log.info(`=== Article Generation Complete in ${totalDurationMs}ms ===`);
-  log.info(
-    `Final research pool: ${finalResearchPool.queryCache.size} total queries, ` +
-      `${finalResearchPool.allUrls.size} unique sources`
+  progressTracker.log(
+    'validation',
+    95,
+    `Research pool: ${finalResearchPool.queryCache.size} queries, ${finalResearchPool.allUrls.size} sources`
   );
-  progressTracker.completePhase('validation', 'Article validated successfully');
+  progressTracker.completePhase('validation', `Article complete in ${Math.round(totalDurationMs / 1000)}s`);
 
   // Build ScoutTokenUsage with sub-phase breakdown
   const scoutTokenUsageBreakdown: ScoutTokenUsage = {
@@ -1396,12 +1397,13 @@ export async function generateGameArticleDraft(
   const actualCostUsd = totalTokenUsage.actualCostUsd;
 
   if (actualCostUsd !== undefined) {
+    // Log cost info (terminal only - not needed in UI progress)
     log.info(`Actual LLM generation cost: $${actualCostUsd.toFixed(4)} USD (from OpenRouter)`);
   } else if (hasTokenUsage) {
     log.warn('No actual cost data from OpenRouter - cost tracking may be incomplete');
   }
 
-  // Log cleaning costs separately for visibility
+  // Log cleaning costs separately for visibility (terminal only)
   if (cleanerTokenUsage && cleanerTokenUsage.total.actualCostUsd !== undefined) {
     log.info(
       `Content cleaning cost: $${cleanerTokenUsage.total.actualCostUsd.toFixed(4)} USD ` +

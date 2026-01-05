@@ -3,6 +3,8 @@
  *
  * Centralized utility for tracking and reporting article generation progress.
  * Encapsulates progress calculation logic and provides a clean API for phases.
+ * 
+ * Supports unified logging that outputs to both terminal (via logger) and UI (via progress callback).
  */
 
 import { GENERATOR_CONFIG } from './config';
@@ -11,6 +13,16 @@ import type { ArticleGenerationPhase, ArticleProgressCallback } from './types';
 // ============================================================================
 // Types
 // ============================================================================
+
+/**
+ * Logger interface for terminal output.
+ */
+interface Logger {
+  info: (message: string) => void;
+  warn: (message: string) => void;
+  debug: (message: string) => void;
+  error: (message: string) => void;
+}
 
 /**
  * Progress tracker configuration.
@@ -30,32 +42,64 @@ interface ProgressTrackerConfig {
  * Tracks and reports progress for article generation.
  *
  * Provides a centralized way to report progress callbacks with consistent
- * percentage calculations across all phases.
+ * percentage calculations across all phases. Supports unified logging that
+ * outputs to both terminal and UI simultaneously.
  *
  * @example
- * const tracker = new ProgressTracker(onProgress);
+ * const tracker = new ProgressTracker(onProgress, config, logger);
  *
+ * // Log to both terminal and UI
+ * tracker.log('scout', 50, 'Searching for sources...');
+ *
+ * // Or use phase lifecycle methods
  * tracker.startPhase('scout');
- * // ... do work ...
  * tracker.completePhase('scout', 'Found 25 sources');
- *
- * tracker.startPhase('specialist');
- * tracker.reportSectionProgress(1, 5, 'Introduction');
- * tracker.reportSectionProgress(2, 5, 'Gameplay');
- * // ...
- * tracker.completePhase('specialist', 'Wrote 5 sections');
  */
 export class ProgressTracker {
   private readonly config: ProgressTrackerConfig;
+  private currentPhase: ArticleGenerationPhase = 'scout';
 
   constructor(
     private readonly onProgress?: ArticleProgressCallback,
-    config?: Partial<ProgressTrackerConfig>
+    config?: Partial<ProgressTrackerConfig>,
+    private readonly logger?: Logger
   ) {
     this.config = {
       specialistProgressStart: config?.specialistProgressStart ?? GENERATOR_CONFIG.SPECIALIST_PROGRESS_START,
       specialistProgressEnd: config?.specialistProgressEnd ?? GENERATOR_CONFIG.SPECIALIST_PROGRESS_END,
     };
+  }
+
+  /**
+   * Unified logging: logs to both terminal and UI progress.
+   * 
+   * @param phase - The current phase
+   * @param progress - Progress percentage (0-100)
+   * @param message - Status message (shown in both terminal and UI)
+   * @param terminalOnly - If true, only log to terminal (not UI)
+   */
+  log(phase: ArticleGenerationPhase, progress: number, message: string, terminalOnly = false): void {
+    this.currentPhase = phase;
+    this.logger?.info(message);
+    if (!terminalOnly) {
+      this.onProgress?.(phase, progress, message);
+    }
+  }
+
+  /**
+   * Log a warning to both terminal and UI.
+   */
+  warn(phase: ArticleGenerationPhase, progress: number, message: string): void {
+    this.currentPhase = phase;
+    this.logger?.warn(message);
+    this.onProgress?.(phase, progress, `⚠️ ${message}`);
+  }
+
+  /**
+   * Log debug info (terminal only, no UI).
+   */
+  debug(message: string): void {
+    this.logger?.debug(message);
   }
 
   /**
@@ -65,7 +109,10 @@ export class ProgressTracker {
    * @param message - Optional message describing what's starting
    */
   startPhase(phase: ArticleGenerationPhase, message?: string): void {
-    this.onProgress?.(phase, 0, message ?? this.getDefaultStartMessage(phase));
+    this.currentPhase = phase;
+    const msg = message ?? this.getDefaultStartMessage(phase);
+    this.logger?.info(msg);
+    this.onProgress?.(phase, 0, msg);
   }
 
   /**
@@ -75,6 +122,8 @@ export class ProgressTracker {
    * @param message - Message describing the outcome
    */
   completePhase(phase: ArticleGenerationPhase, message: string): void {
+    this.currentPhase = phase;
+    this.logger?.info(message);
     this.onProgress?.(phase, 100, message);
   }
 
@@ -92,17 +141,21 @@ export class ProgressTracker {
     const { specialistProgressStart, specialistProgressEnd } = this.config;
     const progressRange = specialistProgressEnd - specialistProgressStart;
     const sectionProgress = Math.round(specialistProgressStart + (current / total) * progressRange);
-    this.onProgress?.('specialist', sectionProgress, `Writing section ${current}/${total}: ${headline}`);
+    const message = `Writing section ${current}/${total}: ${headline}`;
+    this.logger?.info(message);
+    this.onProgress?.('specialist', sectionProgress, message);
   }
 
   /**
-   * Reports arbitrary progress within a phase.
+   * Reports arbitrary progress within a phase (UI only, no terminal log).
+   * Use `log()` instead if you want both terminal and UI output.
    *
    * @param phase - The current phase
    * @param progress - Progress percentage (0-100)
    * @param message - Optional status message
    */
   report(phase: ArticleGenerationPhase, progress: number, message?: string): void {
+    this.currentPhase = phase;
     this.onProgress?.(phase, progress, message);
   }
 
@@ -111,6 +164,20 @@ export class ProgressTracker {
    */
   get hasCallback(): boolean {
     return this.onProgress !== undefined;
+  }
+
+  /**
+   * Returns whether a logger is configured.
+   */
+  get hasLogger(): boolean {
+    return this.logger !== undefined;
+  }
+
+  /**
+   * Gets the current phase being tracked.
+   */
+  get phase(): ArticleGenerationPhase {
+    return this.currentPhase;
   }
 
   /**
@@ -124,6 +191,8 @@ export class ProgressTracker {
         return 'Planning article structure';
       case 'specialist':
         return 'Writing article sections';
+      case 'reviewer':
+        return 'Reviewing article quality';
       case 'validation':
         return 'Validating article quality';
       default:
