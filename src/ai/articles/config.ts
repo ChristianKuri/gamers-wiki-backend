@@ -247,8 +247,8 @@ export const ARTICLE_PLAN_CONSTRAINTS = {
   MIN_MARKDOWN_LENGTH: 500,
 
   // Required elements constraints
-  MIN_REQUIRED_ELEMENTS: 3,
-  MAX_REQUIRED_ELEMENTS: 50, // Increased from 10 - comprehensive guides may need more elements
+  MIN_REQUIRED_ELEMENTS: 10,
+  MAX_REQUIRED_ELEMENTS: 100, // Increased from 10 - comprehensive guides may need more elements
 } as const;
 
 // ============================================================================
