@@ -8,6 +8,7 @@ import type { GameArticleDraft } from '../../../ai/articles/types';
 import { slugify } from '../../../utils/slug';
 import { importOrGetGameByIgdbId, GameImportError } from '../../game-fetcher/services/import-game-programmatic';
 import { resolveIGDBGameIdFromQuery } from '../../game-fetcher/services/game-resolver';
+import { isAuthenticated } from '../utils/admin-auth';
 
 /**
  * Cost breakdown by phase stored in the database.
@@ -177,7 +178,8 @@ function extractStoredCosts(draft: GameArticleDraft): StoredCosts {
  */
 function extractStoredPlan(draft: GameArticleDraft): StoredPlan {
   return {
-    title: draft.plan.title,
+    // NOTE: title is now from Metadata Agent output (draft.title), not plan
+    title: draft.title,
     gameName: draft.plan.gameName,
     categorySlug: draft.plan.categorySlug,
     sections: draft.plan.sections.map(s => ({
@@ -275,30 +277,20 @@ const bodySchema = z.object({
 
 type GenerateBody = z.infer<typeof bodySchema>;
 
-function getSecretFromHeader(ctx: any): string | undefined {
-  // Koa lowercases all header keys
-  const value = ctx.request?.headers?.['x-ai-generation-secret'];
-  return typeof value === 'string' ? value : undefined;
-}
-
 export default ({ strapi }: { strapi: Core.Strapi }) => ({
   /**
    * Generate a new draft Post for a game.
    * POST /api/article-generator/generate
-   * Auth: Either x-ai-generation-secret header OR logged-in admin user
+   * Auth: Either x-ai-generation-secret header OR admin JWT token
    * Body: { gameDocumentId?: string, igdbId?: number, gameQuery?: string, instruction?: string }
    *
    * NOTE: Content is always generated in English first. Spanish locale is generated after publish.
    */
   async generate(ctx: any) {
-    const secret = process.env.AI_GENERATION_SECRET;
-    
-    // Check for either admin authentication OR valid secret
-    const isAdminAuthenticated = ctx.state?.auth?.isAuthenticated === true;
-    const hasValidSecret = secret && getSecretFromHeader(ctx) === secret;
-
-    if (!isAdminAuthenticated && !hasValidSecret) {
-      return ctx.unauthorized('Unauthorized: Provide valid AI generation secret or log in as admin');
+    // Check for either admin JWT authentication OR valid secret header
+    const authenticated = isAuthenticated(strapi, ctx);
+    if (!authenticated) {
+      return ctx.unauthorized('Unauthorized: Provide valid admin JWT token or AI generation secret');
     }
 
     if (!isAIConfigured()) {

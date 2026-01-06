@@ -58,6 +58,12 @@ const RETRYABLE_ERROR_PATTERNS = [
   /overloaded/i,
   /capacity/i,
   /temporarily/i,
+  // LLM schema/parsing errors - can succeed on retry since LLM output is non-deterministic
+  /did not match schema/i,
+  /could not parse/i,
+  /no object generated/i,
+  /failed to parse/i,
+  /invalid json/i,
 ];
 
 /**

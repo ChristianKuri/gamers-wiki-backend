@@ -1,4 +1,5 @@
 import type { ArticleCategorySlug } from '../../article-plan';
+import { ARTICLE_PLAN_CONSTRAINTS } from '../../config';
 import type { CategoryHint, ScoutOutput, SourceSummary } from '../../types';
 
 // ============================================================================ 
@@ -494,16 +495,16 @@ export const SEO_EXCERPT_DESCRIPTION_GUIDANCE = `
 
 Generate BOTH fields — they serve different audiences:
 
-**EXCERPT** (120-150 chars) — SEO meta description for Google (160 chars max)
+**EXCERPT** (${ARTICLE_PLAN_CONSTRAINTS.EXCERPT_PROMPT_MIN}-${ARTICLE_PLAN_CONSTRAINTS.EXCERPT_PROMPT_MAX} chars) — SEO meta description for Google
 - Start with primary keyword in first 40 chars
 - Professional, action-oriented, ends with CTA
 - ✅ "How to beat Simon in Clair Obscur. Three-phase guide with parry timings and one-shot Maelle strategy."
 - ❌ "This guide covers the Simon boss fight." (keyword buried, no CTA)
 
-**DESCRIPTION** (80-150 chars) — Card preview for site visitors
+**DESCRIPTION** (${ARTICLE_PLAN_CONSTRAINTS.DESCRIPTION_PROMPT_MIN}-${ARTICLE_PLAN_CONSTRAINTS.DESCRIPTION_PROMPT_MAX} chars) — Card preview for site visitors
 - Casual, benefit-focused: what will they learn?
 - ✅ "Complete Simon boss guide covering all phases, parry patterns, and the build that can one-shot him."
 - ❌ "How to beat Simon boss fight guide with strategies." (sounds like SEO spam)
 
 Write excerpt first (keyword-focused) include game name and topic (boss, item, quest, etc.), then write a human friendly description, that causes curiosity and engagement.
-` as const;
+`;

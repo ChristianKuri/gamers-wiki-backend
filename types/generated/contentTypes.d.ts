@@ -2078,7 +2078,7 @@ export interface ApiPostPost extends Struct.CollectionTypeSchema {
           localized: false;
         };
       }>;
-    aiModel: Schema.Attribute.String &
+    aiModel: Schema.Attribute.Text &
       Schema.Attribute.Private &
       Schema.Attribute.SetPluginOptions<{
         i18n: {

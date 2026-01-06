@@ -2,21 +2,18 @@ import { describe, it, expect } from 'vitest';
 
 import {
   ArticlePlanSchema,
+  ArticleMetadataSchema,
   DEFAULT_ARTICLE_SAFETY,
   normalizeArticleCategorySlug,
 } from '../../../src/ai/articles/article-plan';
 import { ARTICLE_PLAN_CONSTRAINTS } from '../../../src/ai/articles/config';
 
 describe('ArticlePlanSchema', () => {
+  // NOTE: title, excerpt, description, and tags are now in ArticleMetadataSchema
+  // This schema only validates the content structure (sections, requiredElements)
   it('accepts a valid plan shape', () => {
     const plan = ArticlePlanSchema.parse({
-      title: 'Elden Ring: Beginner Guide for the First 5 Hours',
       categorySlug: 'guide',
-      excerpt:
-        'Start strong in Elden Ring with early routes, safe upgrades, and the key mistakes most new Tarnished make—so you level faster and stay alive.',
-      description:
-        'Complete beginner guide with early routes, upgrades, and common mistakes to avoid.',
-      tags: ['beginner tips', 'early game', 'build advice'],
       sections: [
         {
           headline: 'What You Should Do First',
@@ -44,7 +41,6 @@ describe('ArticlePlanSchema', () => {
         },
       ],
       safety: {
-        noPrices: true,
         noScoresUnlessReview: true,
       },
     });
@@ -52,60 +48,55 @@ describe('ArticlePlanSchema', () => {
     expect(plan.categorySlug).toBe('guide');
     expect(plan.sections.length).toBeGreaterThanOrEqual(4);
   });
+});
 
-  describe('tag length validation', () => {
-    const validPlanBase = {
-      title: 'Test Article Title That Is Long Enough',
-      categorySlug: 'guides',
-      excerpt:
-        'Start strong in Elden Ring with early routes, safe upgrades, and the key mistakes most new Tarnished make—so you level faster and stay alive.',
-      description:
-        'Complete beginner guide with early routes, upgrades, and common mistakes to avoid.',
-      sections: [
-        { headline: 'Section 1', goal: 'Goal', researchQueries: ['query1'], mustCover: ['item1'] },
-        { headline: 'Section 2', goal: 'Goal', researchQueries: ['query2'], mustCover: ['item2'] },
-        { headline: 'Section 3', goal: 'Goal', researchQueries: ['query3'], mustCover: ['item3'] },
-        { headline: 'Section 4', goal: 'Goal', researchQueries: ['query4'], mustCover: ['item4'] },
-      ],
-      safety: { noScoresUnlessReview: true },
-    };
+describe('ArticleMetadataSchema', () => {
+  // Metadata is now generated separately by the Metadata Agent
+  const validMetadataBase = {
+    title: 'Test Article Title That Is Long Enough For SEO',
+    excerpt:
+      'Start strong in Elden Ring with early routes, safe upgrades, and the key mistakes most new Tarnished make—so you level faster and stay alive.',
+    description:
+      'Complete beginner guide with early routes, upgrades, and common mistakes to avoid.',
+  };
 
+  describe('tag validation', () => {
     it('accepts tags within max length', () => {
-      const plan = ArticlePlanSchema.parse({
-        ...validPlanBase,
+      const metadata = ArticleMetadataSchema.parse({
+        ...validMetadataBase,
         tags: ['short tag', 'another tag', 'third tag'],
       });
 
-      expect(plan.tags).toEqual(['short tag', 'another tag', 'third tag']);
+      expect(metadata.tags).toEqual(['short tag', 'another tag', 'third tag']);
     });
 
     it('accepts tag at exactly max length', () => {
       const maxLengthTag = 'a'.repeat(ARTICLE_PLAN_CONSTRAINTS.TAG_MAX_LENGTH);
-      const plan = ArticlePlanSchema.parse({
-        ...validPlanBase,
+      const metadata = ArticleMetadataSchema.parse({
+        ...validMetadataBase,
         tags: [maxLengthTag],
       });
 
-      expect(plan.tags[0]).toBe(maxLengthTag);
+      expect(metadata.tags[0]).toBe(maxLengthTag);
     });
 
     it('rejects tag exceeding max length', () => {
       const tooLongTag = 'a'.repeat(ARTICLE_PLAN_CONSTRAINTS.TAG_MAX_LENGTH + 1);
 
       expect(() =>
-        ArticlePlanSchema.parse({
-          ...validPlanBase,
+        ArticleMetadataSchema.parse({
+          ...validMetadataBase,
           tags: [tooLongTag],
         })
       ).toThrow();
     });
 
-    it('rejects plan when any tag exceeds max length', () => {
+    it('rejects metadata when any tag exceeds max length', () => {
       const tooLongTag = 'a'.repeat(ARTICLE_PLAN_CONSTRAINTS.TAG_MAX_LENGTH + 5);
 
       expect(() =>
-        ArticlePlanSchema.parse({
-          ...validPlanBase,
+        ArticleMetadataSchema.parse({
+          ...validMetadataBase,
           tags: ['valid', tooLongTag, 'also valid'],
         })
       ).toThrow();
@@ -113,8 +104,8 @@ describe('ArticlePlanSchema', () => {
 
     it('rejects whitespace-only tags', () => {
       expect(() =>
-        ArticlePlanSchema.parse({
-          ...validPlanBase,
+        ArticleMetadataSchema.parse({
+          ...validMetadataBase,
           tags: ['   '],
         })
       ).toThrow();
@@ -122,8 +113,8 @@ describe('ArticlePlanSchema', () => {
 
     it('rejects tags with only spaces and tabs', () => {
       expect(() =>
-        ArticlePlanSchema.parse({
-          ...validPlanBase,
+        ArticleMetadataSchema.parse({
+          ...validMetadataBase,
           tags: ['valid tag', '\t  \t', 'another valid'],
         })
       ).toThrow();
@@ -131,12 +122,12 @@ describe('ArticlePlanSchema', () => {
 
     it('accepts tags with leading/trailing whitespace if they have content', () => {
       // Note: regex /\S/ only requires one non-whitespace char, doesn't trim
-      const plan = ArticlePlanSchema.parse({
-        ...validPlanBase,
+      const metadata = ArticleMetadataSchema.parse({
+        ...validMetadataBase,
         tags: ['  tag with spaces  ', 'normal tag'],
       });
 
-      expect(plan.tags).toContain('  tag with spaces  ');
+      expect(metadata.tags).toContain('  tag with spaces  ');
     });
   });
 });
