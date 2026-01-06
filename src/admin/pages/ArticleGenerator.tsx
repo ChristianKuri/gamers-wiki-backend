@@ -26,7 +26,7 @@ import {
 } from '@strapi/icons';
 import { Layouts } from '@strapi/strapi/admin';
 
-type ArticleGenerationPhase = 'scout' | 'editor' | 'specialist' | 'reviewer' | 'validation';
+type ArticleGenerationPhase = 'scout' | 'editor' | 'specialist' | 'metadata' | 'reviewer' | 'validation';
 type ArticleCategorySlug = 'news' | 'reviews' | 'guides' | 'lists';
 type WizardStep = 1 | 2 | 3;
 
@@ -47,27 +47,33 @@ interface PhaseConfig {
 
 const PHASES: Record<ArticleGenerationPhase, PhaseConfig> = {
   scout: {
-    name: 'Research',
-    description: 'Gathering sources and information',
+    name: 'Scout',
+    description: 'Deep multi-query research',
     progressStart: 0,
     progressEnd: 30,
   },
   editor: {
-    name: 'Planning',
+    name: 'Editor',
     description: 'Creating article structure',
     progressStart: 30,
     progressEnd: 50,
   },
   specialist: {
-    name: 'Writing',
-    description: 'Generating article content',
+    name: 'Specialist',
+    description: 'Writing article sections',
     progressStart: 50,
-    progressEnd: 85,
+    progressEnd: 75,
+  },
+  metadata: {
+    name: 'Metadata',
+    description: 'Generating SEO title and description',
+    progressStart: 75,
+    progressEnd: 82,
   },
   reviewer: {
-    name: 'Review',
+    name: 'Reviewer',
     description: 'Quality check and fixes',
-    progressStart: 85,
+    progressStart: 82,
     progressEnd: 95,
   },
   validation: {
@@ -78,7 +84,7 @@ const PHASES: Record<ArticleGenerationPhase, PhaseConfig> = {
   },
 };
 
-const PHASE_ORDER: ArticleGenerationPhase[] = ['scout', 'editor', 'specialist', 'reviewer', 'validation'];
+const PHASE_ORDER: ArticleGenerationPhase[] = ['scout', 'editor', 'specialist', 'metadata', 'reviewer', 'validation'];
 
 interface GameSearchResult {
   igdbId: number;
@@ -181,6 +187,7 @@ function createInitialPhaseStates(): Record<ArticleGenerationPhase, PhaseState> 
     scout: { status: 'pending', progress: 0 },
     editor: { status: 'pending', progress: 0 },
     specialist: { status: 'pending', progress: 0 },
+    metadata: { status: 'pending', progress: 0 },
     reviewer: { status: 'pending', progress: 0 },
     validation: { status: 'pending', progress: 0 },
   };

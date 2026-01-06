@@ -15,7 +15,7 @@ import type { ArticleCategorySlug, ArticlePlan } from './article-plan';
  * All phases of article generation as a const array.
  * Used to derive the ArticleGenerationPhase type.
  */
-export const ARTICLE_GENERATION_PHASES = ['scout', 'editor', 'specialist', 'reviewer', 'validation'] as const;
+export const ARTICLE_GENERATION_PHASES = ['scout', 'editor', 'specialist', 'metadata', 'reviewer', 'validation'] as const;
 
 // ============================================================================
 // Error Types
@@ -526,6 +526,8 @@ export interface AggregatedTokenUsage {
   readonly scout: ScoutTokenUsage;
   readonly editor: TokenUsage;
   readonly specialist: TokenUsage;
+  /** Metadata token usage (generates title, excerpt, description, tags) */
+  readonly metadata?: TokenUsage;
   /** Reviewer token usage (may be empty if reviewer was disabled) */
   readonly reviewer?: TokenUsage;
   /** Fixer token usage (separate from reviewer for cost visibility) */
@@ -979,6 +981,8 @@ export interface GameArticleDraft {
     readonly scout: string;
     readonly editor: string;
     readonly specialist: string;
+    /** Metadata model (generates title, excerpt, description, tags) */
+    readonly metadata: string;
     /** Reviewer model (may be undefined if reviewer was disabled) */
     readonly reviewer?: string;
     /** Cleaner model (may be undefined if cleaner was disabled) */

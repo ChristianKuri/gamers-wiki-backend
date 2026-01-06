@@ -481,16 +481,27 @@ export async function runScoutQueryPlanner(
     const checkResult = await checkDiscovery(context, deps);
     discoveryCheck = checkResult.discoveryCheck;
     totalTokenUsage = addTokenUsage(totalTokenUsage, checkResult.tokenUsage);
+
+    // If discovery is needed, return early without planning queries
+    // The caller will execute discovery and call again with discoveryResult
+    if (discoveryCheck.needsDiscovery) {
+      logger?.info?.(`Discovery needed (${discoveryCheck.discoveryReason}) - deferring query planning until after discovery`);
+      return {
+        discoveryCheck,
+        queryPlan: { draftTitle: '', queries: [] }, // Empty plan - will be filled after discovery
+        tokenUsage: totalTokenUsage,
+      };
+    }
   } else {
     // Discovery was already executed, skip check
     discoveryCheck = {
       needsDiscovery: false,
       discoveryReason: 'none',
     };
-    logger?.debug?.('Discovery result provided, skipping check');
+    logger?.debug?.('Discovery result provided, planning queries with discovered context');
   }
 
-  // Phase 1: Query planning
+  // Phase 1: Query planning (only when discovery is not needed OR discovery result is provided)
   const planResult = await planQueries(context, deps, discoveryResult);
   totalTokenUsage = addTokenUsage(totalTokenUsage, planResult.tokenUsage);
 

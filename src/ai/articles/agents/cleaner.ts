@@ -343,6 +343,7 @@ export async function cleanSingleSource(
         // Full URL + content length for debugging timeouts
         context: `Cleaner [${originalLength} chars]: ${source.url}`,
         signal: deps.signal,
+        maxRetries: CLEANER_CONFIG.MAX_RETRIES,
       }
     );
     
@@ -1046,6 +1047,7 @@ export async function extractSummariesFromCleanedContent(
       {
         context: `Summary extraction: ${title.slice(0, 50)}...`,
         signal: deps.signal,
+        maxRetries: CLEANER_CONFIG.MAX_RETRIES,
       }
     );
 
@@ -1154,6 +1156,7 @@ async function cleanContentOnly(
       {
         context: `Cleaner Step1 [${source.content.length} chars]: ${source.url}`,
         signal: deps.signal,
+        maxRetries: CLEANER_CONFIG.MAX_RETRIES,
       }
     );
 
@@ -1216,6 +1219,7 @@ async function extractEnhancedSummaries(
       {
         context: `Cleaner Step2 (summarize): ${title.slice(0, 50)}...`,
         signal: deps.signal,
+        maxRetries: CLEANER_CONFIG.MAX_RETRIES,
       }
     );
 
@@ -1310,7 +1314,7 @@ export async function cleanSourceTwoStep(
     ? ` ($${totalTokenUsage.actualCostUsd.toFixed(4)})` 
     : '';
   const preservedPct = ((cleanResult.cleanedContent.length / originalLength) * 100).toFixed(0);
-  log.info(`Two-step clean complete: ${domain} - ${originalLength.toLocaleString()}→${cleanResult.cleanedContent.length.toLocaleString()}c (${preservedPct}%), Q:${cleanResult.qualityScore}, R:${cleanResult.relevanceScore}${costStr}`);
+  log.info(`Two-step clean complete: ${source.url} - ${originalLength.toLocaleString()}→${cleanResult.cleanedContent.length.toLocaleString()}c (${preservedPct}%), Q:${cleanResult.qualityScore}, R:${cleanResult.relevanceScore}${costStr}`);
 
   return {
     source: cleanedSource,

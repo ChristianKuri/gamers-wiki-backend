@@ -62,7 +62,6 @@ Key Facts: ${s.keyFacts.length > 0 ? s.keyFacts.slice(0, 10).join('; ') : '(none
     return `Write section ${ctx.sectionIndex + 1} of ${ctx.totalSections} for this article.
 
 === ARTICLE CONTEXT ===
-Title: ${plan.title}
 Category: ${plan.categorySlug}
 Game: ${gameName}
 Full Outline: ${plan.sections.map((s, idx) => `${idx + 1}. ${s.headline}`).join(', ')}

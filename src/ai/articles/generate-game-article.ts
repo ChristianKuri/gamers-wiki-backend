@@ -58,12 +58,12 @@ import {
   type ContextualLogger,
   type Logger,
 } from '../../utils/logger';
-import { runScout, runEditor, runSpecialist, runReviewer, type EditorOutput, type ReviewerOutput } from './agents';
+import { runScout, runEditor, runSpecialist, runMetadata, extractTopSources, runReviewer, type EditorOutput, type MetadataOutput, type ReviewerOutput } from './agents';
 import type { CleaningDeps } from './research-pool';
 import { getAllExcludedDomains, getAllExcludedDomainsForEngine } from './source-cache';
 import type { SpecialistOutput } from './agents/specialist';
-import type { ArticlePlan, ArticleCategorySlug } from './article-plan';
-import { GENERATOR_CONFIG, WORD_COUNT_DEFAULTS, WORD_COUNT_CONSTRAINTS, REVIEWER_CONFIG, FIXER_CONFIG } from './config';
+import type { ArticlePlan, ArticleCategorySlug, ArticleMetadata } from './article-plan';
+import { GENERATOR_CONFIG, WORD_COUNT_DEFAULTS, WORD_COUNT_CONSTRAINTS, METADATA_CONFIG, REVIEWER_CONFIG, FIXER_CONFIG } from './config';
 import { runFixer, type FixerContext, type FixerDeps } from './fixer';
 import { countContentH2Sections } from './markdown-utils';
 import { withRetry } from './retry';
@@ -954,6 +954,7 @@ export async function generateGameArticleDraft(
   const scoutModel = getModel('ARTICLE_SCOUT');
   const editorModel = getModel('ARTICLE_EDITOR');
   const specialistModel = getModel('ARTICLE_SPECIALIST');
+  const metadataModel = getModel('ARTICLE_METADATA');
   const fixerModel = getModel('ARTICLE_FIXER');
   const cleanerModel = getModel('ARTICLE_CLEANER');
   const summarizerModel = getModel('ARTICLE_SUMMARIZER');
@@ -1079,6 +1080,44 @@ export async function generateGameArticleDraft(
   let currentMarkdown = specialistResult.output.markdown;
   const { sources, researchPool: finalResearchPool, tokenUsage: specialistTokenUsage, sourceUsage: specialistSourceUsage } = specialistResult.output;
 
+  // ===== PHASE 4: METADATA =====
+  // Generate SEO-optimized metadata now that the article is written
+  progressTracker.startPhase('metadata', `Phase 4: Metadata - Generating SEO-optimized metadata (model: ${metadataModel})...`);
+  phaseTimer.start('metadata');
+
+  // Extract top sources for game context (sorted by quality)
+  const topSources = extractTopSources(scoutOutput.sourceSummaries, METADATA_CONFIG.TOP_SOURCES_COUNT);
+
+  const metadataResult = await runPhase(
+    'Metadata',
+    'VALIDATION_FAILED',
+    () =>
+      runMetadata(
+        {
+          articleMarkdown: currentMarkdown,
+          gameName: context.gameName,
+          instruction: context.instruction,
+          categorySlug: plan.categorySlug,
+          topSources,
+        },
+        {
+          generateObject: resolvedDeps.generateObject,
+          model: resolvedDeps.openrouter(metadataModel),
+          logger: createForwardingLogger('[Metadata]', progressTracker.createLogForwarder('metadata')),
+          signal: basePhaseOptions.signal,
+        }
+      ),
+    { ...basePhaseOptions, modelName: metadataModel }
+  );
+
+  phaseTimer.end('metadata');
+  const { metadata: articleMetadata, tokenUsage: metadataTokenUsage } = metadataResult.output;
+  progressTracker.log('metadata', 90, `Generated title: "${articleMetadata.title}" (${articleMetadata.title.length} chars)`);
+  progressTracker.completePhase('metadata', `Metadata complete: ${articleMetadata.tags.length} tags, ${articleMetadata.excerpt.length} char excerpt`);
+
+  // Prepend H1 title to markdown now that we have the SEO-optimized title
+  currentMarkdown = `# ${articleMetadata.title}\n\n${currentMarkdown}`;
+
   // Recovery tracking
   const allFixesApplied: FixApplied[] = [];
   let fixerIterations = 0;
@@ -1089,7 +1128,7 @@ export async function generateGameArticleDraft(
   let originalMarkdownBeforeFixer: string | undefined;
   const markdownHistory: string[] = [];
 
-  // ===== PHASE 4: REVIEWER + FIXER LOOP =====
+  // ===== PHASE 5: REVIEWER + FIXER LOOP =====
   // Determine if reviewer should run:
   // 1. If enableReviewer is explicitly set, use that value (takes precedence)
   // 2. Otherwise, use default from REVIEWER_CONFIG.ENABLED_BY_CATEGORY based on article category
@@ -1105,7 +1144,7 @@ export async function generateGameArticleDraft(
   let initialReviewerIssues: ReviewerOutput['issues'] | undefined;
 
   if (shouldRunReviewer) {
-    progressTracker.startPhase('reviewer', `Phase 4: Reviewer - Quality control check (model: ${reviewerModel})...`);
+    progressTracker.startPhase('reviewer', `Phase 5: Reviewer - Quality control check (model: ${reviewerModel})...`);
     phaseTimer.start('reviewer');
 
     // Build Fixer context (used if Fixer loop is needed)
@@ -1319,16 +1358,16 @@ export async function generateGameArticleDraft(
     phaseTimer.end('reviewer'); // Record 0 duration
   }
 
-  // ===== PHASE 5: VALIDATION =====
-  progressTracker.startPhase('validation', 'Phase 5: Validation - Final quality checks...');
+  // ===== PHASE 6: VALIDATION =====
+  progressTracker.startPhase('validation', 'Phase 6: Validation - Final quality checks...');
   phaseTimer.start('validation');
 
   const draft = {
-    title: plan.title,
+    title: articleMetadata.title,
     categorySlug: plan.categorySlug,
-    excerpt: plan.excerpt,
-    description: plan.description,
-    tags: plan.tags,
+    excerpt: articleMetadata.excerpt,
+    description: articleMetadata.description,
+    tags: articleMetadata.tags,
     markdown: currentMarkdown,
     sources,
     plan,
@@ -1371,8 +1410,11 @@ export async function generateGameArticleDraft(
   
   // Aggregate token usage from all phases
   let totalTokenUsage = addTokenUsage(
-    addTokenUsage(scoutOutput.tokenUsage, editorTotalTokenUsage),
-    specialistTokenUsage
+    addTokenUsage(
+      addTokenUsage(scoutOutput.tokenUsage, editorTotalTokenUsage),
+      specialistTokenUsage
+    ),
+    metadataTokenUsage
   );
 
   // Add reviewer token usage if available (excludes Fixer - now tracked separately)
@@ -1418,6 +1460,7 @@ export async function generateGameArticleDraft(
         scout: scoutTokenUsageBreakdown,
         editor: editorTotalTokenUsage,
         specialist: specialistTokenUsage,
+        metadata: metadataTokenUsage,
         ...(shouldRunReviewer ? { reviewer: reviewerTokenUsage } : {}),
         // Fixer tracked separately from reviewer for cost visibility
         ...(fixerTokenUsage.input > 0 || fixerTokenUsage.output > 0
@@ -1555,6 +1598,7 @@ export async function generateGameArticleDraft(
       scout: scoutModel,
       editor: editorModel,
       specialist: specialistModel,
+      metadata: metadataModel,
       ...(shouldRunReviewer ? { reviewer: reviewerModel } : {}),
       ...(cleaningDeps ? { cleaner: cleanerModel, summarizer: summarizerModel } : {}),
     },

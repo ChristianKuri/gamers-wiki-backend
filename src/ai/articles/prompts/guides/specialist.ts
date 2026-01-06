@@ -357,7 +357,7 @@ ${otherSectionsCoverage}
 
     return `Write section ${ctx.sectionIndex + 1} of ${ctx.totalSections} for a guide about ${gameName}.
 
-ARTICLE: ${plan.title}
+ARTICLE: ${gameName} ${plan.categorySlug}
 
 ${sectionScope}
 

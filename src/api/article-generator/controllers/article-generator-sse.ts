@@ -214,7 +214,8 @@ function extractStoredCosts(draft: GameArticleDraft): StoredCosts {
 
 function extractStoredPlan(draft: GameArticleDraft): StoredPlan {
   return {
-    title: draft.plan.title,
+    // NOTE: title is now from Metadata Agent output (draft.title), not plan
+    title: draft.title,
     gameName: draft.plan.gameName,
     categorySlug: draft.plan.categorySlug,
     sections: draft.plan.sections.map(s => ({

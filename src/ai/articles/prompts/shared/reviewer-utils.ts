@@ -1,11 +1,9 @@
-import type { ArticleCategorySlug, ArticlePlan } from '../../article-plan';
+import type { ArticleCategorySlug } from '../../article-plan';
 import type { SourceSummary } from '../../types';
+import type { ReviewerPromptContext as BaseReviewerPromptContext } from './reviewer';
 
-export interface ReviewerPromptContext {
-  readonly plan: ArticlePlan;
-  readonly markdown: string;
-  readonly researchSummary: string;
-  readonly categorySlug: ArticleCategorySlug;
+// Re-export base type and extend with sourceSummaries
+export interface ReviewerPromptContext extends BaseReviewerPromptContext {
   /**
    * Detailed per-source summaries from Scout.
    * Contains specific facts for verification.

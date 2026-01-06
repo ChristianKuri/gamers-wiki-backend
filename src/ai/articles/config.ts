@@ -193,11 +193,12 @@ function validateTemperature(value: number, name: string): void {
  */
 export const ARTICLE_PLAN_CONSTRAINTS = {
   // Title constraints - optimized for SEO visibility
-  // Google truncates at ~60 chars, so we target 50-65 for full visibility
+  // Google truncates at ~60 chars in search results, but displays full title in browser tab
+  // We use 80 chars max to allow for longer game names while still being SEO-friendly
   TITLE_MIN_LENGTH: 30,
-  TITLE_MAX_LENGTH: 65,
-  /** @deprecated Use TITLE_MAX_LENGTH (65) - this was too generous for SEO */
-  TITLE_RECOMMENDED_MAX_LENGTH: 65,
+  TITLE_MAX_LENGTH: 80,
+  /** @deprecated Use TITLE_MAX_LENGTH */
+  TITLE_RECOMMENDED_MAX_LENGTH: 80,
 
   // Excerpt constraints (for SEO meta description)
   // Google typically shows 150-160 chars, but can display up to 300
@@ -436,6 +437,31 @@ export const EDITOR_CONFIG = {
    * 30 seconds should be plenty for plan generation.
    */
   TIMEOUT_MS: 30000,
+} as const;
+
+// ============================================================================
+// Metadata Agent Configuration
+// ============================================================================
+
+export const METADATA_CONFIG = {
+  /**
+   * Temperature for Metadata LLM calls.
+   *
+   * Set moderate (0.4) because Metadata needs some creativity for compelling
+   * titles and descriptions, but must stay grounded in the article content.
+   * Too low = boring/generic metadata. Too high = inaccurate or clickbait.
+   */
+  TEMPERATURE: 0.4,
+  /**
+   * Timeout for Metadata generateObject calls in milliseconds.
+   * 30 seconds (same as Editor) to allow for processing article content.
+   */
+  TIMEOUT_MS: 30000,
+  /**
+   * Number of top sources to include for game context.
+   * These help the agent understand the game without reading all research.
+   */
+  TOP_SOURCES_COUNT: 3,
 } as const;
 
 // ============================================================================
@@ -678,6 +704,13 @@ export const CLEANER_CONFIG = {
    * Two-step does 2 LLM calls: clean (large input) + summarize (large output).
    */
   TIMEOUT_MS: 180000,
+  /**
+   * Maximum retry attempts for cleaner LLM calls.
+   * Set to 0 (no retries) because cleaner failures are usually due to
+   * large/complex content that will fail again on retry. Retrying just
+   * wastes time (3+ min per retry with 180s timeout).
+   */
+  MAX_RETRIES: 0,
   /**
    * Minimum content length (chars) to attempt cleaning.
    * Content below this is likely a scrape failure (JS-heavy site, paywall, etc.)
@@ -959,6 +992,7 @@ export function getModelPricing(modelName: string): ModelPricing {
 export const CONFIG = {
   scout: SCOUT_CONFIG,
   editor: EDITOR_CONFIG,
+  metadata: METADATA_CONFIG,
   specialist: SPECIALIST_CONFIG,
   reviewer: REVIEWER_CONFIG,
   fixer: FIXER_CONFIG,
@@ -1027,6 +1061,11 @@ function validateConfiguration(): void {
   validateTemperature(EDITOR_CONFIG.TEMPERATURE, 'EDITOR_CONFIG.TEMPERATURE');
   validatePositive(EDITOR_CONFIG.OVERVIEW_LINES_IN_PROMPT, 'EDITOR_CONFIG.OVERVIEW_LINES_IN_PROMPT');
 
+  // Metadata Config
+  validateTemperature(METADATA_CONFIG.TEMPERATURE, 'METADATA_CONFIG.TEMPERATURE');
+  validatePositive(METADATA_CONFIG.TIMEOUT_MS, 'METADATA_CONFIG.TIMEOUT_MS');
+  validatePositive(METADATA_CONFIG.TOP_SOURCES_COUNT, 'METADATA_CONFIG.TOP_SOURCES_COUNT');
+
   // Specialist Config
   validateTemperature(SPECIALIST_CONFIG.TEMPERATURE, 'SPECIALIST_CONFIG.TEMPERATURE');
   validatePositive(SPECIALIST_CONFIG.SNIPPET_LENGTH, 'SPECIALIST_CONFIG.SNIPPET_LENGTH');
@@ -1055,6 +1094,7 @@ function validateConfiguration(): void {
   validatePositive(CLEANER_CONFIG.MAX_OUTPUT_TOKENS, 'CLEANER_CONFIG.MAX_OUTPUT_TOKENS');
   validatePositive(CLEANER_CONFIG.BATCH_SIZE, 'CLEANER_CONFIG.BATCH_SIZE');
   validatePositive(CLEANER_CONFIG.TIMEOUT_MS, 'CLEANER_CONFIG.TIMEOUT_MS');
+  validateNonNegative(CLEANER_CONFIG.MAX_RETRIES, 'CLEANER_CONFIG.MAX_RETRIES');
   validateNonNegative(CLEANER_CONFIG.MIN_QUALITY_FOR_STORAGE, 'CLEANER_CONFIG.MIN_QUALITY_FOR_STORAGE');
   validateNonNegative(CLEANER_CONFIG.MIN_QUALITY_FOR_RESULTS, 'CLEANER_CONFIG.MIN_QUALITY_FOR_RESULTS');
   validateNonNegative(CLEANER_CONFIG.MIN_RELEVANCE_FOR_RESULTS, 'CLEANER_CONFIG.MIN_RELEVANCE_FOR_RESULTS');

@@ -5,6 +5,7 @@
  * - Scout: Gathers research from multiple sources
  * - Editor: Plans article structure and assigns research queries
  * - Specialist: Writes article sections based on research and plan
+ * - Metadata: Generates SEO-optimized metadata after article is written
  * - Reviewer: Quality control and validation
  * - Cleaner: Cleans raw web content and rates quality
  *
@@ -29,6 +30,14 @@ export {
 export { runEditor, EDITOR_CONFIG, type EditorDeps, type EditorOutput } from './editor';
 export { runSpecialist, SPECIALIST_CONFIG, type SpecialistDeps, type SpecialistOutput } from './specialist';
 export {
+  runMetadata,
+  extractTopSources,
+  METADATA_CONFIG,
+  type MetadataDeps,
+  type MetadataContext,
+  type MetadataOutput,
+} from './metadata';
+export {
   runReviewer,
   REVIEWER_CONFIG,
   countIssuesBySeverity,
@@ -49,4 +58,3 @@ export {
   type CleanerDeps,
   type CleanSourcesBatchResult,
 } from './cleaner';
-

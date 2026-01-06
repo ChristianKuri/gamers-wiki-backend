@@ -913,7 +913,9 @@ export async function runSpecialist(
   }
 
   // ===== ASSEMBLE MARKDOWN =====
-  let markdown = `# ${plan.title}\n\n`;
+  // NOTE: H1 title is NOT included here - it's added later by generate-game-article.ts
+  // after the Metadata Agent generates the SEO-optimized title.
+  let markdown = '';
   for (let i = 0; i < plan.sections.length; i++) {
     const section = plan.sections[i];
     const sectionText = sectionTexts[i];

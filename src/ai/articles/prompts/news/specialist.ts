@@ -61,7 +61,6 @@ Key Facts: ${s.keyFacts.length > 0 ? s.keyFacts.slice(0, 10).join('; ') : '(none
     return `Write section ${ctx.sectionIndex + 1}/${ctx.totalSections} for a NEWS article.
 
 === ARTICLE CONTEXT ===
-Title: ${plan.title}
 Game: ${gameName}
 Full Outline: ${plan.sections.map((s, idx) => `${idx + 1}. ${s.headline}`).join(', ')}
 

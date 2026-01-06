@@ -1,6 +1,5 @@
 import type { EditorPromptContext, EditorPrompts } from '../shared/editor';
-import { ARTICLE_PLAN_CONSTRAINTS } from '../../config';
-import { buildRequiredElementHints, SEO_TITLE_GUIDANCE, SEO_EXCERPT_DESCRIPTION_GUIDANCE } from '../shared/editor-utils';
+import { buildRequiredElementHints } from '../shared/editor-utils';
 
 export const editorPrompts: EditorPrompts = {
   getSystemPrompt(localeInstruction: string): string {
@@ -64,12 +63,10 @@ ${localeInstruction}`;
       ? `\n=== ⚠️ VALIDATION FEEDBACK (FIX THESE) ===\n${ctx.validationFeedback.map((msg, i) => `${i + 1}. ${msg}`).join('\n')}\n`
       : '';
 
-
-    const titleHint = `\nSuggested title from Scout (STARTING POINT ONLY): "${ctx.draftTitle}"\n`;
     const researchSection = `=== SOURCE SUMMARIES (Top Sources by Quality) ===\n${ctx.sourceSummariesSection}`;
 
     return `Create a COMPLETE guide plan for "${ctx.gameName}".
-${validationFeedbackSection}${titleHint}
+${validationFeedbackSection}
 === USER REQUEST ===
 ${ctx.instruction?.trim() || 'Create a comprehensive guide'}
 
@@ -210,19 +207,13 @@ VERIFICATION CHECKLIST:
 □ No section has 0 mustCover items
 □ All controls use [X] bracket format with action verbs
 □ All locations have Parent > Child hierarchy
-□ Title is 55-65 characters and SEO-optimized (see guidance below)
 
-${SEO_TITLE_GUIDANCE}
-
-${SEO_EXCERPT_DESCRIPTION_GUIDANCE}
+NOTE: You do NOT need to generate title, excerpt, description, or tags.
+Those are generated separately by the Metadata Agent after the article is written.
 
 OUTPUT STRUCTURE:
 {
-  "title": "How to Beat Boss Name in Game Name: Complete Strategy" // 55-65 chars, descriptive, natural flow!
   "categorySlug": "guides",
-  "excerpt": "SEO meta description (${ARTICLE_PLAN_CONSTRAINTS.EXCERPT_PROMPT_MIN}-${ARTICLE_PLAN_CONSTRAINTS.EXCERPT_PROMPT_MAX} chars). Start with primary keyword, be keyword-rich, end with CTA.",
-  "description": "Card preview (${ARTICLE_PLAN_CONSTRAINTS.DESCRIPTION_PROMPT_MIN}-${ARTICLE_PLAN_CONSTRAINTS.DESCRIPTION_PROMPT_MAX} chars). Casual summary for users browsing the site. What will they learn?",
-  "tags": ["game-name", "topic", "key-item-or-ability"],
   "requiredElements": [
     "Item: Archaic Tunic (Great Sky Island > Pondside Cave, chest in main chamber)",
     "Item: Archaic Legwear (Great Sky Island > Room of Awakening, chest near exit)",
