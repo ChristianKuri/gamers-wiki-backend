@@ -82,6 +82,8 @@ ${ctx.topSourcesSummary ? `\n${ctx.topSourcesSummary}\n` : ''}
 You have detailed summaries, key facts, and data points from the best sources.
 Mine them COMPLETELY. Every fact, number, name, mechanic, and strategy becomes a requiredElement.
 Don't stop at 20-30 — comprehensive guides typically have 40-60+ requiredElements.
+requiredElements are the core of our guide. If you miss something, the guide will be incomplete, dont miss anything,
+make sure to include everything you can find in the research, its better to have more than less.
 
 Scan ALL research above (briefings, detailed summaries, top sources) and identify EVERY:
 
@@ -116,11 +118,18 @@ Scan ALL research above (briefings, detailed summaries, top sources) and identif
 □ REWARDS: What you get for completing/defeating this
   → For each: Item name? Stats? Rarity? Who can use it?
 
-📊 requiredElements SANITY CHECK (if you have fewer, you likely missed something):
-• Boss guide (multi-phase): expect 35-50+ (phases, mechanics, counters, setup, rewards)
-• Build/loadout guide: expect 25-40 (gear, skills, stats, synergies)
-• Area exploration: expect 20-35 (locations, items, NPCs, secrets)
-• Simple mechanic tip: expect 15-25 (core mechanic + variations)
+□ TIPS: Tips and tricks, shortcuts, hidden mechanics, secrets, etc.
+  → For each: What's the tip? WHO can use it? WHAT's the sequence?
+  → Don't miss: hidden mechanics, secrets, shortcuts, tips, tricks, etc.
+
+IMPORTANT: But dont limit yourself to this list, if you find something else that is useful, include it.
+
+
+📊 HIGHLY IMPORTANT: requiredElements SANITY CHECK (if you have fewer, you likely missed something):
+• Boss guide (multi-phase): AT LEAST expect 35-50+ (phases, mechanics, counters, setup, rewards)
+• Build/loadout guide: AT LEAST expect 25-40 (gear, skills, stats, synergies)
+• Area exploration: AT LEAST expect 20-35 (locations, items, NPCs, secrets)
+• Simple mechanic tip: AT LEAST expect 15-25 (core mechanic + variations)
 
 ⚠️ These are MINIMUMS based on typical content depth, not quotas!
 The goal is COMPLETE extraction. If research contains 60 unique facts, include 60.
