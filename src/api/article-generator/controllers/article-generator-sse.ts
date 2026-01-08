@@ -556,6 +556,11 @@ export default ({ strapi }: { strapi: Core.Strapi }) => ({
           category: { connect: [categoryMatch.documentId] } as any,
           games: { connect: [game.documentId] } as any,
           author: { connect: [author.documentId] } as any,
+          // Set featured image from hero image if available
+          // Media relations use the numeric ID directly
+          ...(draft.imageMetadata?.heroImage?.id && {
+            featuredImage: draft.imageMetadata.heroImage.id,
+          }),
         } as any,
       } as any);
 

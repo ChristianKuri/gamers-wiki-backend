@@ -58,3 +58,11 @@ export {
   type CleanerDeps,
   type CleanSourcesBatchResult,
 } from './cleaner';
+export {
+  runImageCurator,
+  type ImageCuratorContext,
+  type ImageCuratorDeps,
+  type ImageCuratorOutput,
+  type SectionImageAssignment,
+  type HeroImageAssignment,
+} from './image-curator';

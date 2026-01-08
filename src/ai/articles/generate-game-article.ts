@@ -63,7 +63,8 @@ import type { CleaningDeps } from './research-pool';
 import { getAllExcludedDomains, getAllExcludedDomainsForEngine } from './source-cache';
 import type { SpecialistOutput } from './agents/specialist';
 import type { ArticlePlan, ArticleCategorySlug, ArticleMetadata } from './article-plan';
-import { GENERATOR_CONFIG, WORD_COUNT_DEFAULTS, WORD_COUNT_CONSTRAINTS, METADATA_CONFIG, REVIEWER_CONFIG, FIXER_CONFIG } from './config';
+import { GENERATOR_CONFIG, WORD_COUNT_DEFAULTS, WORD_COUNT_CONSTRAINTS, METADATA_CONFIG, REVIEWER_CONFIG, FIXER_CONFIG, IMAGE_CURATOR_CONFIG } from './config';
+import { runImagePhase, shouldRunImagePhase, extractImagesFromResearchPool, type ImagePhaseResult } from './image-phase';
 import { runFixer, type FixerContext, type FixerDeps } from './fixer';
 import { countContentH2Sections } from './markdown-utils';
 import { withRetry } from './retry';
@@ -79,6 +80,8 @@ import {
   type ArticleGenerationMetadata,
   type ArticleProgressCallback,
   type Clock,
+  type DraftImageInfo,
+  type DraftImageMetadata,
   type FixApplied,
   type FixerOutcomeMetrics,
   extractScoutSourceUsage,
@@ -280,6 +283,36 @@ export interface ArticleGeneratorOptions {
    * });
    */
   readonly enableReviewer?: boolean;
+
+  /**
+   * Whether to run the Image Phase for autonomous image selection and placement.
+   *
+   * Default behavior (when not specified):
+   * - All categories: enabled if IGDB images are available
+   *
+   * The Image Phase:
+   * - Collects images from IGDB (screenshots, artworks, cover)
+   * - Collects images from web search (Tavily, Exa)
+   * - Uses AI to select best images for each section
+   * - Generates hero image with text overlay
+   * - Uploads images to Strapi media library
+   * - Inserts images into article markdown
+   *
+   * **Requirements**: Strapi instance must be provided in deps.
+   *
+   * @example
+   * // Force images on
+   * const draft = await generateGameArticleDraft(context, { strapi }, {
+   *   enableImages: true,
+   * });
+   *
+   * @example
+   * // Disable images for faster generation
+   * const draft = await generateGameArticleDraft(context, undefined, {
+   *   enableImages: false,
+   * });
+   */
+  readonly enableImages?: boolean;
 }
 
 // ============================================================================
@@ -1362,7 +1395,8 @@ export async function generateGameArticleDraft(
   progressTracker.startPhase('validation', 'Phase 6: Validation - Final quality checks...');
   phaseTimer.start('validation');
 
-  const draft = {
+  // Validate markdown content before images are added
+  const draftForValidation = {
     title: articleMetadata.title,
     categorySlug: plan.categorySlug,
     excerpt: articleMetadata.excerpt,
@@ -1375,7 +1409,7 @@ export async function generateGameArticleDraft(
 
   // Pass gameName to enable SEO validation (game name in title, keyword density, etc.)
   progressTracker.log('validation', 30, 'Running SEO and content validation...');
-  const validationIssues = validateArticleDraft(draft, context.gameName);
+  const validationIssues = validateArticleDraft(draftForValidation, context.gameName);
   const errors = getErrors(validationIssues);
   const warnings = getWarnings(validationIssues);
 
@@ -1393,13 +1427,102 @@ export async function generateGameArticleDraft(
     );
   }
 
-  const totalDurationMs = clock.now() - totalStartTime;
   progressTracker.log(
     'validation',
     95,
     `Research pool: ${finalResearchPool.queryCache.size} queries, ${finalResearchPool.allUrls.size} sources`
   );
-  progressTracker.completePhase('validation', `Article complete in ${Math.round(totalDurationMs / 1000)}s`);
+  progressTracker.completePhase('validation', `Article complete`);
+
+  // ===== PHASE 7: IMAGE PHASE (OPTIONAL) =====
+  // Runs after validation to work with final article content
+  let finalMarkdown = currentMarkdown;
+  let imagePhaseResult: ImagePhaseResult | undefined;
+  let imagePhaseTokenUsage: TokenUsage = createEmptyTokenUsage();
+
+  const shouldProcessImages = strapi && shouldRunImagePhase(context, plan.categorySlug, options?.enableImages);
+  
+  if (shouldProcessImages) {
+    progressTracker.debug('Image Phase: Starting autonomous image selection...');
+    
+    const imageCuratorModel = getModel('ARTICLE_IMAGE_CURATOR');
+    
+    // Extract images from research pool (Tavily/Exa images)
+    const searchImagePool = extractImagesFromResearchPool(finalResearchPool);
+    log.debug(
+      `[ArticleGen] Extracted ${searchImagePool.count} images from research ` +
+      `(tavily: ${searchImagePool.webImages.filter(i => i.source === 'tavily').length}, ` +
+      `exa: ${searchImagePool.webImages.filter(i => i.source === 'exa').length})`
+    );
+    
+    // Create AbortController for image phase timeout
+    // This ensures work actually stops on timeout (unlike Promise.race which leaves work running)
+    const imagePhaseController = new AbortController();
+    const timeoutMs = IMAGE_CURATOR_CONFIG.PHASE_TIMEOUT_MS;
+    const timeoutId = setTimeout(
+      () => imagePhaseController.abort(new Error(`Image phase timed out after ${timeoutMs / 1000}s`)),
+      timeoutMs
+    );
+
+    // Combine with external signal if present
+    const externalAbortHandler = () => imagePhaseController.abort(signal?.reason);
+    signal?.addEventListener('abort', externalAbortHandler);
+
+    try {
+      imagePhaseResult = await runImagePhase(
+        {
+          markdown: currentMarkdown,
+          plan,
+          context,
+          articleTitle: articleMetadata.title,
+          searchImagePool,
+        },
+        {
+          model: openrouter(imageCuratorModel),
+          strapi,
+          logger: log,
+          signal: imagePhaseController.signal,
+        }
+      );
+
+      // Always track token usage (curator uses tokens even if no images are added)
+      imagePhaseTokenUsage = imagePhaseResult.tokenUsage;
+      
+      if (imagePhaseResult.imagesAdded) {
+        finalMarkdown = imagePhaseResult.markdown;
+        log.info(
+          `[ArticleGen] Image Phase complete: ${imagePhaseResult.imageCount} images added ` +
+          `(pool: ${imagePhaseResult.poolSummary.total} total, ${imagePhaseResult.poolSummary.igdb} IGDB)`
+        );
+      } else {
+        log.info('[ArticleGen] Image Phase complete: no images added (curator tokens still counted)');
+      }
+    } catch (error) {
+      // Image phase failures are non-fatal - log and continue without images
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      log.warn(`[ArticleGen] Image Phase failed (continuing without images): ${errorMsg}`);
+    } finally {
+      clearTimeout(timeoutId);
+      signal?.removeEventListener('abort', externalAbortHandler);
+    }
+  } else {
+    progressTracker.debug('Image Phase skipped (not enabled or no Strapi instance)');
+  }
+
+  const totalDurationMs = clock.now() - totalStartTime;
+  progressTracker.debug(`Article generation complete in ${Math.round(totalDurationMs / 1000)}s`);
+
+  // Create final draft with images (if any)
+  const draft = {
+    title: articleMetadata.title,
+    categorySlug: plan.categorySlug,
+    excerpt: articleMetadata.excerpt,
+    description: articleMetadata.description,
+    tags: articleMetadata.tags,
+    markdown: finalMarkdown,
+    sources,
+    plan,
+  };
 
   // Build ScoutTokenUsage with sub-phase breakdown
   const scoutTokenUsageBreakdown: ScoutTokenUsage = {
@@ -1430,6 +1553,11 @@ export async function generateGameArticleDraft(
   // Add cleaner token usage if content was cleaned
   if (cleanerTokenUsage && (cleanerTokenUsage.total.input > 0 || cleanerTokenUsage.total.output > 0)) {
     totalTokenUsage = addTokenUsage(totalTokenUsage, cleanerTokenUsage.total);
+  }
+
+  // Add image phase token usage if images were processed
+  if (imagePhaseTokenUsage.input > 0 || imagePhaseTokenUsage.output > 0) {
+    totalTokenUsage = addTokenUsage(totalTokenUsage, imagePhaseTokenUsage);
   }
 
   // Check if any tokens were reported (some APIs may not report usage)
@@ -1592,6 +1720,33 @@ export async function generateGameArticleDraft(
       : {}),
   };
 
+  // Get image curator model name if images were processed
+  const imageCuratorModel = shouldProcessImages ? getModel('ARTICLE_IMAGE_CURATOR') : undefined;
+
+  // Build image metadata for debugging/analytics (only if images were processed)
+  const imageMetadata: DraftImageMetadata | undefined = imagePhaseResult?.imagesAdded
+    ? {
+        heroImage: imagePhaseResult.heroImage
+          ? {
+              id: imagePhaseResult.heroImage.id,
+              documentId: imagePhaseResult.heroImage.documentId,
+              url: imagePhaseResult.heroImage.url,
+              altText: imagePhaseResult.heroImage.altText,
+              caption: imagePhaseResult.heroImage.caption,
+            }
+          : undefined,
+        sectionImages: imagePhaseResult.sectionImages.map((img): DraftImageInfo => ({
+          id: img.id,
+          documentId: img.documentId,
+          url: img.url,
+          altText: img.altText,
+          caption: img.caption,
+        })),
+        failedSections: imagePhaseResult.failedSections,
+        poolSummary: imagePhaseResult.poolSummary,
+      }
+    : undefined;
+
   return {
     ...draft,
     models: {
@@ -1601,6 +1756,7 @@ export async function generateGameArticleDraft(
       metadata: metadataModel,
       ...(shouldRunReviewer ? { reviewer: reviewerModel } : {}),
       ...(cleaningDeps ? { cleaner: cleanerModel, summarizer: summarizerModel } : {}),
+      ...(imageCuratorModel ? { imageCurator: imageCuratorModel } : {}),
     },
     metadata,
     ...(shouldRunReviewer && reviewerOutput
@@ -1614,5 +1770,7 @@ export async function generateGameArticleDraft(
             : {}),
         }
       : {}),
+    // Include image metadata if images were processed (for debugging/analytics)
+    ...(imageMetadata ? { imageMetadata } : {}),
   };
 }

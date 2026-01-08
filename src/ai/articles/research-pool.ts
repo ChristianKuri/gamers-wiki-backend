@@ -24,6 +24,7 @@ import {
   type ResearchPool,
   type SearchCategory,
   type SearchQueryStats,
+  type SearchResultImage,
   type SearchResultItem,
   type SearchSource,
   type TokenUsage,
@@ -699,6 +700,18 @@ interface RawSearchResultItem {
   /** AI-generated summary (Exa only) */
   readonly summary?: string;
   readonly score?: number;
+  /** Representative image for the result (Exa only) */
+  readonly image?: string;
+  /** Images extracted from the page (Exa with extras.imageLinks) */
+  readonly imageLinks?: readonly string[];
+}
+
+/**
+ * Image from a search response.
+ */
+interface RawSearchImage {
+  readonly url: string;
+  readonly description?: string;
 }
 
 /**
@@ -717,14 +730,23 @@ export function processSearchResults(
   rawResults: {
     answer?: string | null;
     results: readonly RawSearchResultItem[];
+    /** Query-level images (Tavily with include_images) */
+    images?: readonly RawSearchImage[];
   },
   searchSource: SearchSource = 'tavily',
   costUsd?: number
 ): CategorizedSearchResult {
   const processedResults: SearchResultItem[] = rawResults.results
-    .map((r) => {
+    .map((r): SearchResultItem | null => {
       const normalized = normalizeUrl(r.url);
       if (!normalized) return null;
+
+      // Collect per-result images (Exa's image and imageLinks)
+      const resultImages: readonly SearchResultImage[] = [
+        ...(r.image ? [{ url: r.image }] : []),
+        ...(r.imageLinks ?? []).map((imgUrl) => ({ url: imgUrl })),
+      ];
+
       return {
         title: r.title,
         url: normalized,
@@ -734,14 +756,24 @@ export function processSearchResults(
         // Preserve summary if available (Exa only)
         ...(r.summary ? { summary: r.summary } : {}),
         ...(typeof r.score === 'number' ? { score: r.score } : {}),
+        // Include images if any found
+        ...(resultImages.length > 0 ? { images: resultImages } : {}),
       };
     })
     .filter((r): r is SearchResultItem => r !== null);
+
+  // Convert query-level images (from Tavily)
+  const queryImages = rawResults.images?.map((img) => ({
+    url: img.url,
+    ...(img.description ? { description: img.description } : {}),
+  }));
 
   return {
     query,
     answer: rawResults.answer ?? null,
     results: processedResults,
+    // Include query-level images if present
+    ...(queryImages && queryImages.length > 0 ? { images: queryImages } : {}),
     category,
     timestamp: Date.now(),
     searchSource,
@@ -916,7 +948,13 @@ export async function processSearchResultsWithCleaning(
       raw_content?: string;
       summary?: string;
       score?: number;
+      /** Representative image (Exa only) */
+      image?: string;
+      /** Images from the page (Exa with extras.imageLinks) */
+      imageLinks?: readonly string[];
     }[];
+    /** Query-level images (Tavily with include_images) */
+    images?: readonly RawSearchImage[];
   },
   searchSource: SearchSource = 'tavily',
   costUsd?: number,
@@ -1413,6 +1451,12 @@ export async function processSearchResultsWithCleaning(
           return null;
         }
 
+        // Collect per-result images (Exa's image and imageLinks) - preserve for image pipeline
+        const resultImages: readonly SearchResultImage[] = [
+          ...(r.image ? [{ url: r.image }] : []),
+          ...(r.imageLinks ?? []).map((imgUrl) => ({ url: imgUrl })),
+        ];
+
         // Use cleaned content
         return {
           title: r.title,
@@ -1424,11 +1468,19 @@ export async function processSearchResultsWithCleaning(
           ...(cleanedSource.keyFacts && cleanedSource.keyFacts.length > 0 ? { keyFacts: cleanedSource.keyFacts } : {}),
           ...(cleanedSource.dataPoints && cleanedSource.dataPoints.length > 0 ? { dataPoints: cleanedSource.dataPoints } : {}),
           ...(typeof r.score === 'number' ? { score: r.score } : {}),
+          // Preserve images for image pipeline
+          ...(resultImages.length > 0 ? { images: resultImages } : {}),
           qualityScore: cleanedSource.qualityScore,
           relevanceScore: cleanedSource.relevanceScore,
           wasCached,
         };
       }
+
+      // Collect per-result images for fallback path too
+      const resultImages: readonly SearchResultImage[] = [
+        ...(r.image ? [{ url: r.image }] : []),
+        ...(r.imageLinks ?? []).map((imgUrl) => ({ url: imgUrl })),
+      ];
 
       // Fallback to raw content (no relevance/quality check - haven't cleaned it)
       return {
@@ -1437,6 +1489,8 @@ export async function processSearchResultsWithCleaning(
         content: r.raw_content ?? r.content ?? '',
         ...(r.summary ? { summary: r.summary } : {}),
         ...(typeof r.score === 'number' ? { score: r.score } : {}),
+        // Preserve images for image pipeline
+        ...(resultImages.length > 0 ? { images: resultImages } : {}),
       };
     })
     .filter((r): r is SearchResultItem => r !== null);
@@ -1471,11 +1525,19 @@ export async function processSearchResultsWithCleaning(
   // Combine prefilter and extraction for backwards-compatible cleaningTokenUsage
   const cleaningTokenUsage = addTokenUsage(prefilterTokenUsage, extractionTokenUsage);
 
+  // Convert query-level images (from Tavily with include_images) - preserve for image pipeline
+  const queryImages = rawResults.images?.map((img) => ({
+    url: img.url,
+    ...(img.description ? { description: img.description } : {}),
+  }));
+
   return {
     result: {
       query,
       answer: rawResults.answer ?? null,
       results: processedResults,
+      // Include query-level images if present (for image pipeline)
+      ...(queryImages && queryImages.length > 0 ? { images: queryImages } : {}),
       category,
       timestamp: Date.now(),
       searchSource,

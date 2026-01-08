@@ -8,6 +8,7 @@ import type { GameArticleDraft } from '../../../ai/articles/types';
 import { slugify } from '../../../utils/slug';
 import { importOrGetGameByIgdbId, GameImportError } from '../../game-fetcher/services/import-game-programmatic';
 import { resolveIGDBGameIdFromQuery } from '../../game-fetcher/services/game-resolver';
+import { fetchIGDBImagesForGame } from '../../game-fetcher/services/igdb-images';
 import { isAuthenticated } from '../utils/admin-auth';
 
 /**
@@ -385,6 +386,25 @@ export default ({ strapi }: { strapi: Core.Strapi }) => ({
     const developerName = (game as any).developers?.[0]?.name || null;
     const publisherName = (game as any).publishers?.[0]?.name || null;
 
+    // Fetch IGDB images for article image pool
+    // The game's igdbId comes from the import process
+    const gameIgdbId = (game as any).igdbId;
+    let screenshotUrls: readonly string[] = [];
+    let artworkUrls: readonly string[] = [];
+    let igdbCoverUrl: string | null = null;
+    if (gameIgdbId) {
+      try {
+        const igdbImages = await fetchIGDBImagesForGame(strapi, gameIgdbId);
+        screenshotUrls = igdbImages.screenshotUrls;
+        artworkUrls = igdbImages.artworkUrls;
+        igdbCoverUrl = igdbImages.coverUrl;
+      } catch (err) {
+        // Non-fatal: log and continue without IGDB images
+        const msg = err instanceof Error ? err.message : String(err);
+        strapi.log.warn(`[ArticleGenerator] Failed to fetch IGDB images: ${msg}`);
+      }
+    }
+
     // Articles are always generated in English; translation is a separate process
     // Pass strapi to enable content cleaning and caching
     const draft = await generateGameArticleDraft(
@@ -403,6 +423,10 @@ export default ({ strapi }: { strapi: Core.Strapi }) => ({
           slug: c.slug as any,
           systemPrompt: (c as any).systemPrompt ?? null,
         })),
+        // IGDB images for article image pool
+        screenshotUrls,
+        artworkUrls,
+        coverImageUrl: (game as any).coverImageUrl ?? igdbCoverUrl,
       },
       { strapi }
     );
@@ -442,6 +466,11 @@ export default ({ strapi }: { strapi: Core.Strapi }) => ({
         category: { connect: [categoryMatch.documentId] } as any,
         games: { connect: [game.documentId] } as any,
         author: { connect: [author.documentId] } as any,
+        // Set featured image from hero image if available
+        // Media relations use the numeric ID directly
+        ...(draft.imageMetadata?.heroImage?.id && {
+          featuredImage: draft.imageMetadata.heroImage.id,
+        }),
       } as any,
     } as any);
 

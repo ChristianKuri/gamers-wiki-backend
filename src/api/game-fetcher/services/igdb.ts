@@ -220,6 +220,7 @@ export interface GameData {
   // Media
   coverImageUrl: string | null;
   screenshotUrls: string[];
+  artworkUrls: string[];
   trailerIds: string[];
   // Ratings
   metacriticScore: number | null;
@@ -604,13 +605,15 @@ export default ({ strapi }: { strapi: Core.Strapi }) => ({
       ? `https://images.igdb.com/igdb/image/upload/t_cover_big_2x/${gameCover.image_id}.jpg`
       : null;
 
-    // Screenshots (combine screenshots and artworks)
+    // Screenshots and artworks (separate for proper type detection in image pool)
     const screenshots = asObjectArray(game.screenshots);
     const artworks = asObjectArray(game.artworks);
-    const screenshotUrls = [
-      ...screenshots.map(s => `https://images.igdb.com/igdb/image/upload/t_screenshot_big/${s.image_id}.jpg`),
-      ...artworks.map(a => `https://images.igdb.com/igdb/image/upload/t_screenshot_big/${a.image_id}.jpg`),
-    ];
+    const screenshotUrls = screenshots.map(
+      s => `https://images.igdb.com/igdb/image/upload/t_screenshot_big/${s.image_id}.jpg`
+    );
+    const artworkUrls = artworks.map(
+      a => `https://images.igdb.com/igdb/image/upload/t_screenshot_big/${a.image_id}.jpg`
+    );
 
     // Trailer IDs (YouTube)
     const videos = asObjectArray(game.videos);
@@ -791,6 +794,7 @@ export default ({ strapi }: { strapi: Core.Strapi }) => ({
       platforms,
       coverImageUrl,
       screenshotUrls,
+      artworkUrls,
       trailerIds,
       metacriticScore,
       userRating,

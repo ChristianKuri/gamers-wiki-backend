@@ -48,6 +48,20 @@ export interface TavilySearchOptions {
    * When set, only results from these domains will be returned.
    */
   readonly includeDomains?: readonly string[];
+  /**
+   * Include images from search results.
+   * Returns up to 5 images per search at NO EXTRA COST (same 1 credit).
+   * Default: false (disabled to avoid extra payload when not needed)
+   *
+   * @see https://docs.tavily.com/documentation/api-reference/endpoint/search
+   */
+  readonly includeImages?: boolean;
+  /**
+   * Include descriptions for images (requires includeImages: true).
+   * Provides context about each image for better selection.
+   * Default: true when includeImages is true
+   */
+  readonly includeImageDescriptions?: boolean;
 }
 
 export interface TavilySearchResult {
@@ -56,6 +70,17 @@ export interface TavilySearchResult {
   readonly content?: string;
   readonly score?: number;
   readonly raw_content?: string;
+}
+
+/**
+ * An image returned by Tavily search (when includeImages: true).
+ * Tavily returns up to 5 images per search at no extra cost.
+ */
+export interface TavilyImage {
+  /** Direct URL to the image */
+  readonly url: string;
+  /** Description of the image (when includeImageDescriptions: true) */
+  readonly description?: string;
 }
 
 /**
@@ -76,6 +101,11 @@ export interface TavilySearchResponse {
   readonly usage?: TavilyUsage;
   /** Calculated cost in USD based on credits ($0.008/credit) */
   readonly costUsd?: number;
+  /**
+   * Images found during the search (when includeImages: true).
+   * Up to 5 images per search at no extra cost.
+   */
+  readonly images?: readonly TavilyImage[];
 }
 
 export function isTavilyConfigured(): boolean {
@@ -140,12 +170,29 @@ function parseTavilyResponse(query: string, raw: unknown): TavilySearchResponse 
     }
   }
 
+  // Parse images from response (if include_images was true)
+  const images: TavilyImage[] = [];
+  const imagesRaw = Array.isArray(obj.images) ? obj.images : [];
+  for (const img of imagesRaw) {
+    if (!img || typeof img !== 'object') continue;
+    const imgObj = img as Record<string, unknown>;
+    const url = safeString(imgObj.url);
+    if (!url) continue;
+    
+    const description = safeString(imgObj.description);
+    images.push({
+      url,
+      ...(description ? { description } : {}),
+    });
+  }
+
   return {
     query,
     answer,
     results,
     ...(usage ? { usage } : {}),
     ...(costUsd !== undefined ? { costUsd } : {}),
+    ...(images.length > 0 ? { images } : {}),
   };
 }
 
@@ -190,6 +237,9 @@ export async function tavilySearch(
         // A/B test Dec 2024: 23,666c avg vs 840c default, same 1 credit cost
         include_raw_content: options.includeRawContent ?? 'markdown',
         include_usage: true, // Track actual credit usage for cost calculation
+        // Image collection (up to 5 images per search at no extra cost)
+        include_images: options.includeImages ?? false,
+        include_image_descriptions: options.includeImages ? (options.includeImageDescriptions ?? true) : false,
         // Exclude domains like YouTube that have no useful text content
         ...(options.excludeDomains && options.excludeDomains.length > 0
           ? { exclude_domains: [...options.excludeDomains] }

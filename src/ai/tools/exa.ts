@@ -146,17 +146,14 @@ export interface ExaSearchOptions {
   readonly startPublishedDate?: string;
   /** Filter results to those published before this date (ISO string) */
   readonly endPublishedDate?: string;
-  // =========================================================================
-  // Future: Image Support (not yet implemented)
-  // =========================================================================
   /**
-   * Number of images to retrieve per result.
+   * Number of images to retrieve per result (1-5).
    * Set via contents.extras.imageLinks in API request.
    * Use case: Article hero images, inline screenshots.
+   * Cost: No extra charge for images.
    * @see https://docs.exa.ai/reference/contents-retrieval#images-and-favicons
-   * @future Not yet implemented - document for later use
    */
-  // readonly imageLinks?: number;
+  readonly imageLinks?: number;
 }
 
 export interface ExaFindSimilarOptions {
@@ -187,18 +184,15 @@ export interface ExaSearchResult {
   readonly score?: number;
   readonly publishedDate?: string;
   readonly author?: string;
-  // =========================================================================
-  // Future: Image fields (available when imageLinks is requested)
-  // =========================================================================
   /** Website favicon URL (always available) */
   readonly favicon?: string;
   /** Representative image URL for the page (when available) */
   readonly image?: string;
   /**
    * Array of image URLs from the page (when imageLinks > 0 requested).
-   * @future Parse from extras.imageLinks in response
+   * @see https://docs.exa.ai/reference/contents-retrieval#images-and-favicons
    */
-  // readonly imageLinks?: readonly string[];
+  readonly imageLinks?: readonly string[];
 }
 
 /**
@@ -303,6 +297,22 @@ function parseExaResult(raw: unknown): ExaSearchResult | null {
   const score = typeof obj.score === 'number' ? obj.score : undefined;
   const publishedDate = safeString(obj.publishedDate);
   const author = safeString(obj.author);
+  
+  // Image fields
+  const favicon = safeString(obj.favicon);
+  const image = safeString(obj.image);
+  
+  // Parse imageLinks from extras (Exa returns these in an extras object)
+  let imageLinks: readonly string[] | undefined;
+  const extras = obj.extras as Record<string, unknown> | undefined;
+  if (extras && Array.isArray(extras.imageLinks)) {
+    const validLinks = extras.imageLinks
+      .map(link => safeString(link))
+      .filter((link): link is string => link !== undefined);
+    if (validLinks.length > 0) {
+      imageLinks = validLinks;
+    }
+  }
 
   return {
     title,
@@ -312,6 +322,9 @@ function parseExaResult(raw: unknown): ExaSearchResult | null {
     ...(score !== undefined ? { score } : {}),
     ...(publishedDate ? { publishedDate } : {}),
     ...(author ? { author } : {}),
+    ...(favicon ? { favicon } : {}),
+    ...(image ? { image } : {}),
+    ...(imageLinks ? { imageLinks } : {}),
   };
 }
 
@@ -456,6 +469,14 @@ export async function exaSearch(
       contents.summary = options.summaryQuery
         ? { query: options.summaryQuery }
         : true;
+    }
+    
+    // Add image links if requested (1-5 images per result)
+    if (options.imageLinks && options.imageLinks > 0) {
+      const imageCount = clampInt(options.imageLinks, 1, 5);
+      contents.extras = {
+        imageLinks: imageCount,
+      };
     }
 
     // Build request body

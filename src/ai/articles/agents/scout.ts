@@ -140,6 +140,10 @@ export interface ExecuteSearchOptions {
   readonly signal?: AbortSignal;
   /** Optional cleaning dependencies for content cleaning and caching */
   readonly cleaningDeps?: CleaningDeps;
+  /** Enable image search (for image phase). Default: true */
+  readonly includeImages?: boolean;
+  /** Include image descriptions (requires includeImages). Default: true */
+  readonly includeImageDescriptions?: boolean;
 }
 
 /** Default search depth for slots that don't specify one */
@@ -188,6 +192,10 @@ export async function executeSearch(
     ?? options.cleaningDeps?.excludedDomains 
     ?? [...SCOUT_CONFIG.EXA_EXCLUDE_DOMAINS];
 
+  // Default to including images for the image phase
+  const includeImages = options.includeImages ?? true;
+  const includeImageDescriptions = options.includeImageDescriptions ?? true;
+
   const result = await withRetry(
     () =>
       search(query, {
@@ -197,6 +205,9 @@ export async function executeSearch(
         // Request raw content for cleaning (full page text)
         includeRawContent: Boolean(options.cleaningDeps),
         excludeDomains,
+        // Enable image search with descriptions for the image phase
+        includeImages,
+        includeImageDescriptions: includeImages && includeImageDescriptions,
       }),
     { context: `Scout search (${category}): "${query.slice(0, 40)}..."`, signal: options.signal }
   );

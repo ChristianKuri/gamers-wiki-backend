@@ -115,17 +115,9 @@ interface DomainQualityRow {
 // URL Utilities
 // ============================================================================
 
-/**
- * Extracts the domain from a URL.
- */
-export function extractDomain(url: string): string {
-  try {
-    const parsed = new URL(url);
-    return parsed.hostname.replace(/^www\./, '');
-  } catch {
-    return '';
-  }
-}
+// Import and re-export domain utility from shared location for backwards compatibility
+import { extractDomain } from './utils/url-utils';
+export { extractDomain };
 
 // ============================================================================
 // Document Service Helpers
