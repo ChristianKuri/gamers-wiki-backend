@@ -32,6 +32,12 @@ function createMockStrapi(uploadService = createMockUploadService()): Core.Strap
     plugin: vi.fn().mockReturnValue({
       service: vi.fn().mockReturnValue(uploadService),
     }),
+    // Mock db.query for storing source metadata in provider_metadata
+    db: {
+      query: vi.fn().mockReturnValue({
+        update: vi.fn().mockResolvedValue({}),
+      }),
+    },
   } as unknown as Core.Strapi;
 }
 
@@ -401,14 +407,17 @@ describe('Image Uploader', () => {
         })
       );
       
-      // Caption is set via updateFileInfo after upload
+      // Caption should NOT include source - source is stored in provider_metadata
       expect(mockUploadService.updateFileInfo).toHaveBeenCalledWith(1, {
         alternativeText: 'Test',
-        caption: 'Source: example.com',
+        caption: null,  // No caption provided, source not embedded
       });
+      
+      // Source metadata stored in provider_metadata via db.query
+      expect(strapi.db.query).toHaveBeenCalledWith('plugin::upload.file');
     });
 
-    it('appends source domain to existing caption', async () => {
+    it('stores source metadata in provider_metadata (not caption)', async () => {
       const { uploadImageFromUrl } = await import('../../../src/ai/articles/services/image-uploader');
       
       const buffer = createMockJpegBuffer();
@@ -442,14 +451,17 @@ describe('Image Uploader', () => {
         })
       );
       
-      // Caption with appended source is set via updateFileInfo
+      // Caption is just the original caption - NOT modified with source
       expect(mockUploadService.updateFileInfo).toHaveBeenCalledWith(1, {
         alternativeText: 'Test',
-        caption: 'Original caption (Source: example.com)',
+        caption: 'Original caption',  // No "Source: example.com" appended
       });
+      
+      // Source metadata is stored in provider_metadata via db.query
+      expect(strapi.db.query).toHaveBeenCalledWith('plugin::upload.file');
     });
 
-    it('does not duplicate source domain in caption', async () => {
+    it('keeps caption clean when source domain provided', async () => {
       const { uploadImageFromUrl } = await import('../../../src/ai/articles/services/image-uploader');
       
       const buffer = createMockJpegBuffer();
@@ -471,23 +483,16 @@ describe('Image Uploader', () => {
           url: 'https://example.com/image.jpg',
           filename: 'test',
           altText: 'Test',
-          caption: 'Image from example.com',
+          caption: 'Image description here',
           sourceDomain: 'example.com',
         },
         { strapi }
       );
       
-      // Should not add (Source: example.com) since caption already contains the domain
-      expect(mockUploadService.upload).toHaveBeenCalledWith(
-        expect.objectContaining({
-          data: {},
-        })
-      );
-      
-      // Caption is unchanged since domain already present
+      // Caption stays as-is, source not embedded
       expect(mockUploadService.updateFileInfo).toHaveBeenCalledWith(1, {
         alternativeText: 'Test',
-        caption: 'Image from example.com',
+        caption: 'Image description here',  // Unchanged - source in provider_metadata
       });
     });
 
@@ -542,6 +547,166 @@ describe('Image Uploader', () => {
         },
         { strapi }
       )).rejects.toThrow('Download failed');
+    });
+
+    it('preserves existing provider_metadata when storing source metadata', async () => {
+      const { uploadImageFromUrl } = await import('../../../src/ai/articles/services/image-uploader');
+      
+      const buffer = createMockJpegBuffer();
+      mockDownloadImageWithRetry.mockResolvedValueOnce({
+        buffer,
+        mimeType: 'image/jpeg',
+      });
+      
+      // Mock upload with existing S3 provider_metadata
+      const existingS3Metadata = {
+        s3Key: 'some/s3/path.jpg',
+        bucketName: 'my-bucket',
+      };
+      mockUploadService.upload.mockResolvedValueOnce([{
+        id: 1,
+        documentId: 'doc-123',
+        url: 'https://strapi.example.com/uploaded.jpg',
+        provider_metadata: existingS3Metadata,
+      }]);
+      
+      const strapi = createMockStrapi(mockUploadService);
+      
+      await uploadImageFromUrl(
+        {
+          url: 'https://example.com/image.jpg',
+          filename: 'test',
+          altText: 'Test',
+          sourceDomain: 'example.com',
+        },
+        { strapi }
+      );
+      
+      // Verify db.query was called to update provider_metadata
+      const dbQuery = strapi.db.query as ReturnType<typeof vi.fn>;
+      expect(dbQuery).toHaveBeenCalledWith('plugin::upload.file');
+      
+      // Verify the update call preserves existing metadata
+      const updateMock = dbQuery.mock.results[0]?.value.update as ReturnType<typeof vi.fn>;
+      expect(updateMock).toHaveBeenCalledWith({
+        where: { id: 1 },
+        data: {
+          provider_metadata: {
+            // Existing S3 metadata preserved
+            s3Key: 'some/s3/path.jpg',
+            bucketName: 'my-bucket',
+            // Our imageAttribution added
+            imageAttribution: {
+              sourceUrl: 'https://example.com/image.jpg',
+              sourceDomain: 'example.com',
+              imageSource: 'web',
+            },
+          },
+        },
+      });
+    });
+
+    it('handles database update failure gracefully', async () => {
+      const { uploadImageFromUrl } = await import('../../../src/ai/articles/services/image-uploader');
+      
+      const buffer = createMockJpegBuffer();
+      mockDownloadImageWithRetry.mockResolvedValueOnce({
+        buffer,
+        mimeType: 'image/jpeg',
+      });
+      
+      mockUploadService.upload.mockResolvedValueOnce([{
+        id: 1,
+        documentId: 'doc-123',
+        url: 'https://strapi.example.com/uploaded.jpg',
+      }]);
+      
+      // Create strapi with failing db.query
+      const strapi = {
+        plugin: vi.fn().mockReturnValue({
+          service: vi.fn().mockReturnValue(mockUploadService),
+        }),
+        db: {
+          query: vi.fn().mockReturnValue({
+            update: vi.fn().mockRejectedValue(new Error('Database connection failed')),
+          }),
+        },
+      } as unknown as Core.Strapi;
+      
+      const mockLogger = {
+        warn: vi.fn(),
+        info: vi.fn(),
+        debug: vi.fn(),
+      };
+      
+      // Upload should succeed despite metadata update failure
+      const result = await uploadImageFromUrl(
+        {
+          url: 'https://example.com/image.jpg',
+          filename: 'test',
+          altText: 'Test',
+          sourceDomain: 'example.com',
+        },
+        { strapi, logger: mockLogger as any }
+      );
+      
+      // Upload succeeded
+      expect(result.id).toBe(1);
+      expect(result.url).toBe('https://strapi.example.com/uploaded.jpg');
+      
+      // Warning was logged
+      expect(mockLogger.warn).toHaveBeenCalledWith(
+        expect.stringContaining('Failed to store source metadata')
+      );
+    });
+
+    it('stores correct imageAttribution structure in provider_metadata', async () => {
+      const { uploadImageFromUrl } = await import('../../../src/ai/articles/services/image-uploader');
+      
+      const buffer = createMockJpegBuffer();
+      mockDownloadImageWithRetry.mockResolvedValueOnce({
+        buffer,
+        mimeType: 'image/jpeg',
+      });
+      
+      mockUploadService.upload.mockResolvedValueOnce([{
+        id: 42,
+        documentId: 'doc-abc',
+        url: 'https://cdn.example.com/image.jpg',
+      }]);
+      
+      const strapi = createMockStrapi(mockUploadService);
+      
+      await uploadImageFromUrl(
+        {
+          url: 'https://ign.com/articles/game-review/hero.jpg',
+          filename: 'game-review-hero',
+          altText: 'Game screenshot',
+          sourceMetadata: {
+            sourceUrl: 'https://ign.com/articles/game-review/hero.jpg',
+            sourceDomain: 'ign.com',
+            imageSource: 'tavily',
+          },
+        },
+        { strapi }
+      );
+      
+      // Verify the exact structure passed to db.query().update()
+      const dbQuery = strapi.db.query as ReturnType<typeof vi.fn>;
+      const updateMock = dbQuery.mock.results[0]?.value.update as ReturnType<typeof vi.fn>;
+      
+      expect(updateMock).toHaveBeenCalledWith({
+        where: { id: 42 },
+        data: {
+          provider_metadata: {
+            imageAttribution: {
+              sourceUrl: 'https://ign.com/articles/game-review/hero.jpg',
+              sourceDomain: 'ign.com',
+              imageSource: 'tavily',
+            },
+          },
+        },
+      });
     });
   });
 });

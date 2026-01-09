@@ -193,7 +193,8 @@ export function insertImagesIntoMarkdown(input: ImageInsertionInput): ImageInser
     const insertLine = findInsertPositionAfterH2(lines, h2Line);
     
     // Create image markdown
-    // Use upload caption as fallback if LLM didn't provide one (upload caption has attribution)
+    // Use LLM-provided caption if available, fallback to upload caption
+    // Note: Source attribution is NOT in caption - it's stored in provider_metadata
     const caption = assignment.caption ?? upload.caption;
     const imageMarkdown = createImageMarkdown(
       upload.url,

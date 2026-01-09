@@ -17,10 +17,27 @@ import * as path from 'path';
 import type { Core } from '@strapi/strapi';
 import type { Logger } from '../../../utils/logger';
 import { downloadImageWithRetry } from './image-downloader';
+import { linkFileToFolder } from './folder-service';
 
 // ============================================================================
 // Types
 // ============================================================================
+
+/**
+ * Source metadata stored in Strapi's provider_metadata.imageAttribution field.
+ * This allows the frontend to display attribution without embedding it in markdown.
+ * 
+ * Stored as: provider_metadata.imageAttribution = { sourceUrl, sourceDomain, imageSource }
+ * This avoids conflicts with S3 provider metadata fields.
+ */
+export interface ImageSourceMetadata {
+  /** Original URL where the image was found */
+  readonly sourceUrl?: string;
+  /** Domain for attribution display (e.g., "ign.com") */
+  readonly sourceDomain?: string;
+  /** Image source type */
+  readonly imageSource?: 'igdb' | 'tavily' | 'exa' | 'web';
+}
 
 /**
  * Input for uploading an image from a URL.
@@ -32,12 +49,18 @@ export interface UrlUploadInput {
   readonly filename: string;
   /** Alt text for the image */
   readonly altText: string;
-  /** Attribution/caption text */
+  /** Caption for the image (not attribution - use sourceMetadata for that) */
   readonly caption?: string;
-  /** Source domain for attribution */
+  /** Source domain for attribution (deprecated - use sourceMetadata) */
   readonly sourceDomain?: string;
+  /** Source metadata for attribution (stored in provider_metadata) */
+  readonly sourceMetadata?: ImageSourceMetadata;
   /** Optional AbortSignal for cancellation */
   readonly signal?: AbortSignal;
+  /** Optional folder ID to organize images in Strapi Media Library */
+  readonly folderId?: number;
+  /** Optional folder path (required if folderId provided) */
+  readonly folderPath?: string;
 }
 
 /**
@@ -52,8 +75,14 @@ export interface BufferUploadInput {
   readonly mimeType: string;
   /** Alt text for the image */
   readonly altText: string;
-  /** Attribution/caption text */
+  /** Caption for the image (not attribution - use sourceMetadata for that) */
   readonly caption?: string;
+  /** Source metadata for attribution (stored in provider_metadata) */
+  readonly sourceMetadata?: ImageSourceMetadata;
+  /** Optional folder ID to organize images in Strapi Media Library */
+  readonly folderId?: number;
+  /** Optional folder path (required if folderId provided) */
+  readonly folderPath?: string;
 }
 
 /**
@@ -120,6 +149,7 @@ function sanitizeFilename(filename: string): string {
  * Uploads an image from a URL to Strapi.
  *
  * Uses the consolidated image downloader with SSRF protection and retry logic.
+ * Source attribution is stored in provider_metadata, not in the caption.
  *
  * @param input - Upload input with URL, filename, and alt text
  * @param deps - Dependencies (Strapi instance, logger)
@@ -129,7 +159,7 @@ export async function uploadImageFromUrl(
   input: UrlUploadInput,
   deps: ImageUploaderDeps
 ): Promise<ImageUploadResult> {
-  const { url, filename, altText, caption, sourceDomain, signal } = input;
+  const { url, filename, altText, caption, sourceDomain, sourceMetadata, signal, folderId, folderPath } = input;
   const { logger } = deps;
 
   logger?.info(`[ImageUploader] Uploading from URL: ${url}`);
@@ -141,20 +171,25 @@ export async function uploadImageFromUrl(
     signal,
   });
 
-  // Build full caption with attribution
-  let fullCaption = caption;
-  if (sourceDomain && !caption?.includes(sourceDomain)) {
-    fullCaption = caption ? `${caption} (Source: ${sourceDomain})` : `Source: ${sourceDomain}`;
-  }
+  // Build source metadata for attribution (stored in provider_metadata, not caption)
+  // If explicit sourceMetadata provided, use that; otherwise build from sourceDomain
+  const finalSourceMetadata: ImageSourceMetadata | undefined = sourceMetadata ?? (sourceDomain ? {
+    sourceUrl: url,
+    sourceDomain,
+    imageSource: 'web',
+  } : undefined);
 
-  // Upload to Strapi
+  // Upload to Strapi - caption is now purely for image description, not attribution
   return uploadImageBuffer(
     {
       buffer: downloadResult.buffer,
       filename,
       mimeType: downloadResult.mimeType,
       altText,
-      caption: fullCaption,
+      caption,  // No longer includes "Source: domain" - that's in sourceMetadata
+      sourceMetadata: finalSourceMetadata,
+      folderId,
+      folderPath,
     },
     deps
   );
@@ -162,6 +197,9 @@ export async function uploadImageFromUrl(
 
 /**
  * Uploads an image buffer to Strapi.
+ *
+ * Source attribution is stored in provider_metadata for frontend access,
+ * keeping the caption field clean for actual image descriptions.
  *
  * @param input - Upload input with buffer, filename, and metadata
  * @param deps - Dependencies (Strapi instance, logger)
@@ -171,8 +209,13 @@ export async function uploadImageBuffer(
   input: BufferUploadInput,
   deps: ImageUploaderDeps
 ): Promise<ImageUploadResult> {
-  const { buffer, filename, mimeType, altText, caption } = input;
+  const { buffer, filename, mimeType, altText, caption, sourceMetadata, folderId, folderPath } = input;
   const { strapi, logger } = deps;
+
+  // Validate folder parameters: both or neither must be provided
+  if ((folderId !== undefined && folderPath === undefined) || (folderId === undefined && folderPath !== undefined)) {
+    throw new Error('Both folderId and folderPath must be provided together, or neither');
+  }
 
   const sanitizedFilename = sanitizeFilename(filename);
   const extension = MIME_TO_EXT[mimeType] ?? 'jpg';
@@ -198,9 +241,9 @@ export async function uploadImageBuffer(
     // - type → mimetype (for the MIME type)
     // See: https://github.com/strapi/strapi/commit/bf35cde68f79ff3bfa0dfe30a3b92baa44a7c2a4
     const file = {
-      filepath: tmpFilePath,       // NOT 'path' - changed in koa-body 6.x
-      originalFilename: fullFilename,  // NOT 'name' - koa-body 6.x uses originalFilename
-      mimetype: mimeType,          // NOT 'type' - koa-body 6.x uses mimetype
+      filepath: tmpFilePath,
+      originalFilename: fullFilename,
+      mimetype: mimeType,
       size: buffer.length,
     };
 
@@ -219,6 +262,36 @@ export async function uploadImageBuffer(
       });
     }
     
+    // Store source attribution in provider_metadata for frontend use
+    // This keeps attribution separate from caption, allowing flexible frontend display
+    // Uses nested 'imageAttribution' to avoid conflicts with S3 provider metadata
+    if (uploadedFile && sourceMetadata) {
+      try {
+        // Get existing provider_metadata (from S3 provider) and merge with our source info
+        const existingMetadata = uploadedFile.provider_metadata ?? {};
+        await strapi.db.query('plugin::upload.file').update({
+          where: { id: uploadedFile.id },
+          data: {
+            provider_metadata: {
+              ...existingMetadata,
+              // Namespaced under imageAttribution to avoid S3 provider conflicts
+              imageAttribution: {
+                sourceUrl: sourceMetadata.sourceUrl,
+                sourceDomain: sourceMetadata.sourceDomain,
+                imageSource: sourceMetadata.imageSource,
+              },
+            },
+          },
+        });
+        logger?.debug(`[ImageUploader] Stored source metadata: ${sourceMetadata.sourceDomain}`);
+      } catch (error) {
+        // Log but don't fail the upload - file is already uploaded successfully
+        const errorMsg = error instanceof Error ? error.message : String(error);
+        logger?.warn(`[ImageUploader] Failed to store source metadata: ${errorMsg}`);
+        // Continue - upload succeeded, just metadata update failed
+      }
+    }
+    
     // Validate upload result
     if (!uploadedFile) {
       throw new Error('Upload service returned no file');
@@ -230,6 +303,17 @@ export async function uploadImageBuffer(
 
     if (typeof uploadedFile.id !== 'number') {
       throw new Error('Uploaded file missing valid ID');
+    }
+
+    // Link file to folder if folder specified
+    if (folderId && folderPath) {
+      try {
+        await linkFileToFolder(deps, uploadedFile.id, folderId, folderPath);
+      } catch (error) {
+        // Log but don't fail - file is already uploaded
+        const errorMsg = error instanceof Error ? error.message : String(error);
+        logger?.warn(`[ImageUploader] Failed to link file to folder: ${errorMsg}`);
+      }
     }
 
     logger?.info(`[ImageUploader] Uploaded successfully: ${uploadedFile.url}`);

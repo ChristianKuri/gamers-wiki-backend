@@ -41,7 +41,7 @@ export interface SectionImageAssignment {
   readonly image: CollectedImage;
   /** SEO-optimized alt text */
   readonly altText: string;
-  /** Optional caption for attribution */
+  /** Optional descriptive caption (NOT attribution - that is stored in provider_metadata) */
   readonly caption?: string;
 }
 
@@ -108,7 +108,7 @@ const ImageSelectionSchema = z.object({
   sectionHeadline: z.string().describe('The section headline this image is for'),
   selectedImageIndex: z.number().describe('Index of selected image from candidates (0-based), or -1 if none suitable'),
   altText: z.string().max(150).describe('SEO-optimized alt text (80-120 chars, include game name and context)'),
-  caption: z.string().optional().describe('Attribution caption if from external source'),
+  caption: z.string().optional().describe('Brief descriptive caption for the image (NOT attribution - that is handled separately)'),
   relevanceScore: z.number().min(0).max(100).describe('How relevant is this image to the section content (0-100)'),
   qualityScore: z.number().min(0).max(100).describe('Image quality assessment (0-100): not blurry, good composition'),
 });
@@ -163,7 +163,7 @@ For each section, provide:
 2. altText: SEO-optimized description
 3. relevanceScore: 0-100 (how well it matches section content)
 4. qualityScore: 0-100 (image quality assessment)
-5. caption: Attribution if from external source (optional)
+5. caption: Brief descriptive caption (optional, NOT for attribution - attribution is handled separately)
 
 Skip sections where no image is relevant (relevanceScore < 60).`;
 }

@@ -34,6 +34,26 @@ import { insertImagesIntoMarkdown, type ImageInsertionResult } from './image-ins
 import { IMAGE_CURATOR_CONFIG } from './config';
 import { addTokenUsage, createEmptyTokenUsage } from './types';
 import { downloadImageWithRetry } from './services/image-downloader';
+import { getOrCreateArticleFolder, type FolderResult } from './services/folder-service';
+import { slugify } from '../../utils/slug';
+
+// ============================================================================
+// Type Helpers
+// ============================================================================
+
+/** Valid image source types for metadata */
+const VALID_IMAGE_SOURCES = ['igdb', 'tavily', 'exa'] as const;
+type ValidImageSource = typeof VALID_IMAGE_SOURCES[number];
+
+/**
+ * Safely converts an image source string to a typed image source.
+ * Returns 'web' as fallback for unknown sources.
+ */
+function toImageSourceType(source: string): ValidImageSource | 'web' {
+  return VALID_IMAGE_SOURCES.includes(source as ValidImageSource)
+    ? (source as ValidImageSource)
+    : 'web';
+}
 
 // ============================================================================
 // Research Pool Image Extraction
@@ -239,6 +259,25 @@ export async function runImagePhase(
     };
   }
 
+  // ===== STEP 1.5: Create Folder Structure =====
+  // Organize images by: /images/{game_slug}/{article_slug}
+  let articleFolder: FolderResult | undefined;
+  const gameSlug = context.gameSlug ?? slugify(context.gameName);
+  const articleSlug = slugify(articleTitle);
+  
+  try {
+    articleFolder = await getOrCreateArticleFolder(
+      { strapi, logger: log },
+      gameSlug,
+      articleSlug
+    );
+    log?.debug(`${logPrefix} Using folder: ${articleFolder.path} (id: ${articleFolder.id})`);
+  } catch (error) {
+    // Log but continue - images will be uploaded to root
+    const errorMsg = error instanceof Error ? error.message : String(error);
+    log?.warn(`${logPrefix} Failed to create article folder: ${errorMsg}`);
+  }
+
   // ===== STEP 2: Run Image Curator =====
   let curatorOutput: ImageCuratorOutput;
   try {
@@ -299,7 +338,17 @@ export async function runImagePhase(
           filename: createImageFilename(articleTitle, 'hero'),
           mimeType: heroResult.mimeType,
           altText: heroAssignment.altText,
-          caption: isIgdb ? 'Official game artwork' : `Image from ${heroAssignment.image.sourceDomain ?? 'web'}`,
+          // Caption is now just a description, not attribution
+          caption: isIgdb ? 'Official game artwork' : undefined,
+          // Source metadata stored in provider_metadata for frontend attribution
+          sourceMetadata: {
+            sourceUrl: heroAssignment.image.url,
+            sourceDomain: heroAssignment.image.sourceDomain,
+            imageSource: toImageSourceType(heroAssignment.image.source),
+          },
+          // Folder organization: /images/{game_slug}/{article_slug}
+          folderId: articleFolder?.id,
+          folderPath: articleFolder?.path,
         },
         uploaderDeps
       );
@@ -351,8 +400,16 @@ export async function runImagePhase(
             filename: createImageFilename(articleTitle, assignment.sectionHeadline, assignment.sectionIndex),
             altText: assignment.altText,
             caption: assignment.caption,
-            sourceDomain: assignment.image.sourceDomain,
+            // Source metadata stored in provider_metadata for frontend attribution
+            sourceMetadata: {
+              sourceUrl: assignment.image.url,
+              sourceDomain: assignment.image.sourceDomain,
+              imageSource: toImageSourceType(assignment.image.source),
+            },
             signal,
+            // Folder organization: /images/{game_slug}/{article_slug}
+            folderId: articleFolder?.id,
+            folderPath: articleFolder?.path,
           },
           uploaderDeps
         );
