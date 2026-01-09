@@ -124,7 +124,7 @@ export async function fetchWithExtendedTimeout(
   options: RequestInit & { timeoutMs?: number }
 ): Promise<{ status: number; statusText: string; ok: boolean; text: string }> {
   const { Agent, fetch: undiciFetch } = await import('undici');
-  const timeoutMs = options.timeoutMs ?? 900000;
+  const timeoutMs = options.timeoutMs ?? 1800000; // 30 minutes default
 
   const agent = new Agent({
     headersTimeout: timeoutMs,
@@ -721,7 +721,7 @@ export async function setupArticleGeneratorTest(
         publish: false,
         categorySlug: config.categorySlug,
       }),
-      timeoutMs: 900000,
+      timeoutMs: 1800000, // 30 minutes for full article generation
     }
   );
   console.log('[E2E Setup] HTTP response received');

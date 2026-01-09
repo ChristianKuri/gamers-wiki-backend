@@ -20,7 +20,8 @@ import type { Logger } from '../../utils/logger';
 import type { ArticlePlan } from './article-plan';
 import type { GameArticleContext, ResearchPool, TokenUsage } from './types';
 import type { ImagePool, CollectedImage } from './image-pool';
-import { createEmptyImagePool, addIGDBImages, addWebImages, getPoolSummary } from './image-pool';
+import { createEmptyImagePool, addIGDBImages, addWebImages, addSourceImages, getPoolSummary } from './image-pool';
+import type { CleanedSource } from './types';
 import { runImageCurator, type ImageCuratorOutput, type SectionImageAssignment, type HeroImageAssignment } from './agents/image-curator';
 import { processHeroImage, processSectionImage, getHighResIGDBUrl, type HeroImageResult, type SectionImageResult } from './hero-image';
 import { 
@@ -42,7 +43,7 @@ import { slugify } from '../../utils/slug';
 // ============================================================================
 
 /** Valid image source types for metadata */
-const VALID_IMAGE_SOURCES = ['igdb', 'tavily', 'exa'] as const;
+const VALID_IMAGE_SOURCES = ['igdb', 'tavily', 'exa', 'source'] as const;
 type ValidImageSource = typeof VALID_IMAGE_SOURCES[number];
 
 /**
@@ -91,6 +92,15 @@ export function extractImagesFromResearchPool(researchPool: ResearchPool): Image
       // Process per-result images (from individual search results)
       // Use the actual source so images are properly tracked as 'tavily' or 'exa'
       for (const result of searchResult.results) {
+        // First, add source-extracted images with proper 'source' attribution and priority
+        // These have rich context (headers, paragraphs) from the cleaning phase
+        if (result.sourceImages && result.sourceImages.length > 0) {
+          const domain = new URL(result.url).hostname.replace(/^www\./, '');
+          imagePool = addSourceImages(imagePool, result.sourceImages, result.url, domain);
+        }
+        
+        // Then add regular search result images (Tavily/Exa)
+        // These may overlap with source images but deduplication will handle it
         if (result.images && result.images.length > 0) {
           const images = result.images.map((img) => ({
             url: img.url,
@@ -118,6 +128,39 @@ export function extractImagesFromResearchPool(researchPool: ResearchPool): Image
   return imagePool;
 }
 
+/**
+ * Adds images from cleaned source articles to an existing ImagePool.
+ *
+ * Source article images have rich context (nearest header, surrounding paragraph)
+ * which makes them highly relevant for specific article sections.
+ *
+ * @param pool - Existing image pool to add to
+ * @param cleanedSources - Cleaned sources that may contain extracted images
+ * @returns Updated ImagePool with source images added
+ */
+export function addSourceImagesToPool(
+  pool: ImagePool,
+  cleanedSources: readonly CleanedSource[]
+): ImagePool {
+  let updatedPool = pool;
+
+  for (const source of cleanedSources) {
+    // Skip sources without images (cached entries or sources that had no images)
+    if (!source.images || source.images.length === 0) {
+      continue;
+    }
+
+    updatedPool = addSourceImages(
+      updatedPool,
+      source.images,
+      source.url,
+      source.domain
+    );
+  }
+
+  return updatedPool;
+}
+
 // ============================================================================
 // Types
 // ============================================================================
@@ -134,6 +177,8 @@ export interface ImagePhaseInput {
   readonly context: GameArticleContext;
   /** Image pool from search phases (Tavily/Exa images) */
   readonly searchImagePool?: ImagePool;
+  /** Cleaned sources with extracted images (for source image attribution) */
+  readonly cleanedSources?: readonly CleanedSource[];
   /** Article title (from metadata) */
   readonly articleTitle: string;
 }
@@ -195,7 +240,7 @@ export async function runImagePhase(
   input: ImagePhaseInput,
   deps: ImagePhaseDeps
 ): Promise<ImagePhaseResult> {
-  const { markdown, plan, context, searchImagePool, articleTitle } = input;
+  const { markdown, plan, context, searchImagePool, cleanedSources, articleTitle } = input;
   const { model, strapi, logger: log, signal } = deps;
 
   // Generate correlation ID for tracing this image phase execution
@@ -242,9 +287,21 @@ export async function runImagePhase(
     );
   }
 
+  // Add source images from cleaned sources if provided (backup path)
+  // Note: Source images now also flow through searchImagePool via result.sourceImages
+  // This path is kept for cases where cleanedSources is passed separately
+  if (cleanedSources?.length) {
+    const beforeCount = imagePool.count;
+    imagePool = addSourceImagesToPool(imagePool, cleanedSources);
+    const addedCount = imagePool.count - beforeCount;
+    if (addedCount > 0) {
+      log?.info(`${logPrefix} Added ${addedCount} additional source images from cleanedSources`);
+    }
+  }
+
   const poolSummary = getPoolSummary(imagePool);
   const webCount = poolSummary.tavily + poolSummary.exa;
-  log?.info(`${logPrefix} Image pool: ${poolSummary.total} total (${poolSummary.igdb} IGDB, ${webCount} web)`);
+  log?.info(`${logPrefix} Image pool: ${poolSummary.total} total (${poolSummary.igdb} IGDB, ${poolSummary.source} source, ${webCount} web)`);
 
   // Check if we have any images to work with
   if (imagePool.count === 0) {

@@ -777,6 +777,13 @@ export const IMAGE_CURATOR_CONFIG = {
 
 export const IMAGE_POOL_CONFIG = {
   /**
+   * Minimum dimension (width or height) for images with explicit sizes in URLs.
+   * Images with w=199 or h=150 in query params will be filtered out.
+   * Images WITHOUT dimensions in URL are NOT filtered (could be full-size).
+   * Configurable threshold for tuning image quality filtering.
+   */
+  MIN_URL_DIMENSION: 200,
+  /**
    * Minimum image width (px) for pool inclusion.
    * More lenient than curator selection to keep candidates available.
    */
@@ -818,6 +825,26 @@ export const IMAGE_POOL_CONFIG = {
     'pushsquare.com',
     'nintendolife.com',
     'dualshockers.com',
+  ] as const,
+  /**
+   * Known image CDN patterns for URL detection.
+   * URLs containing these patterns are treated as images even without file extensions.
+   */
+  KNOWN_IMAGE_CDNS: [
+    'images.igdb.com',
+    'cloudinary.com',
+    'imgur.com',
+    'i.imgur.com',
+    'cdn.discordapp.com',
+    'media.discordapp.net',
+    'staticflickr.com',
+    'twimg.com',
+    'pbs.twimg.com',
+    'wp-content/uploads',
+    'static0.gamerantimages.com',
+    'static0.thegamerimages.com',
+    'oyster.ignimgs.com',
+    'fextralife.com/file',
   ] as const,
 } as const;
 
@@ -981,6 +1008,19 @@ export const CLEANER_CONFIG = {
    * When false, only checks DB cache - doesn't run LLM on misses.
    */
   ENABLED: true,
+  /**
+   * Whether to use the source cache for cleaned content.
+   * When false, bypasses cache reads (treats all URLs as cache misses) but still
+   * stores cleaned results to update the cache. Useful for testing new features
+   * like image extraction where cached entries don't have the new fields.
+   */
+  CACHE_ENABLED: true,
+  /**
+   * Maximum number of images to extract per source.
+   * Caps image extraction to avoid bloating the image pool with too many
+   * images from a single source. Images beyond this limit are dropped.
+   */
+  MAX_IMAGES_PER_SOURCE: 20,
   /**
    * Whether to use LLM pre-filter before full cleaning.
    * Pre-filter uses title + snippet to check relevance.

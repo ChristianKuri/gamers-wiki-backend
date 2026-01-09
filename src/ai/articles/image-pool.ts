@@ -5,12 +5,15 @@
  * - IGDB (official screenshots, artworks, cover)
  * - Tavily web search (up to 5 images per search)
  * - Exa semantic search (imageLinks)
+ * - Source articles (images extracted from cleaned content)
  *
  * Images are deduplicated, filtered, and prepared for the Image Curator agent.
  */
 
 import { extractDomain } from './utils/url-utils';
 import { IMAGE_POOL_CONFIG } from './config';
+import type { SourceImage } from './types';
+import { normalizeUrl } from './utils/image-extractor';
 
 // ============================================================================
 // Types
@@ -18,8 +21,12 @@ import { IMAGE_POOL_CONFIG } from './config';
 
 /**
  * Source of a collected image.
+ * - igdb: Official IGDB images (screenshots, artwork, cover)
+ * - tavily: Images from Tavily web search
+ * - exa: Images from Exa semantic search
+ * - source: Images extracted from cleaned source articles
  */
-export type ImageSource = 'igdb' | 'tavily' | 'exa';
+export type ImageSource = 'igdb' | 'tavily' | 'exa' | 'source';
 
 /**
  * Type of IGDB image.
@@ -82,9 +89,14 @@ export interface ImagePool {
 const IMAGE_PRIORITY = {
   IGDB_ARTWORK: 100,
   IGDB_SCREENSHOT: 80,
+  // Source article images (extracted from cleaned content) - medium priority
+  // Better context than web search but not official like IGDB
+  SOURCE_HIGH_QUALITY: 65,
   IGDB_COVER: 60,
+  SOURCE_DEFAULT: 55,
   WEB_HIGH_QUALITY: 50,
   WEB_DEFAULT: 40,
+  SOURCE_LOW_QUALITY: 35,
   WEB_LOW_QUALITY: 20,
 } as const;
 
@@ -93,6 +105,38 @@ const HIGH_QUALITY_DOMAINS = new Set<string>(IMAGE_POOL_CONFIG.HIGH_QUALITY_DOMA
 
 /** Domains to exclude (low quality, watermarked, etc.) (from config) */
 const EXCLUDED_DOMAINS = new Set<string>(IMAGE_POOL_CONFIG.EXCLUDED_DOMAINS);
+
+// URL normalization imported from image-extractor.ts for consistent deduplication
+
+// ============================================================================
+// URL Dimension Filtering
+// ============================================================================
+
+/**
+ * Checks if a URL has explicit small dimensions in query params.
+ * Only filters if dimensions ARE specified and are below threshold.
+ * URLs without dimension params are NOT filtered (could be full-size).
+ *
+ * @param url - URL to check (should be lowercase)
+ * @returns true if URL has small dimensions that should be filtered
+ */
+function hasSmallUrlDimensions(url: string): boolean {
+  // Match w=123 or width=123
+  const widthMatch = url.match(/[?&](w|width)=(\d+)(&|$)/);
+  if (widthMatch) {
+    const width = parseInt(widthMatch[2], 10);
+    if (width < IMAGE_POOL_CONFIG.MIN_URL_DIMENSION) return true;
+  }
+
+  // Match h=123 or height=123
+  const heightMatch = url.match(/[?&](h|height)=(\d+)(&|$)/);
+  if (heightMatch) {
+    const height = parseInt(heightMatch[2], 10);
+    if (height < IMAGE_POOL_CONFIG.MIN_URL_DIMENSION) return true;
+  }
+
+  return false; // No dimensions in URL = don't filter
+}
 
 // ============================================================================
 // Factory Functions
@@ -113,6 +157,7 @@ export function createEmptyImagePool(): ImagePool {
 
 /**
  * Checks if an image URL should be filtered out.
+ * Uses conservative filtering - only filter obvious bad images.
  */
 function shouldFilterImage(url: string, domain: string): boolean {
   // Filter excluded domains
@@ -121,21 +166,130 @@ function shouldFilterImage(url: string, domain: string): boolean {
   // Filter tracking pixels, icons, and small images by URL patterns
   const lowerUrl = url.toLowerCase();
   if (
+    // SVG files (never content images, always icons/logos/vectors)
+    lowerUrl.endsWith('.svg') ||
+    // Tracking and analytics
     lowerUrl.includes('pixel') ||
     lowerUrl.includes('tracking') ||
     lowerUrl.includes('beacon') ||
     lowerUrl.includes('1x1') ||
     lowerUrl.includes('spacer') ||
-    lowerUrl.includes('/icon') ||
-    lowerUrl.includes('/logo') ||
-    lowerUrl.includes('favicon') ||
     lowerUrl.includes('.gif') || // Often used for tracking
     lowerUrl.includes('ad.') ||
-    lowerUrl.includes('/ads/')
+    lowerUrl.includes('/ads/') ||
+    // Video thumbnails (never game screenshots, always YT video previews)
+    lowerUrl.includes('ytimg.com') ||
+    // Site chrome and UI elements
+    lowerUrl.includes('/icon') ||
+    lowerUrl.includes('favicon') ||
+    lowerUrl.includes('/sprites/') ||
+    lowerUrl.includes('/flags/') ||
+    lowerUrl.includes('/badge') ||
+    // Any logo (catches all social share buttons, platform logos, site logos)
+    lowerUrl.includes('logo') ||
+    // Author photos (small profile pics)
+    lowerUrl.includes('/authors/') ||
+    // User content (avatars, profiles)
+    lowerUrl.includes('/avatar') ||
+    lowerUrl.includes('/user/') ||
+    lowerUrl.includes('/profile/') ||
+    lowerUrl.includes('/thumbs/') ||
+    lowerUrl.includes('_thumb.') ||
+    lowerUrl.includes('-thumb.') ||
+    // Achievement/trophy icons (site UI, not game screenshots)
+    lowerUrl.includes('/achievement') ||
+    lowerUrl.includes('/trophy')
   ) {
     return true;
   }
 
+  // Filter small dimensions in URL path (e.g., /50x50/, /16x16_)
+  // These are typically thumbnails or icons, not content images
+  if (/\/\d{1,2}x\d{1,2}[._\-/]/.test(lowerUrl)) {
+    return true;
+  }
+
+  // Filter small dimensions in URL query params (w=50, h=99, etc.)
+  // Only filters if dimensions ARE specified and are below MIN_URL_DIMENSION
+  if (hasSmallUrlDimensions(lowerUrl)) {
+    return true;
+  }
+
+  return false;
+}
+
+/**
+ * Checks if an image has a low-quality or generic description.
+ * Used to filter out images with vague metadata that won't help the curator.
+ */
+function hasLowQualityDescription(description?: string): boolean {
+  if (!description) return false;
+  
+  const lower = description.toLowerCase().trim();
+  
+  // Exact "Image" match (generic placeholder alt text)
+  if (lower === 'image') {
+    return true;
+  }
+  
+  // Generic numbered images (e.g., "Image 2", "Image 5: Something")
+  if (/^image\s*\d+/i.test(lower)) {
+    return true;
+  }
+  
+  // Pure numeric descriptions (e.g., "4" for author avatar numbering)
+  if (/^\d+$/.test(lower)) {
+    return true;
+  }
+  
+  // Social share descriptions (e.g., "share on facebook", "share on twitter")
+  if (lower.startsWith('share on ')) {
+    return true;
+  }
+  
+  // Logo descriptions (any description containing "logo")
+  if (lower.includes('logo')) {
+    return true;
+  }
+  
+  // User avatars and profile pictures
+  if (
+    lower.includes('avatar') ||
+    lower.includes('profile picture') ||
+    lower.includes('profile pic') ||
+    lower.includes('user photo')
+  ) {
+    return true;
+  }
+  
+  // Site UI elements and game mode badges
+  if (
+    lower.includes('offline mode') ||
+    lower.includes('single player') ||
+    lower.includes('online mode') ||
+    lower.includes('multiplayer mode') ||
+    lower.includes('co-op mode')
+  ) {
+    return true;
+  }
+  
+  // Rating badges (ESRB, PEGI, etc.)
+  if (/^esrb|^pegi|^rating|mature\s*\d|teen\s*\d/i.test(lower)) {
+    return true;
+  }
+  
+  // Platform logos (kept for backward compatibility, though 'logo' check above catches most)
+  if (
+    lower === 'playstation' ||
+    lower === 'xbox' ||
+    lower === 'nintendo' ||
+    lower === 'steam' ||
+    /^playstation\s*\d/i.test(lower) ||
+    /^xbox\s*(one|series)/i.test(lower)
+  ) {
+    return true;
+  }
+  
   return false;
 }
 
@@ -192,8 +346,9 @@ export function addIGDBImages(
 
   // Add artworks (higher priority for hero images)
   for (const url of artworkUrls) {
-    if (newSeenUrls.has(url)) continue;
-    newSeenUrls.add(url);
+    const normalizedUrl = normalizeUrl(url);
+    if (newSeenUrls.has(normalizedUrl)) continue;
+    newSeenUrls.add(normalizedUrl);
 
     newImages.push({
       url,
@@ -207,8 +362,9 @@ export function addIGDBImages(
 
   // Add screenshots
   for (const url of screenshotUrls) {
-    if (newSeenUrls.has(url)) continue;
-    newSeenUrls.add(url);
+    const normalizedUrl = normalizeUrl(url);
+    if (newSeenUrls.has(normalizedUrl)) continue;
+    newSeenUrls.add(normalizedUrl);
 
     newImages.push({
       url,
@@ -221,8 +377,9 @@ export function addIGDBImages(
   }
 
   // Add cover image
-  if (coverUrl && !newSeenUrls.has(coverUrl)) {
-    newSeenUrls.add(coverUrl);
+  const normalizedCoverUrl = coverUrl ? normalizeUrl(coverUrl) : null;
+  if (coverUrl && normalizedCoverUrl && !newSeenUrls.has(normalizedCoverUrl)) {
+    newSeenUrls.add(normalizedCoverUrl);
     newImages.push({
       url: coverUrl,
       source: 'igdb',
@@ -269,12 +426,13 @@ export function addWebImages(
   const newSeenUrls = new Set(pool.seenUrls);
 
   for (const img of images) {
-    if (newSeenUrls.has(img.url)) continue;
+    const normalizedUrl = normalizeUrl(img.url);
+    if (newSeenUrls.has(normalizedUrl)) continue;
 
     const domain = extractDomain(img.url);
     if (shouldFilterImage(img.url, domain)) continue;
 
-    newSeenUrls.add(img.url);
+    newSeenUrls.add(normalizedUrl);
     newImages.push({
       url: img.url,
       source,
@@ -323,31 +481,35 @@ export function addExaImages(
     const sourceDomain = extractDomain(sourceUrl);
 
     // Add representative image if available
-    if (result.image && !newSeenUrls.has(result.image)) {
-      const imgDomain = extractDomain(result.image);
-      if (!shouldFilterImage(result.image, imgDomain)) {
-        newSeenUrls.add(result.image);
-        newImages.push({
-          url: result.image,
-          source: 'exa',
-          sourceUrl,
-          sourceDomain,
-          sourceQuery,
-          isOfficial: false,
-          priority: getImagePriority('exa', undefined, sourceDomain),
-        });
+    if (result.image) {
+      const normalizedImageUrl = normalizeUrl(result.image);
+      if (!newSeenUrls.has(normalizedImageUrl)) {
+        const imgDomain = extractDomain(result.image);
+        if (!shouldFilterImage(result.image, imgDomain)) {
+          newSeenUrls.add(normalizedImageUrl);
+          newImages.push({
+            url: result.image,
+            source: 'exa',
+            sourceUrl,
+            sourceDomain,
+            sourceQuery,
+            isOfficial: false,
+            priority: getImagePriority('exa', undefined, sourceDomain),
+          });
+        }
       }
     }
 
     // Add imageLinks
     if (result.imageLinks) {
       for (const imgUrl of result.imageLinks) {
-        if (newSeenUrls.has(imgUrl)) continue;
+        const normalizedImgUrl = normalizeUrl(imgUrl);
+        if (newSeenUrls.has(normalizedImgUrl)) continue;
 
         const imgDomain = extractDomain(imgUrl);
         if (shouldFilterImage(imgUrl, imgDomain)) continue;
 
-        newSeenUrls.add(imgUrl);
+        newSeenUrls.add(normalizedImgUrl);
         newImages.push({
           url: imgUrl,
           source: 'exa',
@@ -375,6 +537,121 @@ export function addExaImages(
     count: allImages.length,
     seenUrls: newSeenUrls,
   };
+}
+
+/**
+ * Adds images extracted from cleaned source articles to the pool.
+ *
+ * These images have rich contextual information (nearest header, surrounding paragraph)
+ * which makes them more relevant to specific article sections. They get medium priority -
+ * better context than generic web search, but not official like IGDB.
+ *
+ * @param pool - Current image pool
+ * @param images - Images extracted from cleaned source
+ * @param sourceUrl - URL of the source article
+ * @param sourceDomain - Domain of the source article
+ * @returns Updated image pool
+ */
+export function addSourceImages(
+  pool: ImagePool,
+  images: readonly SourceImage[],
+  sourceUrl: string,
+  sourceDomain: string
+): ImagePool {
+  const newImages: CollectedImage[] = [];
+  const newSeenUrls = new Set(pool.seenUrls);
+
+  for (const img of images) {
+    // Skip if already seen (use normalized URL for deduplication)
+    const normalizedUrl = normalizeUrl(img.url);
+    if (newSeenUrls.has(normalizedUrl)) continue;
+
+    // Check if should be filtered by URL patterns
+    const imgDomain = extractDomain(img.url);
+    if (shouldFilterImage(img.url, imgDomain)) continue;
+    
+    // Skip images with low-quality descriptions (they likely won't help the curator)
+    if (hasLowQualityDescription(img.description)) continue;
+
+    newSeenUrls.add(normalizedUrl);
+    newImages.push({
+      url: img.url,
+      source: 'source',
+      description: img.description,
+      sourceUrl,
+      sourceDomain,
+      // Use context as the source query for better matching in image curator
+      sourceQuery: img.nearestHeader ?? img.contextParagraph?.slice(0, 100),
+      isOfficial: false,
+      // Pass description and header for quality-aware priority calculation
+      priority: getSourceImagePriority(sourceDomain, img.description, img.nearestHeader),
+    });
+  }
+
+  if (newImages.length === 0) {
+    return pool;
+  }
+
+  const allImages = [...pool.images, ...newImages];
+  const webImages = [...pool.webImages, ...newImages];
+
+  return {
+    images: allImages,
+    igdbImages: pool.igdbImages,
+    webImages, // Source images count as web images for categorization
+    count: allImages.length,
+    seenUrls: newSeenUrls,
+  };
+}
+
+/**
+ * Gets priority score for a source image based on domain quality and metadata.
+ *
+ * @param sourceDomain - Domain the image came from
+ * @param description - Image description (may be cleaned filename or alt text)
+ * @param nearestHeader - Nearest H2/H3 header above the image
+ * @returns Priority score
+ */
+function getSourceImagePriority(
+  sourceDomain: string,
+  description?: string,
+  nearestHeader?: string
+): number {
+  // Start with base priority based on domain
+  let priority: number;
+  
+  if (HIGH_QUALITY_DOMAINS.has(sourceDomain)) {
+    priority = IMAGE_PRIORITY.SOURCE_HIGH_QUALITY;
+  } else {
+    // Check for common low-quality patterns
+    const lowerDomain = sourceDomain.toLowerCase();
+    if (
+      lowerDomain.includes('reddit') ||
+      lowerDomain.includes('tumblr') ||
+      lowerDomain.includes('pinterest')
+    ) {
+      priority = IMAGE_PRIORITY.SOURCE_LOW_QUALITY;
+    } else {
+      priority = IMAGE_PRIORITY.SOURCE_DEFAULT;
+    }
+  }
+  
+  // Boost priority if image has good section context
+  // Images with headers are more likely to be relevant to specific sections
+  if (nearestHeader && nearestHeader.length > 3) {
+    priority += 5;
+  }
+  
+  // Penalize images with missing or very short descriptions
+  if (!description || description.length < 10) {
+    priority -= 10;
+  }
+  
+  // Note: hasLowQualityDescription check removed - images with low-quality
+  // descriptions are already filtered in addSourceImages() before this function
+  
+  // Ensure priority doesn't go below minimum useful threshold
+  return Math.max(priority, IMAGE_PRIORITY.WEB_LOW_QUALITY);
 }
 
 /**
@@ -418,30 +695,66 @@ export function getImagesByPriority(pool: ImagePool): readonly CollectedImage[] 
 }
 
 /**
- * Gets the best image for hero usage from IGDB sources only.
+ * Gets the best image for hero/featured image usage.
  *
- * Hero images should be high quality to represent the article visually.
- * This function only returns IGDB images (artwork/screenshot/cover) since
- * web images have unknown quality until download. Returns undefined if no
- * IGDB images are available, letting the image curator decide whether to
- * use web images based on LLM analysis.
+ * Considers ALL image sources (IGDB, source, web) and scores by:
+ * - Article title relevance (description/query matching title keywords)
+ * - Source quality (IGDB images get a bonus)
+ * - Image type (artwork gets a slight preference)
+ *
+ * @param pool - Image pool to select from
+ * @param articleTitle - Optional article title for relevance scoring
+ * @returns Best matching image, or undefined if pool is empty
  */
-export function getBestHeroImage(pool: ImagePool): CollectedImage | undefined {
-  // First try IGDB artwork (highest quality official art)
-  const artwork = pool.igdbImages.find((img) => img.igdbType === 'artwork');
-  if (artwork) return artwork;
+export function getBestHeroImage(
+  pool: ImagePool,
+  articleTitle?: string
+): CollectedImage | undefined {
+  // If no images at all, return undefined
+  if (pool.count === 0) return undefined;
 
-  // Then IGDB screenshot
-  const screenshot = pool.igdbImages.find((img) => img.igdbType === 'screenshot');
-  if (screenshot) return screenshot;
+  // If no title provided, fall back to highest priority image
+  if (!articleTitle) {
+    return getImagesByPriority(pool)[0];
+  }
 
-  // Finally IGDB cover (smaller but still official)
-  const cover = pool.igdbImages.find((img) => img.igdbType === 'cover');
-  if (cover) return cover;
+  // Extract keywords from article title (words > 3 chars)
+  const titleKeywords = articleTitle
+    .toLowerCase()
+    .split(/\s+/)
+    .filter((w) => w.length > 3);
 
-  // Don't return web images for hero - they have unknown quality until download.
-  // Let the image curator decide if web images are acceptable based on LLM analysis.
-  return undefined;
+  // Score ALL images by title relevance (not just IGDB)
+  const scored = pool.images.map((img) => {
+    let score = img.priority;
+
+    // Big boost for description matching title keywords
+    if (img.description) {
+      const descLower = img.description.toLowerCase();
+      for (const keyword of titleKeywords) {
+        if (descLower.includes(keyword)) score += 25;
+      }
+    }
+
+    // Boost for sourceQuery matching title keywords
+    if (img.sourceQuery) {
+      const queryLower = img.sourceQuery.toLowerCase();
+      for (const keyword of titleKeywords) {
+        if (queryLower.includes(keyword)) score += 15;
+      }
+    }
+
+    // Small boost for IGDB images (known quality)
+    if (img.source === 'igdb') score += 10;
+
+    // Small boost for artwork type
+    if (img.igdbType === 'artwork') score += 5;
+
+    return { image: img, score };
+  });
+
+  scored.sort((a, b) => b.score - a.score);
+  return scored[0]?.image;
 }
 
 /**
@@ -504,6 +817,7 @@ export function getPoolSummary(pool: ImagePool): {
   igdb: number;
   tavily: number;
   exa: number;
+  source: number;
   artworks: number;
   screenshots: number;
 } {
@@ -511,6 +825,7 @@ export function getPoolSummary(pool: ImagePool): {
   let screenshots = 0;
   let tavily = 0;
   let exa = 0;
+  let source = 0;
 
   for (const img of pool.images) {
     if (img.source === 'igdb') {
@@ -520,6 +835,8 @@ export function getPoolSummary(pool: ImagePool): {
       tavily++;
     } else if (img.source === 'exa') {
       exa++;
+    } else if (img.source === 'source') {
+      source++;
     }
   }
 
@@ -528,6 +845,7 @@ export function getPoolSummary(pool: ImagePool): {
     igdb: pool.igdbImages.length,
     tavily,
     exa,
+    source,
     artworks,
     screenshots,
   };

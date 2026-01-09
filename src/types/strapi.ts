@@ -214,6 +214,8 @@ export interface SourceContentDocument extends StrapiDocument {
   keyFacts: readonly string[] | null;
   /** Specific data points: stats, dates, names, numbers */
   dataPoints: readonly string[] | null;
+  /** Images extracted from the source with context (JSON serialized) */
+  images: unknown | null;
   cleanedContent: string;
   originalContentLength: number;
   /** Quality score (0-100), null for scrape failures */

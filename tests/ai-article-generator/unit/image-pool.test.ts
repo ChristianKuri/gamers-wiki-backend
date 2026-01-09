@@ -10,6 +10,7 @@ import {
   addIGDBImages,
   addWebImages,
   addExaImages,
+  addSourceImages,
   mergeImagePools,
   getImagesByPriority,
   getBestHeroImage,
@@ -139,6 +140,20 @@ describe('ImagePool', () => {
       const updated = addWebImages(pool, images, 'test query');
 
       expect(updated.count).toBe(0);
+    });
+
+    it('should filter out YouTube thumbnail URLs', () => {
+      const pool = createEmptyImagePool();
+      const images = [
+        { url: 'https://i.ytimg.com/vi/EV-uC5_PESo/hqdefault.jpg', description: 'Video thumbnail' },
+        { url: 'https://img.ytimg.com/vi/abc123/maxresdefault.jpg', description: 'Another video' },
+        { url: 'https://example.com/real-image.jpg', description: 'Valid image' },
+      ];
+
+      const updated = addWebImages(pool, images, 'test query', 'tavily');
+
+      expect(updated.count).toBe(1);
+      expect(updated.images[0].url).toContain('example.com');
     });
 
     it('should give higher priority to quality domains', () => {
@@ -292,6 +307,428 @@ describe('ImagePool', () => {
       expect(summary.exa).toBe(0);
       expect(summary.artworks).toBe(1);
       expect(summary.screenshots).toBe(1);
+    });
+  });
+
+  describe('URL normalization for deduplication', () => {
+    it('should deduplicate URLs with different query params', () => {
+      let pool = createEmptyImagePool();
+      pool = addWebImages(pool, [
+        { url: 'https://example.com/image.jpg?size=large', description: 'First' },
+        { url: 'https://example.com/image.jpg?size=small', description: 'Second' },
+      ], 'query');
+
+      // Should dedupe to 1 image since base URL is the same
+      expect(pool.count).toBe(1);
+    });
+
+    it('should deduplicate URLs with different fragments', () => {
+      let pool = createEmptyImagePool();
+      pool = addWebImages(pool, [
+        { url: 'https://example.com/image.jpg#v1', description: 'First' },
+        { url: 'https://example.com/image.jpg#v2', description: 'Second' },
+      ], 'query');
+
+      expect(pool.count).toBe(1);
+    });
+
+    it('should deduplicate case-insensitive URLs', () => {
+      let pool = createEmptyImagePool();
+      pool = addWebImages(pool, [
+        { url: 'https://Example.COM/Image.jpg', description: 'First' },
+        { url: 'https://example.com/image.jpg', description: 'Second' },
+      ], 'query');
+
+      expect(pool.count).toBe(1);
+    });
+
+    it('should keep different URLs as separate', () => {
+      let pool = createEmptyImagePool();
+      pool = addWebImages(pool, [
+        { url: 'https://example.com/image1.jpg', description: 'First' },
+        { url: 'https://example.com/image2.jpg', description: 'Second' },
+      ], 'query');
+
+      expect(pool.count).toBe(2);
+    });
+
+    it('should deduplicate across IGDB and web images', () => {
+      let pool = createEmptyImagePool();
+      // Add same URL as IGDB first
+      pool = addIGDBImages(pool, 
+        ['https://images.igdb.com/image.jpg'],
+        []
+      );
+      // Try to add same URL from web search
+      pool = addWebImages(pool, [
+        { url: 'https://images.igdb.com/image.jpg?utm_source=tavily', description: 'Web result' },
+      ], 'query');
+
+      // Should still be 1 image (IGDB takes precedence)
+      expect(pool.count).toBe(1);
+      expect(pool.images[0].source).toBe('igdb');
+    });
+  });
+
+  describe('getPoolSummary with source images', () => {
+    it('should include source count in summary', () => {
+      let pool = createEmptyImagePool();
+      pool = addIGDBImages(pool, 
+        ['https://images.igdb.com/screenshots/ss.jpg'],
+        ['https://images.igdb.com/artworks/art.jpg']
+      );
+      pool = addWebImages(pool, [
+        { url: 'https://example.com/web.jpg' },
+      ], 'query');
+      pool = addSourceImages(pool, [
+        { url: 'https://example.com/source1.jpg', description: 'Source image with good description', position: 0 },
+        { url: 'https://example.com/source2.jpg', description: 'Another source image here', position: 1 },
+      ], 'https://example.com/article', 'example.com');
+
+      const summary = getPoolSummary(pool);
+
+      expect(summary.total).toBe(5);
+      expect(summary.igdb).toBe(2);
+      expect(summary.tavily).toBe(1);
+      expect(summary.source).toBe(2);
+      expect(summary.exa).toBe(0);
+    });
+  });
+
+  describe('URL filtering for UI elements', () => {
+    it('should filter out sprite URLs', () => {
+      let pool = createEmptyImagePool();
+      pool = addSourceImages(pool, [
+        { url: 'https://example.com/sprites/icon.png', description: 'Sprite icon', position: 0 },
+        { url: 'https://example.com/content/screenshot.jpg', description: 'Valid screenshot image', position: 1 },
+      ], 'https://example.com/article', 'example.com');
+
+      // Only the valid screenshot should be added
+      expect(pool.count).toBe(1);
+      expect(pool.images[0].url).toBe('https://example.com/content/screenshot.jpg');
+    });
+
+    it('should filter out avatar URLs', () => {
+      let pool = createEmptyImagePool();
+      pool = addSourceImages(pool, [
+        { url: 'https://example.com/avatar/user123.jpg', description: 'User avatar', position: 0 },
+        { url: 'https://example.com/game/boss-fight.png', description: 'Boss fight gameplay screenshot', position: 1 },
+      ], 'https://example.com/article', 'example.com');
+
+      expect(pool.count).toBe(1);
+      expect(pool.images[0].url).toBe('https://example.com/game/boss-fight.png');
+    });
+
+    it('should filter out thumbnail URLs', () => {
+      let pool = createEmptyImagePool();
+      pool = addSourceImages(pool, [
+        { url: 'https://example.com/thumbs/small.jpg', description: 'Thumbnail image', position: 0 },
+        { url: 'https://example.com/image_thumb.jpg', description: 'Another thumbnail', position: 1 },
+        { url: 'https://example.com/full-image.jpg', description: 'Full size image for article', position: 2 },
+      ], 'https://example.com/article', 'example.com');
+
+      expect(pool.count).toBe(1);
+      expect(pool.images[0].url).toBe('https://example.com/full-image.jpg');
+    });
+
+    it('should filter out small dimension URLs', () => {
+      let pool = createEmptyImagePool();
+      pool = addSourceImages(pool, [
+        { url: 'https://example.com/16x16/icon.png', description: 'Small icon', position: 0 },
+        { url: 'https://example.com/50x50_avatar.jpg', description: 'Avatar', position: 1 },
+        { url: 'https://example.com/1920x1080/screenshot.jpg', description: 'Full resolution screenshot', position: 2 },
+      ], 'https://example.com/article', 'example.com');
+
+      expect(pool.count).toBe(1);
+      expect(pool.images[0].url).toBe('https://example.com/1920x1080/screenshot.jpg');
+    });
+
+    it('should filter out flags and badges', () => {
+      let pool = createEmptyImagePool();
+      pool = addSourceImages(pool, [
+        { url: 'https://example.com/flags/offline-mode.png', description: 'Offline flag', position: 0 },
+        { url: 'https://example.com/badge/achievement.png', description: 'Achievement badge', position: 1 },
+        { url: 'https://example.com/gameplay/combat.jpg', description: 'Combat gameplay screenshot', position: 2 },
+      ], 'https://example.com/article', 'example.com');
+
+      expect(pool.count).toBe(1);
+      expect(pool.images[0].url).toBe('https://example.com/gameplay/combat.jpg');
+    });
+  });
+
+  describe('Description-based filtering', () => {
+    it('should filter out images with generic numbered descriptions', () => {
+      let pool = createEmptyImagePool();
+      pool = addSourceImages(pool, [
+        { url: 'https://example.com/img1.jpg', description: 'Image 1', position: 0 },
+        { url: 'https://example.com/img2.jpg', description: 'Image 5: Something', position: 1 },
+        { url: 'https://example.com/boss.jpg', description: 'Simon boss fight phase 1', position: 2 },
+      ], 'https://example.com/article', 'example.com');
+
+      // Only the descriptive image should remain
+      expect(pool.count).toBe(1);
+      expect(pool.images[0].description).toBe('Simon boss fight phase 1');
+    });
+
+    it('should filter out avatar/profile descriptions', () => {
+      let pool = createEmptyImagePool();
+      pool = addSourceImages(pool, [
+        { url: 'https://example.com/user.jpg', description: 'User avatar', position: 0 },
+        { url: 'https://example.com/pic.jpg', description: 'Profile picture of player', position: 1 },
+        { url: 'https://example.com/game.jpg', description: 'Character build guide screenshot', position: 2 },
+      ], 'https://example.com/article', 'example.com');
+
+      expect(pool.count).toBe(1);
+      expect(pool.images[0].description).toBe('Character build guide screenshot');
+    });
+
+    it('should filter out platform/rating badge descriptions', () => {
+      let pool = createEmptyImagePool();
+      pool = addSourceImages(pool, [
+        { url: 'https://example.com/esrb.jpg', description: 'ESRB: Mature', position: 0 },
+        { url: 'https://example.com/ps5.jpg', description: 'PlayStation 5', position: 1 },
+        { url: 'https://example.com/combat.jpg', description: 'Combat system explained', position: 2 },
+      ], 'https://example.com/article', 'example.com');
+
+      expect(pool.count).toBe(1);
+      expect(pool.images[0].description).toBe('Combat system explained');
+    });
+  });
+
+  describe('Priority based on metadata quality', () => {
+    it('should give higher priority to images with headers', () => {
+      let pool = createEmptyImagePool();
+      pool = addSourceImages(pool, [
+        { url: 'https://example.com/img1.jpg', description: 'Screenshot without header context', position: 0 },
+        { url: 'https://example.com/img2.jpg', description: 'Screenshot with header', position: 1, nearestHeader: 'Phase 1 Strategy' },
+      ], 'https://example.com/article', 'example.com');
+
+      // Image with header should have higher priority
+      const withHeader = pool.images.find(i => i.url.includes('img2'));
+      const withoutHeader = pool.images.find(i => i.url.includes('img1'));
+      
+      expect(withHeader!.priority).toBeGreaterThan(withoutHeader!.priority);
+    });
+
+    it('should penalize images with very short descriptions', () => {
+      let pool = createEmptyImagePool();
+      pool = addSourceImages(pool, [
+        { url: 'https://example.com/short.jpg', description: 'Short', position: 0 },
+        { url: 'https://example.com/long.jpg', description: 'This is a much longer and more descriptive caption', position: 1 },
+      ], 'https://example.com/article', 'example.com');
+
+      const shortDesc = pool.images.find(i => i.url.includes('short'));
+      const longDesc = pool.images.find(i => i.url.includes('long'));
+      
+      expect(longDesc!.priority).toBeGreaterThan(shortDesc!.priority);
+    });
+  });
+
+  describe('SVG and logo URL filtering', () => {
+    it('should filter out SVG files', () => {
+      let pool = createEmptyImagePool();
+      pool = addWebImages(pool, [
+        { url: 'https://example.com/icon.svg', description: 'Vector icon' },
+        { url: 'https://example.com/screenshot.jpg', description: 'Valid screenshot' },
+      ], 'query');
+
+      expect(pool.count).toBe(1);
+      expect(pool.images[0].url).toBe('https://example.com/screenshot.jpg');
+    });
+
+    it('should filter out any URL containing logo', () => {
+      let pool = createEmptyImagePool();
+      pool = addWebImages(pool, [
+        { url: 'https://example.com/reddit-logo.png', description: 'Reddit' },
+        { url: 'https://example.com/assets/logo.png', description: 'Site logo' },
+        { url: 'https://example.com/company-logo-full.jpg', description: 'Company' },
+        { url: 'https://example.com/gameplay.jpg', description: 'Gameplay screenshot' },
+      ], 'query');
+
+      expect(pool.count).toBe(1);
+      expect(pool.images[0].url).toBe('https://example.com/gameplay.jpg');
+    });
+
+    it('should filter out /authors/ paths', () => {
+      let pool = createEmptyImagePool();
+      pool = addSourceImages(pool, [
+        { url: 'https://example.com/authors/john-doe.jpg', description: 'Author John Doe', position: 0 },
+        { url: 'https://example.com/guides/boss.jpg', description: 'Boss guide screenshot image', position: 1 },
+      ], 'https://example.com/article', 'example.com');
+
+      expect(pool.count).toBe(1);
+      expect(pool.images[0].url).toBe('https://example.com/guides/boss.jpg');
+    });
+  });
+
+  describe('URL dimension filtering', () => {
+    it('should filter out small width in query params', () => {
+      let pool = createEmptyImagePool();
+      pool = addWebImages(pool, [
+        { url: 'https://example.com/img.jpg?w=150', description: 'Small width' },
+        { url: 'https://example.com/img2.jpg?width=99', description: 'Tiny width' },
+        { url: 'https://example.com/large.jpg?w=800', description: 'Large width' },
+      ], 'query');
+
+      expect(pool.count).toBe(1);
+      expect(pool.images[0].url).toContain('w=800');
+    });
+
+    it('should filter out small height in query params', () => {
+      let pool = createEmptyImagePool();
+      pool = addWebImages(pool, [
+        { url: 'https://example.com/img.jpg?h=50', description: 'Small height' },
+        { url: 'https://example.com/img2.jpg?height=100', description: 'Small height' },
+        { url: 'https://example.com/large.jpg?h=400', description: 'Large height' },
+      ], 'query');
+
+      expect(pool.count).toBe(1);
+      expect(pool.images[0].url).toContain('h=400');
+    });
+
+    it('should NOT filter URLs without dimension params', () => {
+      let pool = createEmptyImagePool();
+      pool = addWebImages(pool, [
+        { url: 'https://example.com/image.jpg', description: 'No dimensions' },
+        { url: 'https://example.com/photo.png?quality=80', description: 'Other params' },
+      ], 'query');
+
+      expect(pool.count).toBe(2);
+    });
+
+    it('should keep images with dimensions >= 200', () => {
+      let pool = createEmptyImagePool();
+      pool = addWebImages(pool, [
+        { url: 'https://example.com/img.jpg?w=200', description: 'Exactly 200 width' },
+        { url: 'https://example.com/img2.jpg?w=199', description: 'Just under 200' },
+      ], 'query');
+
+      expect(pool.count).toBe(1);
+      expect(pool.images[0].url).toContain('w=200');
+    });
+  });
+
+  describe('New description filters', () => {
+    it('should filter exact "Image" description', () => {
+      let pool = createEmptyImagePool();
+      pool = addSourceImages(pool, [
+        { url: 'https://example.com/img1.jpg', description: 'Image', position: 0 },
+        { url: 'https://example.com/img2.jpg', description: 'IMAGE', position: 1 },
+        { url: 'https://example.com/valid.jpg', description: 'Boss fight screenshot', position: 2 },
+      ], 'https://example.com/article', 'example.com');
+
+      expect(pool.count).toBe(1);
+      expect(pool.images[0].url).toBe('https://example.com/valid.jpg');
+    });
+
+    it('should filter "share on" descriptions', () => {
+      let pool = createEmptyImagePool();
+      pool = addSourceImages(pool, [
+        { url: 'https://example.com/share1.jpg', description: 'Share on Facebook', position: 0 },
+        { url: 'https://example.com/share2.jpg', description: 'share on twitter', position: 1 },
+        { url: 'https://example.com/content.jpg', description: 'Game content screenshot', position: 2 },
+      ], 'https://example.com/article', 'example.com');
+
+      expect(pool.count).toBe(1);
+      expect(pool.images[0].url).toBe('https://example.com/content.jpg');
+    });
+
+    it('should filter pure numeric descriptions', () => {
+      let pool = createEmptyImagePool();
+      pool = addSourceImages(pool, [
+        { url: 'https://example.com/img1.jpg', description: '4', position: 0 },
+        { url: 'https://example.com/img2.jpg', description: '123', position: 1 },
+        { url: 'https://example.com/valid.jpg', description: 'Step 4 of the guide', position: 2 },
+      ], 'https://example.com/article', 'example.com');
+
+      expect(pool.count).toBe(1);
+      expect(pool.images[0].url).toBe('https://example.com/valid.jpg');
+    });
+
+    it('should filter descriptions containing "logo"', () => {
+      let pool = createEmptyImagePool();
+      pool = addSourceImages(pool, [
+        { url: 'https://example.com/img1.jpg', description: 'Company logo', position: 0 },
+        { url: 'https://example.com/img2.jpg', description: 'The PS5 logo badge', position: 1 },
+        { url: 'https://example.com/valid.jpg', description: 'Character selection screen', position: 2 },
+      ], 'https://example.com/article', 'example.com');
+
+      expect(pool.count).toBe(1);
+      expect(pool.images[0].url).toBe('https://example.com/valid.jpg');
+    });
+  });
+
+  describe('Hero image title relevance', () => {
+    it('should select image with description matching many title keywords', () => {
+      let pool = createEmptyImagePool();
+      // Only add screenshots (priority 80), no artwork (priority 100)
+      pool = addIGDBImages(pool, 
+        ['https://images.igdb.com/generic.jpg'],
+        [] // No artwork
+      );
+      pool = addSourceImages(pool, [
+        // Source with many keyword matches: simon, boss, clair, obscur
+        { url: 'https://example.com/simon.jpg', description: 'Defeating Simon boss in Clair Obscur arena', position: 0 },
+      ], 'https://example.com/article', 'ign.com'); // High quality domain (65 base)
+
+      const hero = getBestHeroImage(pool, 'How to Beat Simon Boss in Clair Obscur');
+
+      // Source: 65 (high domain) + 100 (4 keywords × 25) = 165
+      // IGDB: 80 (screenshot) + 10 (IGDB bonus) = 90
+      expect(hero?.url).toBe('https://example.com/simon.jpg');
+    });
+
+    it('should consider ALL sources not just IGDB', () => {
+      let pool = createEmptyImagePool();
+      pool = addIGDBImages(pool, 
+        ['https://images.igdb.com/screenshot.jpg'],
+        []
+      );
+      pool = addWebImages(pool, [
+        { url: 'https://ign.com/malenia-boss.jpg', description: 'Malenia boss fight guide' },
+      ], 'malenia guide');
+
+      const hero = getBestHeroImage(pool, 'Malenia Boss Guide Elden Ring');
+
+      // Web image matching "Malenia" and "boss" should be selected
+      expect(hero?.url).toBe('https://ign.com/malenia-boss.jpg');
+    });
+
+    it('should fall back to highest priority without title', () => {
+      let pool = createEmptyImagePool();
+      pool = addIGDBImages(pool, 
+        ['https://images.igdb.com/screenshot.jpg'],
+        ['https://images.igdb.com/artwork.jpg']
+      );
+      pool = addWebImages(pool, [
+        { url: 'https://example.com/web.jpg' },
+      ], 'query');
+
+      const hero = getBestHeroImage(pool); // No title
+
+      // Should return highest priority (artwork = 100)
+      expect(hero?.igdbType).toBe('artwork');
+    });
+
+    it('should give IGDB images small boost for quality', () => {
+      let pool = createEmptyImagePool();
+      pool = addIGDBImages(pool, 
+        ['https://images.igdb.com/generic-screenshot.jpg'],
+        []
+      );
+      pool = addSourceImages(pool, [
+        { url: 'https://example.com/generic-image.jpg', description: 'Generic game image', position: 0 },
+      ], 'https://example.com/article', 'example.com');
+
+      const hero = getBestHeroImage(pool, 'Generic Game Guide');
+
+      // IGDB should win due to +10 quality bonus when descriptions don't strongly differ
+      expect(hero?.source).toBe('igdb');
+    });
+
+    it('should return undefined for empty pool', () => {
+      const pool = createEmptyImagePool();
+      expect(getBestHeroImage(pool, 'Some Title')).toBeUndefined();
     });
   });
 });

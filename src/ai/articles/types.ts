@@ -173,6 +173,12 @@ export interface SearchResultItem {
    * Per-result images extracted from the page.
    */
   readonly images?: readonly SearchResultImage[];
+  /**
+   * Source images extracted from cleaned content with full context.
+   * These have richer metadata (headers, paragraphs) than regular images.
+   * Used for proper 'source' attribution in the image pool.
+   */
+  readonly sourceImages?: readonly SourceImage[];
 }
 
 /**
@@ -1435,6 +1441,23 @@ export interface RawSourceInput {
 }
 
 /**
+ * Image extracted from a cleaned source article.
+ * Contains the image URL, LLM-generated description, and contextual information.
+ */
+export interface SourceImage {
+  /** Original image URL from source */
+  readonly url: string;
+  /** LLM-generated description from cleaned content */
+  readonly description: string;
+  /** Nearest H2/H3 header above the image */
+  readonly nearestHeader?: string;
+  /** Paragraph containing or near the image */
+  readonly contextParagraph?: string;
+  /** Position in article (for ordering/priority) */
+  readonly position: number;
+}
+
+/**
  * Cleaned source output from the Cleaner agent.
  */
 export interface CleanedSource {
@@ -1464,6 +1487,11 @@ export interface CleanedSource {
   readonly contentType: string;
   readonly junkRatio: number;
   readonly searchSource: SearchSource;
+  /**
+   * Images extracted from source with contextual information.
+   * Null for cached entries that predate this feature.
+   */
+  readonly images?: readonly SourceImage[] | null;
 }
 
 /**
@@ -1524,6 +1552,11 @@ export interface StoredSourceContent {
   readonly searchSource: SearchSource;
   /** Whether scraping succeeded (content > MIN_CONTENT_LENGTH chars) */
   readonly scrapeSucceeded: boolean;
+  /**
+   * Images extracted from source with contextual information.
+   * Null for legacy entries that predate this feature.
+   */
+  readonly images?: readonly SourceImage[] | null;
 }
 
 /**

@@ -142,6 +142,11 @@ function buildImageCuratorSystemPrompt(): string {
 3. **Variety**: Don't pick similar images for different sections
    - Each section should have a distinct visual
 
+4. **Coverage**: You MUST select at least one image for EVERY section
+   - If no perfect match exists, pick the best available option
+   - Empty sections are not acceptable - readers expect visual content
+   - Even a loosely related image is better than no image
+
 ## Alt Text Guidelines
 
 Write SEO-friendly alt text that:
@@ -159,13 +164,13 @@ Examples:
 ## Response Format
 
 For each section, provide:
-1. selectedImageIndex: Which candidate image to use (-1 if none are good enough)
+1. selectedImageIndex: Which candidate image to use (-1 ONLY if absolutely no candidates exist)
 2. altText: SEO-optimized description
 3. relevanceScore: 0-100 (how well it matches section content)
 4. qualityScore: 0-100 (image quality assessment)
 5. caption: Brief descriptive caption (optional, NOT for attribution - attribution is handled separately)
 
-Skip sections where no image is relevant (relevanceScore < 60).`;
+IMPORTANT: Every section MUST have an image. Do not skip any section. If candidates are limited, pick the most relevant one available.`;
 }
 
 // Note: extractFilenameFromUrl and normalizeImageUrlForDedupe are imported from '../utils/url-utils'
@@ -217,8 +222,8 @@ function buildImageCuratorUserPrompt(
     lines.push('');
   }
 
-  // Add hero image info
-  const heroImage = getBestHeroImage(context.imagePool);
+  // Add hero image info - select based on article title relevance
+  const heroImage = getBestHeroImage(context.imagePool, context.articleTitle);
   if (heroImage) {
     const heroFilename = extractFilenameFromUrl(heroImage.url);
     lines.push('## Hero Image');
@@ -273,7 +278,7 @@ export async function runImageCurator(
   }
 
   // Get best hero image
-  const heroImage = getBestHeroImage(context.imagePool);
+  const heroImage = getBestHeroImage(context.imagePool, context.articleTitle);
 
   // Get candidates for each section (use normalized headlines as keys for reliable lookup)
   const candidatesPerSection = new Map<string, readonly CollectedImage[]>();

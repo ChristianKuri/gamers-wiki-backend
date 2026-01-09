@@ -36,7 +36,7 @@ export interface ImageSourceMetadata {
   /** Domain for attribution display (e.g., "ign.com") */
   readonly sourceDomain?: string;
   /** Image source type */
-  readonly imageSource?: 'igdb' | 'tavily' | 'exa' | 'web';
+  readonly imageSource?: 'igdb' | 'tavily' | 'exa' | 'source' | 'web';
 }
 
 /**
