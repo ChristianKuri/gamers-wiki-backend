@@ -61,6 +61,12 @@ export interface UrlUploadInput {
   readonly folderId?: number;
   /** Optional folder path (required if folderId provided) */
   readonly folderPath?: string;
+  /**
+   * Optional minimum width for defense-in-depth validation.
+   * If provided, rejects images narrower than this width.
+   * This is a safety net - images should already be validated during candidate processing.
+   */
+  readonly minWidth?: number;
 }
 
 /**
@@ -159,16 +165,18 @@ export async function uploadImageFromUrl(
   input: UrlUploadInput,
   deps: ImageUploaderDeps
 ): Promise<ImageUploadResult> {
-  const { url, filename, altText, caption, sourceDomain, sourceMetadata, signal, folderId, folderPath } = input;
+  const { url, filename, altText, caption, sourceDomain, sourceMetadata, signal, folderId, folderPath, minWidth } = input;
   const { logger } = deps;
 
   logger?.info(`[ImageUploader] Uploading from URL: ${url}`);
 
   // Download the image using consolidated downloader (with SSRF protection + retry)
+  // Defense-in-depth: validate dimensions if minWidth specified
   const downloadResult = await downloadImageWithRetry({
     url,
     logger,
     signal,
+    validateDimensions: minWidth ? { minWidth } : undefined,
   });
 
   // Build source metadata for attribution (stored in provider_metadata, not caption)

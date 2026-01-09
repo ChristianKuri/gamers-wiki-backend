@@ -81,6 +81,11 @@ function sanitizeMarkdownText(text: string): string {
 /**
  * Creates markdown for an image.
  * Sanitizes alt text and caption to prevent markdown injection.
+ * All images use standard markdown syntax (full-width layout).
+ *
+ * @param url - Image URL
+ * @param altText - Alt text for accessibility
+ * @param caption - Optional caption
  */
 function createImageMarkdown(
   url: string,

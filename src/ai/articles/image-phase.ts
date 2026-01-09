@@ -23,6 +23,15 @@ import type { ImagePool, CollectedImage } from './image-pool';
 import { createEmptyImagePool, addIGDBImages, addWebImages, addSourceImages, getPoolSummary } from './image-pool';
 import type { CleanedSource } from './types';
 import { runImageCurator, type ImageCuratorOutput, type SectionImageAssignment, type HeroImageAssignment } from './agents/image-curator';
+import {
+  processHeroCandidates,
+  processAllSectionCandidates,
+  toHeroAssignment,
+  toSectionAssignments,
+  type ProcessedHeroResult,
+  type ProcessedSectionResult,
+} from './services/image-candidate-processor';
+import { IMAGE_DIMENSION_CONFIG } from './config';
 import { processHeroImage, processSectionImage, getHighResIGDBUrl, type HeroImageResult, type SectionImageResult } from './hero-image';
 import { 
   uploadImageFromUrl, 
@@ -92,10 +101,18 @@ export function extractImagesFromResearchPool(researchPool: ResearchPool): Image
       // Process per-result images (from individual search results)
       // Use the actual source so images are properly tracked as 'tavily' or 'exa'
       for (const result of searchResult.results) {
+        // Parse domain safely - skip result if URL is malformed
+        let domain: string;
+        try {
+          domain = new URL(result.url).hostname.replace(/^www\./, '');
+        } catch {
+          // Skip this result if URL is malformed (don't crash the whole image phase)
+          continue;
+        }
+
         // First, add source-extracted images with proper 'source' attribution and priority
         // These have rich context (headers, paragraphs) from the cleaning phase
         if (result.sourceImages && result.sourceImages.length > 0) {
-          const domain = new URL(result.url).hostname.replace(/^www\./, '');
           imagePool = addSourceImages(imagePool, result.sourceImages, result.url, domain);
         }
         
@@ -353,7 +370,7 @@ export async function runImagePhase(
         signal,
       }
     );
-    log?.info(`${logPrefix} Curator selected: hero=${curatorOutput.heroImage ? 'yes' : 'no'}, sections=${curatorOutput.sectionImages.length}`);
+    log?.info(`${logPrefix} Curator returned: ${curatorOutput.heroCandidates.length} hero candidates, ${curatorOutput.sectionSelections.length} section selections`);
   } catch (error) {
     log?.error(`${logPrefix} Curator failed: ${error}`);
     return {
@@ -366,13 +383,53 @@ export async function runImagePhase(
     };
   }
 
+  // ===== STEP 2.5: Process Candidates with Dimension Validation =====
+  // This step downloads candidate images to verify dimensions and selects
+  // the first valid image for each slot (hero, sections).
+  log?.info(`${logPrefix} Processing candidates with dimension validation...`);
+
+  // Process hero candidates
+  let heroResult: ProcessedHeroResult | null = null;
+  if (curatorOutput.heroCandidates.length > 0) {
+    heroResult = await processHeroCandidates(curatorOutput.heroCandidates, {
+      minWidth: IMAGE_DIMENSION_CONFIG.HERO_MIN_WIDTH,
+      logger: log,
+      signal,
+    });
+    if (heroResult) {
+      log?.info(
+        `${logPrefix} Hero image selected: candidate ${heroResult.selectedCandidateIndex}, ` +
+        `${heroResult.dimensions.width}x${heroResult.dimensions.height} ` +
+        `(${heroResult.dimensions.inferred ? 'inferred' : 'measured'})`
+      );
+    } else {
+      log?.warn(`${logPrefix} No hero candidate met dimension requirements (min ${IMAGE_DIMENSION_CONFIG.HERO_MIN_WIDTH}px)`);
+    }
+  }
+
+  // Process section candidates (exclude hero image URL to prevent reuse)
+  const heroExcludeUrls = heroResult ? [heroResult.image.url] : [];
+  const sectionResults = await processAllSectionCandidates(curatorOutput.sectionSelections, {
+    minWidth: IMAGE_DIMENSION_CONFIG.SECTION_MIN_WIDTH,
+    excludeUrls: heroExcludeUrls,
+    logger: log,
+    signal,
+  });
+
+  // Convert to assignments (filter out nulls)
+  const heroAssignment: HeroImageAssignment | undefined = heroResult
+    ? toHeroAssignment(heroResult)
+    : undefined;
+  const sectionAssignments: SectionImageAssignment[] = toSectionAssignments(sectionResults);
+
+  log?.info(`${logPrefix} Dimension validation complete: hero=${heroAssignment ? 'yes' : 'no'}, sections=${sectionAssignments.length}`);
+
   // ===== STEP 3: Process and Upload Hero Image =====
   // All hero images are processed (resize/optimize) for consistent quality
   let heroUpload: ImageUploadResult | undefined;
   let heroImageFailed = false;
-  if (curatorOutput.heroImage) {
+  if (heroAssignment) {
     try {
-      const heroAssignment = curatorOutput.heroImage;
       const isIgdb = heroAssignment.image.source === 'igdb';
       
       // Get the source URL (high-res for IGDB, original for web)
@@ -381,7 +438,7 @@ export async function runImagePhase(
         : heroAssignment.image.url;
       
       log?.info(`${logPrefix} Processing hero image from ${heroAssignment.image.source}`);
-      const heroResult = await processHeroImage({
+      const processedHero = await processHeroImage({
         imageUrl: sourceUrl,
         logger: log,
         signal,
@@ -391,9 +448,9 @@ export async function runImagePhase(
       const uploaderDeps: ImageUploaderDeps = { strapi, logger: log };
       heroUpload = await uploadImageBuffer(
         {
-          buffer: heroResult.buffer,
+          buffer: processedHero.buffer,
           filename: createImageFilename(articleTitle, 'hero'),
-          mimeType: heroResult.mimeType,
+          mimeType: processedHero.mimeType,
           altText: heroAssignment.altText,
           // Caption is now just a description, not attribution
           caption: isIgdb ? 'Official game artwork' : undefined,
@@ -414,7 +471,7 @@ export async function runImagePhase(
       const errorMsg = error instanceof Error ? error.message : String(error);
       log?.warn(
         `${logPrefix} Hero image processing failed: ` +
-        `title="${articleTitle}", url="${curatorOutput.heroImage?.image.url}", error=${errorMsg}`
+        `title="${articleTitle}", url="${heroAssignment.image.url}", error=${errorMsg}`
       );
       // Continue without hero image, but mark as failed for caller
       heroImageFailed = true;
@@ -434,8 +491,8 @@ export async function runImagePhase(
   // Track sections where upload failed for debugging
   const failedSections: string[] = [];
 
-  // Process uploads in batches
-  const assignments = curatorOutput.sectionImages;
+  // Process uploads in batches using the dimension-validated assignments
+  const assignments = sectionAssignments;
   for (let i = 0; i < assignments.length; i += concurrency) {
     // Check if aborted before starting new batch (prevents orphan uploads on timeout)
     if (signal?.aborted) {
@@ -508,8 +565,8 @@ export async function runImagePhase(
   try {
     insertionResult = insertImagesIntoMarkdown({
       markdown,
-      heroImage: heroUpload && curatorOutput.heroImage
-        ? { assignment: curatorOutput.heroImage, upload: heroUpload }
+      heroImage: heroUpload && heroAssignment
+        ? { assignment: heroAssignment, upload: heroUpload }
         : undefined,
       sectionImages: uploadedSectionImages,
     });

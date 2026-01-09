@@ -18,6 +18,7 @@ import type { ImageCuratorOutput, SectionImageAssignment, HeroImageAssignment } 
 import type { ImageUploadResult } from '../../../src/ai/articles/services/image-uploader';
 import type { HeroImageResult } from '../../../src/ai/articles/hero-image';
 import type { ImageInsertionResult } from '../../../src/ai/articles/image-inserter';
+import type { ProcessedHeroResult, ProcessedSectionResult } from '../../../src/ai/articles/services/image-candidate-processor';
 
 // ============================================================================
 // Mocks
@@ -43,6 +44,19 @@ vi.mock('../../../src/ai/articles/services/image-uploader', () => ({
 
 vi.mock('../../../src/ai/articles/image-inserter', () => ({
   insertImagesIntoMarkdown: vi.fn(),
+}));
+
+vi.mock('../../../src/ai/articles/services/image-candidate-processor', () => ({
+  processHeroCandidates: vi.fn(),
+  processAllSectionCandidates: vi.fn(),
+  toHeroAssignment: vi.fn((result) => result ? { image: result.image, altText: result.altText } : undefined),
+  toSectionAssignments: vi.fn((results) => results.filter((r: unknown) => r !== null).map((r: { sectionHeadline: string; sectionIndex: number; image: unknown; altText: string; caption?: string }) => ({
+    sectionHeadline: r.sectionHeadline,
+    sectionIndex: r.sectionIndex,
+    image: r.image,
+    altText: r.altText,
+    caption: r.caption,
+  }))),
 }));
 
 // ============================================================================
@@ -116,9 +130,12 @@ function createMockResearchPool(
 
 function createMockCuratorOutput(options: Partial<ImageCuratorOutput> = {}): ImageCuratorOutput {
   return {
-    heroImage: undefined,
-    sectionImages: [],
+    heroCandidates: [],
+    sectionSelections: [],
     tokenUsage: { input: 100, output: 50 },
+    poolSummary: { total: 10, igdb: 5, tavily: 3, exa: 2 },
+    candidatesPerSection: new Map(),
+    heroCandidatePool: [],
     ...options,
   };
 }
@@ -169,6 +186,8 @@ describe('Image Phase', () => {
   let mockUploadImageBuffer: ReturnType<typeof vi.fn>;
   let mockUploadImageFromUrl: ReturnType<typeof vi.fn>;
   let mockInsertImagesIntoMarkdown: ReturnType<typeof vi.fn>;
+  let mockProcessHeroCandidates: ReturnType<typeof vi.fn>;
+  let mockProcessAllSectionCandidates: ReturnType<typeof vi.fn>;
 
   beforeEach(async () => {
     vi.clearAllMocks();
@@ -178,12 +197,19 @@ describe('Image Phase', () => {
     const heroModule = await import('../../../src/ai/articles/hero-image');
     const uploaderModule = await import('../../../src/ai/articles/services/image-uploader');
     const inserterModule = await import('../../../src/ai/articles/image-inserter');
+    const candidateProcessorModule = await import('../../../src/ai/articles/services/image-candidate-processor');
     
     mockRunImageCurator = curatorModule.runImageCurator as ReturnType<typeof vi.fn>;
     mockProcessHeroImage = heroModule.processHeroImage as ReturnType<typeof vi.fn>;
     mockUploadImageBuffer = uploaderModule.uploadImageBuffer as ReturnType<typeof vi.fn>;
     mockUploadImageFromUrl = uploaderModule.uploadImageFromUrl as ReturnType<typeof vi.fn>;
     mockInsertImagesIntoMarkdown = inserterModule.insertImagesIntoMarkdown as ReturnType<typeof vi.fn>;
+    mockProcessHeroCandidates = candidateProcessorModule.processHeroCandidates as ReturnType<typeof vi.fn>;
+    mockProcessAllSectionCandidates = candidateProcessorModule.processAllSectionCandidates as ReturnType<typeof vi.fn>;
+    
+    // Default mocks for candidate processors - return null (no valid candidates)
+    mockProcessHeroCandidates.mockResolvedValue(null);
+    mockProcessAllSectionCandidates.mockResolvedValue([]);
   });
 
   afterEach(() => {
@@ -322,6 +348,58 @@ describe('Image Phase', () => {
       // Should only have 1 image (from overview), not duplicated from queryCache
       expect(imagePool.count).toBe(1);
     });
+
+    it('skips results with malformed URLs without crashing', async () => {
+      const { extractImagesFromResearchPool } = await import('../../../src/ai/articles/image-phase');
+      
+      const researchPool = createMockResearchPool([
+        createMockSearchResult('test query', {
+          results: [
+            // Malformed URL - should be skipped, not crash
+            {
+              url: 'not-a-valid-url',
+              title: 'Bad Result',
+              images: [{ url: 'https://example.com/img1.jpg', description: 'Test' }],
+            },
+            // Valid URL - should be processed
+            {
+              url: 'https://example.com/article',
+              title: 'Good Result',
+              images: [{ url: 'https://example.com/img2.jpg', description: 'Test' }],
+            },
+          ],
+        }),
+      ]);
+
+      // Should not throw and should still extract images from valid URLs
+      const imagePool = extractImagesFromResearchPool(researchPool);
+
+      // Only the valid URL's images should be extracted
+      expect(imagePool.count).toBe(1);
+      expect(imagePool.webImages[0].url).toBe('https://example.com/img2.jpg');
+    });
+
+    it('handles empty string URLs gracefully', async () => {
+      const { extractImagesFromResearchPool } = await import('../../../src/ai/articles/image-phase');
+      
+      const researchPool = createMockResearchPool([
+        createMockSearchResult('test query', {
+          results: [
+            {
+              url: '', // Empty URL
+              title: 'Empty URL Result',
+              images: [{ url: 'https://example.com/img.jpg', description: 'Test' }],
+            },
+          ],
+        }),
+      ]);
+
+      // Should not throw
+      const imagePool = extractImagesFromResearchPool(researchPool);
+
+      // Empty URL result should be skipped
+      expect(imagePool.count).toBe(0);
+    });
   });
 
   describe('shouldRunImagePhase', () => {
@@ -426,9 +504,24 @@ describe('Image Phase', () => {
       const heroAssignment = createMockHeroAssignment();
       const uploadResult = createMockUploadResult({ url: 'https://strapi/hero.webp' });
 
+      // Mock curator to return hero candidates
       mockRunImageCurator.mockResolvedValueOnce(createMockCuratorOutput({
-        heroImage: heroAssignment,
+        heroCandidates: [{
+          imageIndex: 0,
+          image: heroAssignment.image,
+          altText: heroAssignment.altText,
+          relevanceScore: 90,
+        }],
       }));
+      
+      // Mock candidate processor to return a valid hero result
+      mockProcessHeroCandidates.mockResolvedValueOnce({
+        image: heroAssignment.image,
+        altText: heroAssignment.altText,
+        dimensions: { width: 1920, height: 1080, inferred: false },
+        selectedCandidateIndex: 0,
+      } as ProcessedHeroResult);
+      
       mockProcessHeroImage.mockResolvedValueOnce({
         buffer: Buffer.from('test'),
         mimeType: 'image/webp',
@@ -466,9 +559,25 @@ describe('Image Phase', () => {
     it('sets heroImageFailed when hero processing fails', async () => {
       const { runImagePhase } = await import('../../../src/ai/articles/image-phase');
 
+      const heroAssignment = createMockHeroAssignment();
+      
       mockRunImageCurator.mockResolvedValueOnce(createMockCuratorOutput({
-        heroImage: createMockHeroAssignment(),
+        heroCandidates: [{
+          imageIndex: 0,
+          image: heroAssignment.image,
+          altText: heroAssignment.altText,
+          relevanceScore: 90,
+        }],
       }));
+      
+      // Mock candidate processor to return a valid hero result
+      mockProcessHeroCandidates.mockResolvedValueOnce({
+        image: heroAssignment.image,
+        altText: heroAssignment.altText,
+        dimensions: { width: 1920, height: 1080, inferred: false },
+        selectedCandidateIndex: 0,
+      } as ProcessedHeroResult);
+      
       mockProcessHeroImage.mockRejectedValueOnce(new Error('Download failed'));
       mockInsertImagesIntoMarkdown.mockReturnValueOnce({
         markdown: testMarkdown,
@@ -502,8 +611,30 @@ describe('Image Phase', () => {
       ];
 
       mockRunImageCurator.mockResolvedValueOnce(createMockCuratorOutput({
-        sectionImages: sectionAssignments,
+        sectionSelections: sectionAssignments.map((a, idx) => ({
+          sectionHeadline: a.sectionHeadline,
+          sectionIndex: idx,
+          candidates: [{
+            imageIndex: 0,
+            image: a.image,
+            altText: a.altText,
+            relevanceScore: 80,
+          }],
+        })),
       }));
+      
+      // Mock candidate processor to return valid section results
+      mockProcessAllSectionCandidates.mockResolvedValueOnce(
+        sectionAssignments.map((a, idx) => ({
+          sectionHeadline: a.sectionHeadline,
+          sectionIndex: idx,
+          image: a.image,
+          altText: a.altText,
+          caption: a.caption,
+          dimensions: { width: 800, height: 600, inferred: false },
+          selectedCandidateIndex: 0,
+        } as ProcessedSectionResult))
+      );
       
       // Mock upload for each section image
       mockUploadImageFromUrl
@@ -546,8 +677,30 @@ describe('Image Phase', () => {
       ];
 
       mockRunImageCurator.mockResolvedValueOnce(createMockCuratorOutput({
-        sectionImages: sectionAssignments,
+        sectionSelections: sectionAssignments.map((a, idx) => ({
+          sectionHeadline: a.sectionHeadline,
+          sectionIndex: idx,
+          candidates: [{
+            imageIndex: 0,
+            image: a.image,
+            altText: a.altText,
+            relevanceScore: 80,
+          }],
+        })),
       }));
+      
+      // Mock candidate processor to return valid section results
+      mockProcessAllSectionCandidates.mockResolvedValueOnce(
+        sectionAssignments.map((a, idx) => ({
+          sectionHeadline: a.sectionHeadline,
+          sectionIndex: idx,
+          image: a.image,
+          altText: a.altText,
+          caption: a.caption,
+          dimensions: { width: 800, height: 600, inferred: false },
+          selectedCandidateIndex: 0,
+        } as ProcessedSectionResult))
+      );
       
       // First succeeds, second fails
       mockUploadImageFromUrl
@@ -589,8 +742,30 @@ describe('Image Phase', () => {
       ];
 
       mockRunImageCurator.mockResolvedValueOnce(createMockCuratorOutput({
-        sectionImages: sectionAssignments,
+        sectionSelections: sectionAssignments.map((a, idx) => ({
+          sectionHeadline: a.sectionHeadline,
+          sectionIndex: idx,
+          candidates: [{
+            imageIndex: 0,
+            image: a.image,
+            altText: a.altText,
+            relevanceScore: 80,
+          }],
+        })),
       }));
+      
+      // Mock candidate processor to return valid section results
+      mockProcessAllSectionCandidates.mockResolvedValueOnce(
+        sectionAssignments.map((a, idx) => ({
+          sectionHeadline: a.sectionHeadline,
+          sectionIndex: idx,
+          image: a.image,
+          altText: a.altText,
+          caption: a.caption,
+          dimensions: { width: 800, height: 600, inferred: false },
+          selectedCandidateIndex: 0,
+        } as ProcessedSectionResult))
+      );
 
       // Abort after first batch
       mockUploadImageFromUrl.mockImplementation(async () => {

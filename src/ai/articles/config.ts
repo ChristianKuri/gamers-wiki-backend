@@ -702,15 +702,6 @@ export const IMAGE_CURATOR_CONFIG = {
    */
   MAX_CANDIDATES_PER_SECTION: 5,
   /**
-   * Minimum relevance score (0-100) for an image to be selected.
-   * Images below this are skipped even if they're the only option.
-   */
-  MIN_RELEVANCE_SCORE: 60,
-  /**
-   * Minimum quality score (0-100) for an image to be selected.
-   */
-  MIN_QUALITY_SCORE: 50,
-  /**
    * Temperature for Image Curator LLM calls.
    * Low for consistent, deterministic image selection.
    */
@@ -879,6 +870,45 @@ export const IMAGE_DOWNLOADER_CONFIG = {
    * Backoff multiplier for retry delays.
    */
   RETRY_BACKOFF_MULTIPLIER: 2,
+} as const;
+
+// ============================================================================
+// Image Dimension Validation Configuration
+// ============================================================================
+
+export const IMAGE_DIMENSION_CONFIG = {
+  /**
+   * Minimum width (px) for hero/featured images.
+   * Hero images need to be larger for prominent display.
+   * Images below this will try the next candidate.
+   */
+  HERO_MIN_WIDTH: 800,
+  /**
+   * Minimum width (px) for section images.
+   * All section images use full-width layout with standard markdown.
+   * Images below this threshold are rejected (try next candidate).
+   */
+  SECTION_MIN_WIDTH: 500,
+  /**
+   * Maximum hero image candidates from curator.
+   * More candidates = better fallback options if top picks are too small.
+   */
+  MAX_HERO_CANDIDATES: 10,
+  /**
+   * Maximum section image candidates from curator.
+   * 3 candidates per section provides good fallback coverage.
+   */
+  MAX_SECTION_CANDIDATES: 3,
+  /**
+   * Timeout for dimension probing per image (ms).
+   */
+  DIMENSION_PROBE_TIMEOUT_MS: 15000,
+  /**
+   * Number of retries for failed dimension probes.
+   * Helps with transient network failures.
+   * 1 = one retry after initial failure (2 total attempts).
+   */
+  DIMENSION_PROBE_RETRIES: 1,
 } as const;
 
 // ============================================================================
@@ -1410,18 +1440,6 @@ function validateConfiguration(): void {
   validatePositive(IMAGE_CURATOR_CONFIG.UPLOAD_CONCURRENCY, 'IMAGE_CURATOR_CONFIG.UPLOAD_CONCURRENCY');
   validateTemperature(IMAGE_CURATOR_CONFIG.TEMPERATURE, 'IMAGE_CURATOR_CONFIG.TEMPERATURE');
   validateMinMax(
-    IMAGE_CURATOR_CONFIG.MIN_RELEVANCE_SCORE,
-    100,
-    'IMAGE_CURATOR_CONFIG.MIN_RELEVANCE_SCORE',
-    '100 (max)'
-  );
-  validateMinMax(
-    IMAGE_CURATOR_CONFIG.MIN_QUALITY_SCORE,
-    100,
-    'IMAGE_CURATOR_CONFIG.MIN_QUALITY_SCORE',
-    '100 (max)'
-  );
-  validateMinMax(
     IMAGE_CURATOR_CONFIG.HERO_ASPECT_RATIO_MIN,
     IMAGE_CURATOR_CONFIG.HERO_ASPECT_RATIO_MAX,
     'IMAGE_CURATOR_CONFIG.HERO_ASPECT_RATIO_MIN',
@@ -1431,6 +1449,19 @@ function validateConfiguration(): void {
   // Image Pool Config
   validatePositive(IMAGE_POOL_CONFIG.MIN_IMAGE_WIDTH, 'IMAGE_POOL_CONFIG.MIN_IMAGE_WIDTH');
   validatePositive(IMAGE_POOL_CONFIG.MIN_IMAGE_HEIGHT, 'IMAGE_POOL_CONFIG.MIN_IMAGE_HEIGHT');
+
+  // Image Dimension Config
+  validatePositive(IMAGE_DIMENSION_CONFIG.HERO_MIN_WIDTH, 'IMAGE_DIMENSION_CONFIG.HERO_MIN_WIDTH');
+  validatePositive(IMAGE_DIMENSION_CONFIG.SECTION_MIN_WIDTH, 'IMAGE_DIMENSION_CONFIG.SECTION_MIN_WIDTH');
+  validatePositive(IMAGE_DIMENSION_CONFIG.MAX_HERO_CANDIDATES, 'IMAGE_DIMENSION_CONFIG.MAX_HERO_CANDIDATES');
+  validatePositive(IMAGE_DIMENSION_CONFIG.MAX_SECTION_CANDIDATES, 'IMAGE_DIMENSION_CONFIG.MAX_SECTION_CANDIDATES');
+  validatePositive(IMAGE_DIMENSION_CONFIG.DIMENSION_PROBE_TIMEOUT_MS, 'IMAGE_DIMENSION_CONFIG.DIMENSION_PROBE_TIMEOUT_MS');
+  validateMinMax(
+    IMAGE_DIMENSION_CONFIG.DIMENSION_PROBE_RETRIES,
+    10,
+    'IMAGE_DIMENSION_CONFIG.DIMENSION_PROBE_RETRIES',
+    '10 (max)'
+  );
 
   // Image Downloader Config
   validatePositive(IMAGE_DOWNLOADER_CONFIG.TIMEOUT_MS, 'IMAGE_DOWNLOADER_CONFIG.TIMEOUT_MS');

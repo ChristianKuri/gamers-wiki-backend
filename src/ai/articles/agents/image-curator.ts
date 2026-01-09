@@ -19,8 +19,8 @@ import type { Logger } from '../../../utils/logger';
 import type { ArticlePlan } from '../article-plan';
 import type { TokenUsage } from '../types';
 import type { CollectedImage, ImagePool } from '../image-pool';
-import { getImagesForSection, getBestHeroImage, getPoolSummary } from '../image-pool';
-import { IMAGE_CURATOR_CONFIG } from '../config';
+import { getImagesForSection, getImagesByPriority, getPoolSummary } from '../image-pool';
+import { IMAGE_CURATOR_CONFIG, IMAGE_DIMENSION_CONFIG } from '../config';
 import { createTokenUsageFromResult } from '../types';
 import { normalizeHeadline, findMatchingHeadline, buildH2LineMap } from '../utils/headline-utils';
 import { extractFilenameFromUrl, normalizeImageUrlForDedupe } from '../utils/url-utils';
@@ -30,7 +30,50 @@ import { extractFilenameFromUrl, normalizeImageUrlForDedupe } from '../utils/url
 // ============================================================================
 
 /**
- * Image assignment for a section.
+ * A single hero image candidate from the curator.
+ */
+export interface HeroCandidateOutput {
+  /** Index of the image in the hero candidate pool */
+  readonly imageIndex: number;
+  /** The actual image from the pool */
+  readonly image: CollectedImage;
+  /** SEO-optimized alt text */
+  readonly altText: string;
+  /** Relevance score from curator */
+  readonly relevanceScore: number;
+}
+
+/**
+ * A single section image candidate from the curator.
+ */
+export interface SectionCandidateOutput {
+  /** Index of the image in the section candidate pool */
+  readonly imageIndex: number;
+  /** The actual image from the pool */
+  readonly image: CollectedImage;
+  /** SEO-optimized alt text */
+  readonly altText: string;
+  /** Optional caption */
+  readonly caption?: string;
+  /** Relevance score from curator */
+  readonly relevanceScore: number;
+}
+
+/**
+ * Section selection with ranked candidates.
+ */
+export interface SectionSelectionOutput {
+  /** Section headline */
+  readonly sectionHeadline: string;
+  /** Section index in the plan */
+  readonly sectionIndex: number;
+  /** Ranked candidates (best first) */
+  readonly candidates: readonly SectionCandidateOutput[];
+}
+
+/**
+ * Final image assignment for a section (after dimension validation).
+ * Used by image-phase after processing candidates.
  */
 export interface SectionImageAssignment {
   /** Section headline this image belongs to */
@@ -46,7 +89,7 @@ export interface SectionImageAssignment {
 }
 
 /**
- * Hero image assignment.
+ * Final hero image assignment (after dimension validation).
  */
 export interface HeroImageAssignment {
   /** Selected image for hero */
@@ -57,12 +100,13 @@ export interface HeroImageAssignment {
 
 /**
  * Output from the Image Curator agent.
+ * Contains ranked candidates that need post-processing for dimension validation.
  */
 export interface ImageCuratorOutput {
-  /** Hero image assignment (if found) */
-  readonly heroImage?: HeroImageAssignment;
-  /** Section image assignments */
-  readonly sectionImages: readonly SectionImageAssignment[];
+  /** Ranked hero image candidates (up to 10, best first) */
+  readonly heroCandidates: readonly HeroCandidateOutput[];
+  /** Section selections with ranked candidates */
+  readonly sectionSelections: readonly SectionSelectionOutput[];
   /** Token usage for curation */
   readonly tokenUsage: TokenUsage;
   /** Summary of image pool for debugging */
@@ -71,7 +115,14 @@ export interface ImageCuratorOutput {
     readonly igdb: number;
     readonly tavily: number;
     readonly exa: number;
+    readonly source: number;
+    readonly artworks: number;
+    readonly screenshots: number;
   };
+  /** Candidate images per section (for dimension validation lookup) */
+  readonly candidatesPerSection: ReadonlyMap<string, readonly CollectedImage[]>;
+  /** Hero candidate pool (for dimension validation lookup) */
+  readonly heroCandidatePool: readonly CollectedImage[];
 }
 
 /**
@@ -104,21 +155,48 @@ export interface ImageCuratorDeps {
 // Zod Schemas for LLM Output
 // ============================================================================
 
-const ImageSelectionSchema = z.object({
-  sectionHeadline: z.string().describe('The section headline this image is for'),
-  selectedImageIndex: z.number().describe('Index of selected image from candidates (0-based), or -1 if none suitable'),
+/**
+ * Schema for a single hero image candidate (ranked selection).
+ */
+const HeroCandidateSchema = z.object({
+  imageIndex: z.number().describe('Index of candidate image from hero pool (0-based)'),
   altText: z.string().max(150).describe('SEO-optimized alt text (80-120 chars, include game name and context)'),
-  caption: z.string().optional().describe('Brief descriptive caption for the image (NOT attribution - that is handled separately)'),
-  relevanceScore: z.number().min(0).max(100).describe('How relevant is this image to the section content (0-100)'),
-  qualityScore: z.number().min(0).max(100).describe('Image quality assessment (0-100): not blurry, good composition'),
+  relevanceScore: z.number().min(0).max(100).describe('How relevant is this image for the article hero (0-100)'),
 });
 
+/**
+ * Schema for a single section image candidate (ranked selection).
+ */
+const SectionCandidateSchema = z.object({
+  imageIndex: z.number().describe('Index of candidate from section pool (0-based)'),
+  altText: z.string().max(150).describe('SEO-optimized alt text'),
+  caption: z.string().optional().describe('Brief descriptive caption (NOT attribution)'),
+  relevanceScore: z.number().min(0).max(100).describe('How relevant is this image to the section (0-100)'),
+});
+
+/**
+ * Schema for section selections with ranked candidates.
+ */
+const SectionSelectionSchema = z.object({
+  sectionHeadline: z.string().describe('The section headline this selection is for'),
+  candidates: z.array(SectionCandidateSchema).max(IMAGE_DIMENSION_CONFIG.MAX_SECTION_CANDIDATES)
+    .describe(`Up to ${IMAGE_DIMENSION_CONFIG.MAX_SECTION_CANDIDATES} ranked candidates in order of preference (best first)`),
+});
+
+/**
+ * Full response schema for ranked candidate selection.
+ */
 const ImageCuratorResponseSchema = z.object({
-  heroImageAltText: z.string().max(150).describe('Alt text for hero image (include article title and game name)'),
-  sectionSelections: z.array(ImageSelectionSchema).describe('Image selection for each section'),
+  heroCandidates: z.array(HeroCandidateSchema).max(IMAGE_DIMENSION_CONFIG.MAX_HERO_CANDIDATES)
+    .describe(`Up to ${IMAGE_DIMENSION_CONFIG.MAX_HERO_CANDIDATES} ranked hero image candidates in order of preference (best first)`),
+  sectionSelections: z.array(SectionSelectionSchema)
+    .describe('Image selections for each section'),
 });
 
 type ImageCuratorResponse = z.infer<typeof ImageCuratorResponseSchema>;
+type HeroCandidate = z.infer<typeof HeroCandidateSchema>;
+type SectionCandidate = z.infer<typeof SectionCandidateSchema>;
+type SectionSelection = z.infer<typeof SectionSelectionSchema>;
 
 // ============================================================================
 // Prompts
@@ -127,9 +205,18 @@ type ImageCuratorResponse = z.infer<typeof ImageCuratorResponseSchema>;
 function buildImageCuratorSystemPrompt(): string {
   return `You are an expert image curator for a gaming wiki. Your job is to select the best images for article sections and generate SEO-optimized alt text.
 
+## Ranked Selection System
+
+You must provide RANKED candidates for each selection, not single choices. This allows fallback to the next-best option if the top pick is unavailable or too small.
+
+**For hero image**: Provide up to 10 candidates ranked by preference (best first).
+**For each section**: Provide up to 3 candidates ranked by preference (best first).
+
+The system will use your top-ranked candidate if it meets dimension requirements, otherwise try the next candidate.
+
 ## Image Selection Criteria
 
-1. **Relevance**: Image must directly relate to section content
+1. **Relevance**: Image must directly relate to content
    - For boss guides: show the boss, the arena, or the attack patterns
    - For location guides: show the location, map, or key landmarks
    - For item guides: show the item, where to find it, or how it's used
@@ -142,10 +229,9 @@ function buildImageCuratorSystemPrompt(): string {
 3. **Variety**: Don't pick similar images for different sections
    - Each section should have a distinct visual
 
-4. **Coverage**: You MUST select at least one image for EVERY section
-   - If no perfect match exists, pick the best available option
-   - Empty sections are not acceptable - readers expect visual content
-   - Even a loosely related image is better than no image
+4. **Coverage**: You MUST select candidates for EVERY section
+   - Provide at least 1 candidate per section, ideally 3
+   - If candidates are limited, include what's available
 
 ## Alt Text Guidelines
 
@@ -163,31 +249,61 @@ Examples:
 
 ## Response Format
 
-For each section, provide:
-1. selectedImageIndex: Which candidate image to use (-1 ONLY if absolutely no candidates exist)
-2. altText: SEO-optimized description
-3. relevanceScore: 0-100 (how well it matches section content)
-4. qualityScore: 0-100 (image quality assessment)
-5. caption: Brief descriptive caption (optional, NOT for attribution - attribution is handled separately)
+**heroCandidates**: Array of up to 10 hero image candidates, ranked best first
+- imageIndex: Index from hero pool
+- altText: SEO-optimized alt text
+- relevanceScore: 0-100
 
-IMPORTANT: Every section MUST have an image. Do not skip any section. If candidates are limited, pick the most relevant one available.`;
+**sectionSelections**: Array with one entry per section
+- sectionHeadline: Section name
+- candidates: Array of up to 3 candidates, ranked best first
+  - imageIndex: Index from section candidates
+  - altText: SEO-optimized alt text
+  - caption: Optional descriptive caption
+  - relevanceScore: 0-100
+
+IMPORTANT: Every section MUST have at least one candidate.`;
 }
 
 // Note: extractFilenameFromUrl and normalizeImageUrlForDedupe are imported from '../utils/url-utils'
 
 function buildImageCuratorUserPrompt(
   context: ImageCuratorContext,
-  candidatesPerSection: Map<string, readonly CollectedImage[]>
+  candidatesPerSection: Map<string, readonly CollectedImage[]>,
+  heroCandidatePool: readonly CollectedImage[]
 ): string {
   const lines: string[] = [
     `# Image Curation for: ${context.articleTitle}`,
     `Game: ${context.gameName}`,
     '',
-    '## Article Sections',
-    '',
   ];
 
+  // Add hero candidate pool first
+  lines.push('## Hero Image Candidates');
+  lines.push('Select up to 10 candidates ranked by preference for the featured/hero image.');
+  lines.push('');
+  
+  if (heroCandidatePool.length === 0) {
+    lines.push('No hero image candidates available.');
+  } else {
+    heroCandidatePool.forEach((img, idx) => {
+      const urlFilename = extractFilenameFromUrl(img.url);
+      lines.push(`${idx}. ${img.source.toUpperCase()}${img.isOfficial ? ' (Official)' : ''} [${urlFilename}]`);
+      if (img.description) {
+        lines.push(`   Description: ${img.description}`);
+      }
+      if (img.igdbType) {
+        lines.push(`   Type: ${img.igdbType}`);
+      }
+    });
+  }
+  lines.push('');
+  
   // Add section info with their candidate images
+  lines.push('## Article Sections');
+  lines.push('For each section, select up to 3 candidates ranked by preference.');
+  lines.push('');
+
   // Note: candidatesPerSection is keyed by normalized headlines for reliable matching
   for (const section of context.plan.sections) {
     const normalizedKey = normalizeHeadline(section.headline);
@@ -221,21 +337,8 @@ function buildImageCuratorUserPrompt(
     }
     lines.push('');
   }
-
-  // Add hero image info - select based on article title relevance
-  const heroImage = getBestHeroImage(context.imagePool, context.articleTitle);
-  if (heroImage) {
-    const heroFilename = extractFilenameFromUrl(heroImage.url);
-    lines.push('## Hero Image');
-    lines.push(`Source: ${heroImage.source.toUpperCase()}${heroImage.isOfficial ? ' (Official)' : ''} [${heroFilename}]`);
-    if (heroImage.description) {
-      lines.push(`Description: ${heroImage.description}`);
-    }
-    lines.push('');
-    lines.push('Generate alt text for this hero image.');
-    lines.push('');
-    lines.push(`**IMPORTANT**: Do NOT select this same image [${heroFilename}] for any section. Each section must use a different image.`);
-  }
+  
+  lines.push('**IMPORTANT**: Images selected as hero candidates should NOT be selected for sections. Try to use different images for each selection.');
 
   return lines.join('\n');
 }
@@ -251,11 +354,15 @@ function buildImageCuratorUserPrompt(
 // ============================================================================
 
 /**
- * Runs the Image Curator agent to select and place images in the article.
+ * Runs the Image Curator agent to select ranked image candidates.
+ *
+ * This function returns RANKED CANDIDATES, not final selections.
+ * The caller (image-phase.ts) should process these candidates through
+ * dimension validation to select the first valid image for each slot.
  *
  * @param context - Context with article content, plan, and image pool
  * @param deps - Dependencies (model, generateObject, logger)
- * @returns Image assignments for hero and sections
+ * @returns Ranked candidates for hero and sections (need post-processing)
  */
 export async function runImageCurator(
   context: ImageCuratorContext,
@@ -271,14 +378,19 @@ export async function runImageCurator(
   if (context.imagePool.count === 0) {
     log?.warn('[ImageCurator] No images in pool, skipping curation');
     return {
-      sectionImages: [],
+      heroCandidates: [],
+      sectionSelections: [],
       tokenUsage: { input: 0, output: 0 },
       poolSummary,
+      candidatesPerSection: new Map(),
+      heroCandidatePool: [],
     };
   }
 
-  // Get best hero image
-  const heroImage = getBestHeroImage(context.imagePool, context.articleTitle);
+  // Get hero candidate pool - all images sorted by priority
+  // We show the curator all images and let it pick the best 10
+  const heroCandidatePool = getImagesByPriority(context.imagePool);
+  log?.debug(`[ImageCurator] Hero candidate pool: ${heroCandidatePool.length} images`);
 
   // Get candidates for each section (use normalized headlines as keys for reliable lookup)
   const candidatesPerSection = new Map<string, readonly CollectedImage[]>();
@@ -295,10 +407,10 @@ export async function runImageCurator(
 
   // Build prompts
   const systemPrompt = buildImageCuratorSystemPrompt();
-  const userPrompt = buildImageCuratorUserPrompt(context, candidatesPerSection);
+  const userPrompt = buildImageCuratorUserPrompt(context, candidatesPerSection, heroCandidatePool);
 
-  // Call LLM to select images and generate alt text
-  log?.debug('[ImageCurator] Calling LLM for image selection...');
+  // Call LLM to select ranked candidates
+  log?.debug('[ImageCurator] Calling LLM for ranked image selection...');
   
   const result = await genObject({
     model,
@@ -309,126 +421,76 @@ export async function runImageCurator(
     abortSignal: signal,
   });
 
-  // result.object is already typed by generateObject via the Zod schema
   const response = result.object;
   const tokenUsage = createTokenUsageFromResult(result);
 
-  log?.debug(`[ImageCurator] LLM response: ${response.sectionSelections.length} section selections`);
+  log?.debug(`[ImageCurator] LLM response: ${response.heroCandidates.length} hero candidates, ${response.sectionSelections.length} sections`);
 
-  // Parse markdown to find section line numbers (using shared utility)
-  const sectionLines = buildH2LineMap(context.markdown);
+  // Build hero candidate outputs with resolved images
+  const heroCandidates: HeroCandidateOutput[] = [];
+  for (const candidate of response.heroCandidates) {
+    if (candidate.imageIndex < 0 || candidate.imageIndex >= heroCandidatePool.length) {
+      log?.warn(`[ImageCurator] Invalid hero candidate index: ${candidate.imageIndex}`);
+      continue;
+    }
+    heroCandidates.push({
+      imageIndex: candidate.imageIndex,
+      image: heroCandidatePool[candidate.imageIndex],
+      altText: candidate.altText,
+      relevanceScore: candidate.relevanceScore,
+    });
+  }
 
-  // Build section image assignments
-  const sectionImages: SectionImageAssignment[] = [];
+  // Build section selection outputs with resolved images
+  const sectionSelections: SectionSelectionOutput[] = [];
 
   for (const selection of response.sectionSelections) {
-    // Skip if no image selected
-    if (selection.selectedImageIndex < 0) {
-      continue;
-    }
-
-    // Skip if scores below threshold
-    if (selection.relevanceScore < IMAGE_CURATOR_CONFIG.MIN_RELEVANCE_SCORE) {
-      log?.debug(`[ImageCurator] Skipping "${selection.sectionHeadline}" - low relevance (${selection.relevanceScore})`);
-      continue;
-    }
-    if (selection.qualityScore < IMAGE_CURATOR_CONFIG.MIN_QUALITY_SCORE) {
-      log?.debug(`[ImageCurator] Skipping "${selection.sectionHeadline}" - low quality (${selection.qualityScore})`);
-      continue;
-    }
-
-    // Get the selected image using normalized headline for reliable lookup
     const normalizedSelectionHeadline = normalizeHeadline(selection.sectionHeadline);
-    const candidates = candidatesPerSection.get(normalizedSelectionHeadline) ?? [];
+    const sectionCandidates = candidatesPerSection.get(normalizedSelectionHeadline) ?? [];
     
-    if (candidates.length === 0) {
-      // Expected if image pool is sparse - use debug level
-      log?.debug(`[ImageCurator] No candidates found for section "${selection.sectionHeadline}" (normalized: "${normalizedSelectionHeadline}")`);
-      continue;
-    }
-    
-    if (selection.selectedImageIndex >= candidates.length) {
-      log?.warn(`[ImageCurator] Invalid image index ${selection.selectedImageIndex} for "${selection.sectionHeadline}" (${candidates.length} candidates)`);
-      continue;
-    }
-
-    const selectedImage = candidates[selection.selectedImageIndex];
-
-    // Find the section in markdown
-    const matchedSection = findMatchingHeadline(selection.sectionHeadline, sectionLines, log);
-    if (!matchedSection) {
-      log?.warn(
-        `[ImageCurator] Could not find section in markdown. ` +
-        `original="${selection.sectionHeadline}", normalized="${normalizedSelectionHeadline}"`
-      );
-      continue;
-    }
-
-    // Find section index in plan - skip if not found (don't default to 0)
+    // Find section index in plan
     const sectionIndex = context.plan.sections.findIndex(
       s => normalizeHeadline(s.headline) === normalizedSelectionHeadline
     );
 
     if (sectionIndex < 0) {
-      const availableSections = context.plan.sections.map(s => s.headline).join(', ');
-      log?.warn(
-        `[ImageCurator] Section not found in plan, skipping. ` +
-        `original="${selection.sectionHeadline}", normalized="${normalizedSelectionHeadline}". ` +
-        `Available sections: [${availableSections}]`
-      );
+      log?.warn(`[ImageCurator] Section not found in plan: "${selection.sectionHeadline}"`);
       continue;
     }
 
-    sectionImages.push({
-      sectionHeadline: matchedSection.headline,
-      sectionIndex,
-      image: selectedImage,
-      altText: selection.altText,
-      caption: selection.caption,
-    });
-  }
-
-  // Deduplicate section images by normalized URL
-  // IGDB images at different sizes (t_1080p, t_screenshot_big) are the same underlying image
-  const seenNormalizedUrls = new Set<string>();
-  if (heroImage) {
-    seenNormalizedUrls.add(normalizeImageUrlForDedupe(heroImage.url));
-  }
-  
-  const deduplicatedSectionImages = sectionImages.filter((img) => {
-    const normalizedUrl = normalizeImageUrlForDedupe(img.image.url);
-    if (seenNormalizedUrls.has(normalizedUrl)) {
-      log?.debug(`[ImageCurator] Skipping duplicate image for "${img.sectionHeadline}" (already used)`);
-      return false;
+    // Build candidate outputs for this section
+    const candidates: SectionCandidateOutput[] = [];
+    for (const candidate of selection.candidates) {
+      if (candidate.imageIndex < 0 || candidate.imageIndex >= sectionCandidates.length) {
+        log?.warn(`[ImageCurator] Invalid section candidate index: ${candidate.imageIndex} for "${selection.sectionHeadline}"`);
+        continue;
+      }
+      candidates.push({
+        imageIndex: candidate.imageIndex,
+        image: sectionCandidates[candidate.imageIndex],
+        altText: candidate.altText,
+        caption: candidate.caption,
+        relevanceScore: candidate.relevanceScore,
+      });
     }
-    seenNormalizedUrls.add(normalizedUrl);
-    return true;
-  });
 
-  if (deduplicatedSectionImages.length < sectionImages.length) {
-    log?.info(`[ImageCurator] Removed ${sectionImages.length - deduplicatedSectionImages.length} duplicate image(s)`);
+    if (candidates.length > 0) {
+      sectionSelections.push({
+        sectionHeadline: selection.sectionHeadline,
+        sectionIndex,
+        candidates,
+      });
+    }
   }
 
-  // Limit to max images per article (excluding hero)
-  const maxSectionImages = IMAGE_CURATOR_CONFIG.MAX_IMAGES_PER_ARTICLE - (heroImage ? 1 : 0);
-  const limitedSectionImages = deduplicatedSectionImages.slice(0, maxSectionImages);
-
-  log?.info(`[ImageCurator] Selected ${limitedSectionImages.length} section images`);
-
-  // Build hero image assignment
-  let heroImageAssignment: HeroImageAssignment | undefined;
-  if (heroImage) {
-    heroImageAssignment = {
-      image: heroImage,
-      altText: response.heroImageAltText || `${context.articleTitle} - ${context.gameName}`,
-    };
-    log?.info(`[ImageCurator] Hero image selected from ${heroImage.source}`);
-  }
+  log?.info(`[ImageCurator] Returning ${heroCandidates.length} hero candidates, ${sectionSelections.length} section selections`);
 
   return {
-    heroImage: heroImageAssignment,
-    sectionImages: limitedSectionImages,
+    heroCandidates,
+    sectionSelections,
     tokenUsage,
     poolSummary,
+    candidatesPerSection,
+    heroCandidatePool,
   };
 }
