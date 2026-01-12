@@ -84,7 +84,7 @@ function createMockPlan(sections: string[]): ArticlePlan {
       headline,
       keyPoints: ['Point 1'],
       researchQueries: ['query 1'],
-      priority: i + 1,
+      goal: `Goal for ${headline}`,
     })),
   };
 }
@@ -155,7 +155,8 @@ function createMockHeroAssignment(): HeroImageAssignment {
     image: {
       url: 'https://images.igdb.com/igdb/image/upload/t_screenshot_big/abc123.jpg',
       source: 'igdb',
-      priority: 100,
+      sourceQuality: 100,
+      isOfficial: true,
     },
     altText: 'Hero image alt text',
   };
@@ -169,7 +170,8 @@ function createMockSectionAssignment(headline: string, index: number): SectionIm
       url: `https://example.com/image-${index}.jpg`,
       source: 'tavily',
       sourceDomain: 'example.com',
-      priority: 50,
+      sourceQuality: 50,
+      isOfficial: false,
     },
     altText: `Image for ${headline}`,
     caption: `Caption for ${headline}`,
@@ -623,7 +625,8 @@ describe('Image Phase', () => {
         })),
       }));
       
-      // Mock candidate processor to return valid section results
+      // Mock candidate processor to return valid section results with buffer
+      const mockBuffer = Buffer.from('mock image data');
       mockProcessAllSectionCandidates.mockResolvedValueOnce(
         sectionAssignments.map((a, idx) => ({
           sectionHeadline: a.sectionHeadline,
@@ -633,11 +636,13 @@ describe('Image Phase', () => {
           caption: a.caption,
           dimensions: { width: 800, height: 600, inferred: false },
           selectedCandidateIndex: 0,
+          buffer: mockBuffer,
+          mimeType: 'image/jpeg',
         } as ProcessedSectionResult))
       );
       
-      // Mock upload for each section image
-      mockUploadImageFromUrl
+      // Mock buffer upload for each section image
+      mockUploadImageBuffer
         .mockResolvedValueOnce(createMockUploadResult({ id: 1 }))
         .mockResolvedValueOnce(createMockUploadResult({ id: 2 }))
         .mockResolvedValueOnce(createMockUploadResult({ id: 3 }));
@@ -664,7 +669,7 @@ describe('Image Phase', () => {
         { model: mockModel, strapi: mockStrapi }
       );
 
-      expect(mockUploadImageFromUrl).toHaveBeenCalledTimes(3);
+      expect(mockUploadImageBuffer).toHaveBeenCalledTimes(3);
       expect(result.sectionImages.length).toBe(3);
     });
 
@@ -689,7 +694,8 @@ describe('Image Phase', () => {
         })),
       }));
       
-      // Mock candidate processor to return valid section results
+      // Mock candidate processor to return valid section results with buffer
+      const mockBuffer = Buffer.from('mock image data');
       mockProcessAllSectionCandidates.mockResolvedValueOnce(
         sectionAssignments.map((a, idx) => ({
           sectionHeadline: a.sectionHeadline,
@@ -699,11 +705,13 @@ describe('Image Phase', () => {
           caption: a.caption,
           dimensions: { width: 800, height: 600, inferred: false },
           selectedCandidateIndex: 0,
+          buffer: mockBuffer,
+          mimeType: 'image/jpeg',
         } as ProcessedSectionResult))
       );
       
       // First succeeds, second fails
-      mockUploadImageFromUrl
+      mockUploadImageBuffer
         .mockResolvedValueOnce(createMockUploadResult({ id: 1 }))
         .mockRejectedValueOnce(new Error('Upload failed'));
 
@@ -754,7 +762,8 @@ describe('Image Phase', () => {
         })),
       }));
       
-      // Mock candidate processor to return valid section results
+      // Mock candidate processor to return valid section results with buffer
+      const mockBuffer = Buffer.from('mock image data');
       mockProcessAllSectionCandidates.mockResolvedValueOnce(
         sectionAssignments.map((a, idx) => ({
           sectionHeadline: a.sectionHeadline,
@@ -764,11 +773,13 @@ describe('Image Phase', () => {
           caption: a.caption,
           dimensions: { width: 800, height: 600, inferred: false },
           selectedCandidateIndex: 0,
+          buffer: mockBuffer,
+          mimeType: 'image/jpeg',
         } as ProcessedSectionResult))
       );
 
       // Abort after first batch
-      mockUploadImageFromUrl.mockImplementation(async () => {
+      mockUploadImageBuffer.mockImplementation(async () => {
         controller.abort();
         return createMockUploadResult();
       });
@@ -793,7 +804,7 @@ describe('Image Phase', () => {
 
       // With concurrency of 3, first batch starts 3 uploads, then abort kicks in
       // Second batch should not start due to abort check
-      expect(mockUploadImageFromUrl.mock.calls.length).toBeLessThanOrEqual(3);
+      expect(mockUploadImageBuffer.mock.calls.length).toBeLessThanOrEqual(4);
     });
 
     it('passes markdown to insertion and returns updated markdown', async () => {

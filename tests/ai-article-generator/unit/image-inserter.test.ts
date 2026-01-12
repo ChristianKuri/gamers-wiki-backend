@@ -17,7 +17,7 @@ function createMockImage(url: string): CollectedImage {
     url,
     source: 'igdb',
     isOfficial: true,
-    priority: 100,
+    sourceQuality: 100,
   };
 }
 

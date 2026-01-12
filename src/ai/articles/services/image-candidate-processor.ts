@@ -5,8 +5,15 @@
  * and selects the first valid image for each slot (hero, sections).
  *
  * This is the post-processing step between curator selection and image upload.
+ *
+ * MEMORY NOTE: ProcessedHeroResult and ProcessedSectionResult hold image buffers
+ * in memory during the image phase. These are garbage collected after upload completes.
+ * For articles with many large images, memory usage will spike temporarily.
+ * This is an intentional trade-off for the "download once, reuse buffer" pattern
+ * which avoids redundant network requests.
  */
 
+import sharp from 'sharp';
 import type { Logger } from '../../../utils/logger';
 import type { CollectedImage } from '../image-pool';
 import type {
@@ -18,8 +25,10 @@ import type {
 } from '../agents/image-curator';
 import {
   getImageDimensions,
+  inferIGDBDimensions,
   type ImageDimensions,
 } from './image-dimensions';
+import { downloadImage } from './image-downloader';
 import { IMAGE_DIMENSION_CONFIG } from '../config';
 import { normalizeImageUrlForDedupe } from '../utils/url-utils';
 
@@ -29,6 +38,7 @@ import { normalizeImageUrlForDedupe } from '../utils/url-utils';
 
 /**
  * Result of processing hero candidates.
+ * Includes downloaded buffer for reuse in validation and upload.
  */
 export interface ProcessedHeroResult {
   /** Selected image */
@@ -39,10 +49,15 @@ export interface ProcessedHeroResult {
   readonly dimensions: ImageDimensions;
   /** Index of the selected candidate (for debugging) */
   readonly selectedCandidateIndex: number;
+  /** Downloaded image buffer (for reuse in upload) */
+  readonly buffer: Buffer;
+  /** MIME type of the downloaded image */
+  readonly mimeType: string;
 }
 
 /**
  * Result of processing section candidates.
+ * Includes downloaded buffer for reuse in validation and upload.
  */
 export interface ProcessedSectionResult {
   /** Section headline */
@@ -59,7 +74,28 @@ export interface ProcessedSectionResult {
   readonly dimensions: ImageDimensions;
   /** Index of the selected candidate (for debugging) */
   readonly selectedCandidateIndex: number;
+  /** Downloaded image buffer (for reuse in upload) */
+  readonly buffer: Buffer;
+  /** MIME type of the downloaded image */
+  readonly mimeType: string;
 }
+
+/**
+ * Result of quality validation for a hero candidate.
+ */
+export interface QualityValidatorResult {
+  readonly passed: boolean;
+  readonly reason?: string;
+}
+
+/**
+ * Quality validator function type.
+ * Called after dimension validation passes to check for watermarks, blur, etc.
+ */
+export type QualityValidator = (
+  buffer: Buffer,
+  mimeType: string
+) => Promise<QualityValidatorResult>;
 
 /**
  * Options for processing hero candidates.
@@ -71,6 +107,8 @@ export interface ProcessHeroOptions {
   readonly logger?: Logger;
   /** AbortSignal for cancellation */
   readonly signal?: AbortSignal;
+  /** Optional quality validator for hero images (watermark/clarity check) */
+  readonly qualityValidator?: QualityValidator;
 }
 
 /**
@@ -95,11 +133,18 @@ export interface ProcessSectionOptions {
 
 /**
  * Processes ranked hero candidates and returns the first one that meets
- * dimension requirements.
+ * dimension AND quality requirements.
+ *
+ * Downloads the image once and returns the buffer for reuse in upload.
+ * This avoids re-downloading the same image multiple times.
+ *
+ * If a qualityValidator is provided, it's called after dimension validation
+ * passes to check for watermarks, blur, etc. If validation fails, the next
+ * candidate is tried.
  *
  * @param candidates - Ranked hero candidates from curator (best first)
- * @param options - Processing options
- * @returns First valid hero result, or null if none meet requirements
+ * @param options - Processing options (including optional quality validator)
+ * @returns First valid hero result with buffer, or null if none meet requirements
  */
 export async function processHeroCandidates(
   candidates: readonly HeroCandidateOutput[],
@@ -109,6 +154,7 @@ export async function processHeroCandidates(
     minWidth = IMAGE_DIMENSION_CONFIG.HERO_MIN_WIDTH,
     logger,
     signal,
+    qualityValidator,
   } = options;
 
   logger?.debug(`[CandidateProcessor] Processing ${candidates.length} hero candidates (min width: ${minWidth}px)`);
@@ -116,6 +162,8 @@ export async function processHeroCandidates(
   // Track failure reasons for summary logging
   let probeFailures = 0;
   let tooSmall = 0;
+  let downloadFailures = 0;
+  let qualityFailures = 0;
 
   for (let i = 0; i < candidates.length; i++) {
     const candidate = candidates[i];
@@ -128,36 +176,131 @@ export async function processHeroCandidates(
 
     logger?.debug(`[CandidateProcessor] Checking hero candidate ${i}: ${candidate.image.url.slice(0, 80)}...`);
 
-    // Get dimensions (may use IGDB inference or download)
-    const dims = await getImageDimensions(candidate.image.url, { logger, signal });
-
-    if (!dims) {
-      logger?.debug(`[CandidateProcessor] Hero candidate ${i}: failed to get dimensions`);
-      probeFailures++;
-      continue;
+    // For IGDB images, try to infer dimensions first (no download needed)
+    const inferredDims = inferIGDBDimensions(candidate.image.url);
+    if (inferredDims && inferredDims.width >= minWidth) {
+      // IGDB image with known large size - download it
+      try {
+        const downloadResult = await downloadImage({
+          url: candidate.image.url,
+          logger,
+          signal,
+        });
+        
+        // Verify dimensions from actual buffer
+        const metadata = await sharp(downloadResult.buffer).metadata();
+        const dims: ImageDimensions = {
+          width: metadata.width ?? inferredDims.width,
+          height: metadata.height ?? inferredDims.height,
+          inferred: false,
+        };
+        
+        if (dims.width >= minWidth) {
+          // Run quality validation if provided (for hero images)
+          if (qualityValidator) {
+            logger?.debug(`[CandidateProcessor] Hero candidate ${i}: running quality validation`);
+            const qualityResult = await qualityValidator(downloadResult.buffer, downloadResult.mimeType);
+            if (!qualityResult.passed) {
+              logger?.debug(
+                `[CandidateProcessor] Hero candidate ${i} failed quality check: ${qualityResult.reason ?? 'unknown'}`
+              );
+              qualityFailures++;
+              continue; // Try next candidate
+            }
+            logger?.debug(`[CandidateProcessor] Hero candidate ${i} passed quality validation`);
+          }
+          
+          logger?.info(
+            `[CandidateProcessor] Hero candidate ${i} selected: ${dims.width}x${dims.height} (IGDB)`
+          );
+          return {
+            image: candidate.image,
+            altText: candidate.altText,
+            dimensions: dims,
+            selectedCandidateIndex: i,
+            buffer: downloadResult.buffer,
+            mimeType: downloadResult.mimeType,
+          };
+        }
+        tooSmall++;
+      } catch (error) {
+        const errorMsg = error instanceof Error ? error.message : String(error);
+        logger?.debug(`[CandidateProcessor] Hero candidate ${i}: download failed: ${errorMsg}`);
+        downloadFailures++;
+        continue;
+      }
+    } else {
+      // Non-IGDB or small IGDB image - download and check dimensions
+      try {
+        const downloadResult = await downloadImage({
+          url: candidate.image.url,
+          logger,
+          signal,
+        });
+        
+        const metadata = await sharp(downloadResult.buffer).metadata();
+        if (!metadata.width || !metadata.height) {
+          logger?.debug(`[CandidateProcessor] Hero candidate ${i}: failed to get dimensions from buffer`);
+          probeFailures++;
+          continue;
+        }
+        
+        const dims: ImageDimensions = {
+          width: metadata.width,
+          height: metadata.height,
+          inferred: false,
+        };
+        
+        if (dims.width >= minWidth) {
+          // Run quality validation if provided (for hero images)
+          if (qualityValidator) {
+            logger?.debug(`[CandidateProcessor] Hero candidate ${i}: running quality validation`);
+            const qualityResult = await qualityValidator(downloadResult.buffer, downloadResult.mimeType);
+            if (!qualityResult.passed) {
+              logger?.debug(
+                `[CandidateProcessor] Hero candidate ${i} failed quality check: ${qualityResult.reason ?? 'unknown'}`
+              );
+              qualityFailures++;
+              continue; // Try next candidate
+            }
+            logger?.debug(`[CandidateProcessor] Hero candidate ${i} passed quality validation`);
+          }
+          
+          logger?.info(
+            `[CandidateProcessor] Hero candidate ${i} selected: ${dims.width}x${dims.height}`
+          );
+          return {
+            image: candidate.image,
+            altText: candidate.altText,
+            dimensions: dims,
+            selectedCandidateIndex: i,
+            buffer: downloadResult.buffer,
+            mimeType: downloadResult.mimeType,
+          };
+        }
+        
+        logger?.debug(`[CandidateProcessor] Hero candidate ${i} too small: ${dims.width}px < ${minWidth}px`);
+        tooSmall++;
+      } catch (error) {
+        const errorMsg = error instanceof Error ? error.message : String(error);
+        logger?.debug(`[CandidateProcessor] Hero candidate ${i}: download failed: ${errorMsg}`);
+        downloadFailures++;
+        continue;
+      }
     }
-
-    if (dims.width >= minWidth) {
-      logger?.info(
-        `[CandidateProcessor] Hero candidate ${i} selected: ${dims.width}x${dims.height} ` +
-        `(${dims.inferred ? 'inferred' : 'measured'})`
-      );
-      return {
-        image: candidate.image,
-        altText: candidate.altText,
-        dimensions: dims,
-        selectedCandidateIndex: i,
-      };
-    }
-
-    logger?.debug(`[CandidateProcessor] Hero candidate ${i} too small: ${dims.width}px < ${minWidth}px`);
-    tooSmall++;
   }
 
   // Log summary of why all candidates failed
+  const failureParts = [
+    `${downloadFailures} download failures`,
+    `${probeFailures} probe failures`,
+    `${tooSmall} too small (min ${minWidth}px)`,
+  ];
+  if (qualityFailures > 0) {
+    failureParts.push(`${qualityFailures} quality failures`);
+  }
   logger?.warn(
-    `[CandidateProcessor] All ${candidates.length} hero candidates failed: ` +
-    `${probeFailures} probe failures, ${tooSmall} too small (min ${minWidth}px)`
+    `[CandidateProcessor] All ${candidates.length} hero candidates failed: ${failureParts.join(', ')}`
   );
   return null;
 }
@@ -167,15 +310,25 @@ export async function processHeroCandidates(
 // ============================================================================
 
 /**
+ * Processed image with buffer and dimensions (cached for reuse).
+ */
+interface CachedDownloadResult {
+  readonly buffer: Buffer;
+  readonly mimeType: string;
+  readonly dimensions: ImageDimensions;
+}
+
+/**
  * Processes ranked section candidates and returns the first one that meets
  * dimension requirements.
  *
+ * Downloads the image once and returns the buffer for reuse in upload.
  * All section images use full-width layout with standard markdown.
  * Images below the minimum width threshold are skipped.
  *
  * @param selection - Section selection with ranked candidates from curator
  * @param options - Processing options
- * @returns First valid section result, or null if none meet requirements
+ * @returns First valid section result with buffer, or null if none meet requirements
  */
 export async function processSectionCandidates(
   selection: SectionSelectionOutput,
@@ -201,9 +354,8 @@ export async function processSectionCandidates(
 
   // Track failure reasons for summary logging
   let excluded = 0;
-  let probeFailures = 0;
+  let downloadFailures = 0;
   let tooSmall = 0;
-  let cacheHits = 0;
 
   for (let i = 0; i < selection.candidates.length; i++) {
     const candidate = selection.candidates[i];
@@ -224,51 +376,61 @@ export async function processSectionCandidates(
 
     logger?.debug(`[CandidateProcessor] Checking section candidate ${i}: ${candidate.image.url.slice(0, 80)}...`);
 
-    // Get dimensions (check cache first, then probe)
-    let dims: ImageDimensions | null;
-    const cachedDims = dimensionCache?.get(candidate.image.url);
-    if (cachedDims !== undefined) {
-      dims = cachedDims;
-      cacheHits++;
-      logger?.debug(`[CandidateProcessor] Section candidate ${i}: using cached dimensions`);
-    } else {
-      dims = await getImageDimensions(candidate.image.url, { logger, signal });
-      // Store in cache for potential reuse
-      dimensionCache?.set(candidate.image.url, dims);
-    }
+    // Download once and get dimensions from buffer
+    try {
+      const downloadResult = await downloadImage({
+        url: candidate.image.url,
+        logger,
+        signal,
+      });
+      
+      const metadata = await sharp(downloadResult.buffer).metadata();
+      if (!metadata.width || !metadata.height) {
+        logger?.debug(`[CandidateProcessor] Section candidate ${i}: failed to get dimensions from buffer`);
+        downloadFailures++;
+        continue;
+      }
+      
+      const dims: ImageDimensions = {
+        width: metadata.width,
+        height: metadata.height,
+        inferred: false,
+      };
 
-    if (!dims) {
-      logger?.debug(`[CandidateProcessor] Section candidate ${i}: failed to get dimensions`);
-      probeFailures++;
+      if (dims.width >= minWidth) {
+        logger?.info(
+          `[CandidateProcessor] Section candidate ${i} selected for "${selection.sectionHeadline}": ` +
+          `${dims.width}x${dims.height}`
+        );
+        return {
+          sectionHeadline: selection.sectionHeadline,
+          sectionIndex: selection.sectionIndex,
+          image: candidate.image,
+          altText: candidate.altText,
+          caption: candidate.caption,
+          dimensions: dims,
+          selectedCandidateIndex: i,
+          buffer: downloadResult.buffer,
+          mimeType: downloadResult.mimeType,
+        };
+      }
+
+      logger?.debug(
+        `[CandidateProcessor] Section candidate ${i} too small: ${dims.width}px < ${minWidth}px`
+      );
+      tooSmall++;
+    } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      logger?.debug(`[CandidateProcessor] Section candidate ${i}: download failed: ${errorMsg}`);
+      downloadFailures++;
       continue;
     }
-
-    if (dims.width >= minWidth) {
-      logger?.info(
-        `[CandidateProcessor] Section candidate ${i} selected for "${selection.sectionHeadline}": ` +
-        `${dims.width}x${dims.height} (${dims.inferred ? 'inferred' : 'measured'})`
-      );
-      return {
-        sectionHeadline: selection.sectionHeadline,
-        sectionIndex: selection.sectionIndex,
-        image: candidate.image,
-        altText: candidate.altText,
-        caption: candidate.caption,
-        dimensions: dims,
-        selectedCandidateIndex: i,
-      };
-    }
-
-    logger?.debug(
-      `[CandidateProcessor] Section candidate ${i} too small: ${dims.width}px < ${minWidth}px`
-    );
-    tooSmall++;
   }
 
   // Log summary of why all candidates failed
   const reasons = [];
   if (excluded > 0) reasons.push(`${excluded} excluded`);
-  if (probeFailures > 0) reasons.push(`${probeFailures} probe failures`);
+  if (downloadFailures > 0) reasons.push(`${downloadFailures} download failures`);
   if (tooSmall > 0) reasons.push(`${tooSmall} too small`);
   
   logger?.warn(
@@ -288,9 +450,11 @@ export async function processSectionCandidates(
  * Each section's selected image is added to the exclusion set before processing
  * the next section, ensuring the same image isn't used twice.
  *
+ * Downloads images once and returns buffers for reuse in upload.
+ *
  * @param selections - All section selections from curator
  * @param options - Processing options
- * @returns Array of processed section results (some may be null)
+ * @returns Array of processed section results with buffers (some may be null)
  */
 export async function processAllSectionCandidates(
   selections: readonly SectionSelectionOutput[],
@@ -300,7 +464,7 @@ export async function processAllSectionCandidates(
 
   logger?.info(
     `[CandidateProcessor] Processing ${selections.length} section selections ` +
-    `(sequential for deduplication)`
+    `(sequential for deduplication, download-once pattern)`
   );
 
   // Accumulate selected URLs to prevent cross-section duplicates
@@ -309,10 +473,6 @@ export async function processAllSectionCandidates(
     excludeUrls.map(url => normalizeImageUrlForDedupe(url))
   );
   const results: (ProcessedSectionResult | null)[] = [];
-
-  // Shared dimension cache to avoid redundant HTTP requests
-  // If same image appears in multiple sections' candidates, we only probe once
-  const sharedDimensionCache = new Map<string, ImageDimensions | null>();
 
   // Process sections sequentially to accumulate exclusions
   for (const selection of selections) {
@@ -326,11 +486,10 @@ export async function processAllSectionCandidates(
       break;
     }
 
-    // Process this section with current exclusions and shared cache
+    // Process this section with current exclusions
     const result = await processSectionCandidates(selection, {
       ...options,
       excludeUrls: [...usedUrls], // Current accumulated exclusions
-      dimensionCache: sharedDimensionCache,
     });
 
     // If we selected an image, add it to exclusions for subsequent sections
@@ -341,10 +500,8 @@ export async function processAllSectionCandidates(
   }
 
   const validCount = results.filter(r => r !== null).length;
-  const cacheSize = sharedDimensionCache.size;
   logger?.info(
-    `[CandidateProcessor] ${validCount}/${selections.length} sections have valid images ` +
-    `(dimension cache: ${cacheSize} entries)`
+    `[CandidateProcessor] ${validCount}/${selections.length} sections have valid images`
   );
 
   return results;

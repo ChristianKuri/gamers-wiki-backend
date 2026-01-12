@@ -27,7 +27,7 @@ function createMockImage(overrides: Partial<CollectedImage> = {}): CollectedImag
     url: 'https://images.igdb.com/igdb/image/upload/t_1080p/test123.jpg',
     source: 'igdb',
     isOfficial: true,
-    priority: 80,
+    sourceQuality: 80,
     ...overrides,
   };
 }
@@ -67,23 +67,59 @@ function createMockSectionSelection(
 }
 
 // ============================================================================
-// Mock getImageDimensions
+// Mocks for downloadImage and sharp
 // ============================================================================
 
-// Mock the image-dimensions module
-vi.mock('../../../src/ai/articles/services/image-dimensions', async () => {
-  const actual = await vi.importActual('../../../src/ai/articles/services/image-dimensions');
-  return {
-    ...actual,
-    getImageDimensions: vi.fn(),
-  };
+// Mock the image-downloader module
+vi.mock('../../../src/ai/articles/services/image-downloader', () => ({
+  downloadImage: vi.fn(),
+}));
+
+// Mock sharp module
+vi.mock('sharp', () => {
+  const mockMetadata = vi.fn();
+  const mockSharp = vi.fn(() => ({
+    metadata: mockMetadata,
+  }));
+  (mockSharp as unknown as { metadata: typeof mockMetadata }).metadata = mockMetadata;
+  return { default: mockSharp };
 });
 
-import { getImageDimensions } from '../../../src/ai/articles/services/image-dimensions';
-const mockGetImageDimensions = vi.mocked(getImageDimensions);
+import { downloadImage } from '../../../src/ai/articles/services/image-downloader';
+import sharp from 'sharp';
+const mockDownloadImage = vi.mocked(downloadImage);
+const mockSharp = vi.mocked(sharp);
+
+/**
+ * Helper to set up mock for successful image download and dimension check.
+ */
+function mockImageDownloadAndDimensions(
+  width: number,
+  height: number,
+  url?: string
+): void {
+  const buffer = Buffer.from('mock image data');
+  mockDownloadImage.mockResolvedValueOnce({
+    buffer,
+    mimeType: 'image/jpeg',
+    size: buffer.length,
+    sourceUrl: url ?? 'https://example.com/test.jpg',
+  });
+  (mockSharp as unknown as ReturnType<typeof vi.fn>).mockReturnValueOnce({
+    metadata: vi.fn().mockResolvedValueOnce({ width, height, format: 'jpeg' }),
+  });
+}
+
+/**
+ * Helper to set up mock for failed image download.
+ */
+function mockImageDownloadFailure(error: Error = new Error('Download failed')): void {
+  mockDownloadImage.mockRejectedValueOnce(error);
+}
 
 beforeEach(() => {
-  mockGetImageDimensions.mockReset();
+  mockDownloadImage.mockReset();
+  mockSharp.mockReset();
 });
 
 // ============================================================================
@@ -101,9 +137,8 @@ describe('processHeroCandidates', () => {
     ];
 
     // First image too small, second meets requirements
-    mockGetImageDimensions
-      .mockResolvedValueOnce({ width: 600, height: 400, inferred: false })
-      .mockResolvedValueOnce({ width: 1200, height: 800, inferred: false });
+    mockImageDownloadAndDimensions(600, 400);
+    mockImageDownloadAndDimensions(1200, 800);
 
     const result = await processHeroCandidates(candidates, { minWidth: 800 });
 
@@ -111,6 +146,8 @@ describe('processHeroCandidates', () => {
     expect(result?.image).toBe(image2);
     expect(result?.selectedCandidateIndex).toBe(1);
     expect(result?.dimensions.width).toBe(1200);
+    expect(result?.buffer).toBeDefined();
+    expect(result?.mimeType).toBe('image/jpeg');
   });
 
   it('should return first candidate when it meets requirements', async () => {
@@ -122,15 +159,15 @@ describe('processHeroCandidates', () => {
       createMockHeroCandidate(1, image2),
     ];
 
-    mockGetImageDimensions.mockResolvedValueOnce({ width: 1920, height: 1080, inferred: true });
+    mockImageDownloadAndDimensions(1920, 1080);
 
     const result = await processHeroCandidates(candidates, { minWidth: 800 });
 
     expect(result).not.toBeNull();
     expect(result?.image).toBe(image1);
     expect(result?.selectedCandidateIndex).toBe(0);
-    // Should only check first candidate since it passes
-    expect(mockGetImageDimensions).toHaveBeenCalledTimes(1);
+    // Should only download first candidate since it passes
+    expect(mockDownloadImage).toHaveBeenCalledTimes(1);
   });
 
   it('should return null if no candidates meet requirements', async () => {
@@ -142,16 +179,15 @@ describe('processHeroCandidates', () => {
       createMockHeroCandidate(1, image2),
     ];
 
-    mockGetImageDimensions
-      .mockResolvedValueOnce({ width: 400, height: 300, inferred: false })
-      .mockResolvedValueOnce({ width: 500, height: 350, inferred: false });
+    mockImageDownloadAndDimensions(400, 300);
+    mockImageDownloadAndDimensions(500, 350);
 
     const result = await processHeroCandidates(candidates, { minWidth: 800 });
 
     expect(result).toBeNull();
   });
 
-  it('should skip candidates that fail dimension probing', async () => {
+  it('should skip candidates that fail to download', async () => {
     const image1 = createMockImage({ url: 'https://example.com/broken.jpg' });
     const image2 = createMockImage({ url: 'https://example.com/working.jpg' });
     
@@ -160,9 +196,8 @@ describe('processHeroCandidates', () => {
       createMockHeroCandidate(1, image2),
     ];
 
-    mockGetImageDimensions
-      .mockResolvedValueOnce(null) // Failed to get dimensions
-      .mockResolvedValueOnce({ width: 1000, height: 700, inferred: false });
+    mockImageDownloadFailure(); // First fails to download
+    mockImageDownloadAndDimensions(1000, 700);
 
     const result = await processHeroCandidates(candidates, { minWidth: 800 });
 
@@ -176,15 +211,107 @@ describe('processHeroCandidates', () => {
     expect(result).toBeNull();
   });
 
-  it('should preserve inferred flag from dimension check', async () => {
+  it('should include buffer and mimeType in result', async () => {
     const image = createMockImage();
     const candidates = [createMockHeroCandidate(0, image)];
 
-    mockGetImageDimensions.mockResolvedValueOnce({ width: 1920, height: 1080, inferred: true });
+    mockImageDownloadAndDimensions(1920, 1080);
 
     const result = await processHeroCandidates(candidates, { minWidth: 800 });
 
-    expect(result?.dimensions.inferred).toBe(true);
+    expect(result?.buffer).toBeDefined();
+    expect(result?.buffer.length).toBeGreaterThan(0);
+    expect(result?.mimeType).toBe('image/jpeg');
+  });
+
+  describe('quality validator', () => {
+    it('should call quality validator after dimension check passes', async () => {
+      const image = createMockImage();
+      const candidates = [createMockHeroCandidate(0, image)];
+      const qualityValidator = vi.fn().mockResolvedValue({ passed: true });
+
+      mockImageDownloadAndDimensions(1920, 1080);
+
+      const result = await processHeroCandidates(candidates, {
+        minWidth: 800,
+        qualityValidator,
+      });
+
+      expect(result).not.toBeNull();
+      expect(qualityValidator).toHaveBeenCalledTimes(1);
+      expect(qualityValidator).toHaveBeenCalledWith(
+        expect.any(Buffer),
+        'image/jpeg'
+      );
+    });
+
+    it('should try next candidate when quality validator rejects', async () => {
+      const image1 = createMockImage({ url: 'https://example.com/watermarked.jpg' });
+      const image2 = createMockImage({ url: 'https://example.com/clean.jpg' });
+      const candidates = [
+        createMockHeroCandidate(0, image1),
+        createMockHeroCandidate(1, image2),
+      ];
+      const qualityValidator = vi.fn()
+        .mockResolvedValueOnce({ passed: false, reason: 'Watermark detected' })
+        .mockResolvedValueOnce({ passed: true });
+
+      // Both images pass dimension check
+      mockImageDownloadAndDimensions(1920, 1080);
+      mockImageDownloadAndDimensions(1920, 1080);
+
+      const result = await processHeroCandidates(candidates, {
+        minWidth: 800,
+        qualityValidator,
+      });
+
+      expect(result).not.toBeNull();
+      expect(result?.image).toBe(image2); // Second image selected
+      expect(result?.selectedCandidateIndex).toBe(1);
+      expect(qualityValidator).toHaveBeenCalledTimes(2);
+    });
+
+    it('should return null when all candidates fail quality validation', async () => {
+      const image1 = createMockImage({ url: 'https://example.com/bad1.jpg' });
+      const image2 = createMockImage({ url: 'https://example.com/bad2.jpg' });
+      const candidates = [
+        createMockHeroCandidate(0, image1),
+        createMockHeroCandidate(1, image2),
+      ];
+      const qualityValidator = vi.fn().mockResolvedValue({
+        passed: false,
+        reason: 'Watermark detected',
+      });
+
+      // Both images pass dimension check but fail quality
+      mockImageDownloadAndDimensions(1920, 1080);
+      mockImageDownloadAndDimensions(1920, 1080);
+
+      const result = await processHeroCandidates(candidates, {
+        minWidth: 800,
+        qualityValidator,
+      });
+
+      expect(result).toBeNull();
+      expect(qualityValidator).toHaveBeenCalledTimes(2);
+    });
+
+    it('should not call quality validator when dimension check fails', async () => {
+      const image = createMockImage();
+      const candidates = [createMockHeroCandidate(0, image)];
+      const qualityValidator = vi.fn();
+
+      // Image fails dimension check
+      mockImageDownloadAndDimensions(400, 300);
+
+      const result = await processHeroCandidates(candidates, {
+        minWidth: 800,
+        qualityValidator,
+      });
+
+      expect(result).toBeNull();
+      expect(qualityValidator).not.toHaveBeenCalled();
+    });
   });
 });
 
@@ -199,7 +326,7 @@ describe('processSectionCandidates', () => {
       { imageIndex: 0, image },
     ]);
 
-    mockGetImageDimensions.mockResolvedValueOnce({ width: 600, height: 400, inferred: false });
+    mockImageDownloadAndDimensions(600, 400);
 
     const result = await processSectionCandidates(selection, {
       minWidth: 500,
@@ -209,6 +336,7 @@ describe('processSectionCandidates', () => {
     expect(result?.sectionHeadline).toBe('Boss Guide');
     expect(result?.sectionIndex).toBe(0);
     expect(result?.dimensions.width).toBe(600);
+    expect(result?.buffer).toBeDefined();
   });
 
   it('should skip candidates below minWidth and try next', async () => {
@@ -219,9 +347,8 @@ describe('processSectionCandidates', () => {
       { imageIndex: 1, image: image2 },
     ]);
 
-    mockGetImageDimensions
-      .mockResolvedValueOnce({ width: 350, height: 250, inferred: false }) // Too small
-      .mockResolvedValueOnce({ width: 550, height: 400, inferred: false }); // Good
+    mockImageDownloadAndDimensions(350, 250); // Too small
+    mockImageDownloadAndDimensions(550, 400); // Good
 
     const result = await processSectionCandidates(selection, {
       minWidth: 500,
@@ -240,9 +367,8 @@ describe('processSectionCandidates', () => {
       { imageIndex: 1, image: image2 },
     ]);
 
-    mockGetImageDimensions
-      .mockResolvedValueOnce({ width: 200, height: 150, inferred: false })
-      .mockResolvedValueOnce({ width: 300, height: 200, inferred: false });
+    mockImageDownloadAndDimensions(200, 150);
+    mockImageDownloadAndDimensions(300, 200);
 
     const result = await processSectionCandidates(selection, {
       minWidth: 500,
@@ -257,7 +383,7 @@ describe('processSectionCandidates', () => {
       { imageIndex: 0, image },
     ]);
 
-    mockGetImageDimensions.mockResolvedValueOnce({ width: 600, height: 800, inferred: false });
+    mockImageDownloadAndDimensions(600, 800);
 
     const result = await processSectionCandidates(selection, {
       minWidth: 500,
@@ -281,7 +407,7 @@ describe('processSectionCandidates', () => {
       }],
     };
 
-    mockGetImageDimensions.mockResolvedValueOnce({ width: 800, height: 600, inferred: false });
+    mockImageDownloadAndDimensions(800, 600);
 
     const result = await processSectionCandidates(selection, {
       minWidth: 500,
@@ -299,8 +425,8 @@ describe('processSectionCandidates', () => {
       { imageIndex: 1, image: sectionImage }, // Different - should be selected
     ]);
 
-    // Only the second candidate should be checked (first is excluded)
-    mockGetImageDimensions.mockResolvedValueOnce({ width: 800, height: 600, inferred: false });
+    // Only the second candidate should be downloaded (first is excluded)
+    mockImageDownloadAndDimensions(800, 600);
 
     const result = await processSectionCandidates(selection, {
       minWidth: 500,
@@ -309,8 +435,8 @@ describe('processSectionCandidates', () => {
 
     expect(result).not.toBeNull();
     expect(result?.image.url).toBe('https://example.com/section.jpg');
-    // Should only have called getImageDimensions once (skipped the excluded URL)
-    expect(mockGetImageDimensions).toHaveBeenCalledTimes(1);
+    // Should only have downloaded once (skipped the excluded URL)
+    expect(mockDownloadImage).toHaveBeenCalledTimes(1);
   });
 
   it('should handle IGDB URL deduplication (same image different sizes)', async () => {
@@ -330,8 +456,8 @@ describe('processSectionCandidates', () => {
       { imageIndex: 1, image: differentImage }, // Different image - should be selected
     ]);
 
-    // Only check the different image
-    mockGetImageDimensions.mockResolvedValueOnce({ width: 1920, height: 1080, inferred: true });
+    // Only download the different image
+    mockImageDownloadAndDimensions(1920, 1080);
 
     const result = await processSectionCandidates(selection, {
       minWidth: 500,
@@ -340,7 +466,7 @@ describe('processSectionCandidates', () => {
 
     expect(result).not.toBeNull();
     expect(result?.image.url).toContain('xyz789');
-    expect(mockGetImageDimensions).toHaveBeenCalledTimes(1);
+    expect(mockDownloadImage).toHaveBeenCalledTimes(1);
   });
 
   it('should return null if all candidates are excluded', async () => {
@@ -356,8 +482,8 @@ describe('processSectionCandidates', () => {
     });
 
     expect(result).toBeNull();
-    // No dimension check should happen since all candidates were excluded
-    expect(mockGetImageDimensions).not.toHaveBeenCalled();
+    // No download should happen since all candidates were excluded
+    expect(mockDownloadImage).not.toHaveBeenCalled();
   });
 });
 
@@ -366,7 +492,7 @@ describe('processSectionCandidates', () => {
 // ============================================================================
 
 describe('processAllSectionCandidates', () => {
-  it('should process all sections in parallel', async () => {
+  it('should process all sections sequentially for deduplication', async () => {
     const image1 = createMockImage({ url: 'https://example.com/img1.jpg' });
     const image2 = createMockImage({ url: 'https://example.com/img2.jpg' });
     
@@ -375,15 +501,16 @@ describe('processAllSectionCandidates', () => {
       createMockSectionSelection('Section B', 1, [{ imageIndex: 0, image: image2 }]),
     ];
 
-    mockGetImageDimensions
-      .mockResolvedValueOnce({ width: 800, height: 600, inferred: false })
-      .mockResolvedValueOnce({ width: 600, height: 400, inferred: false });
+    mockImageDownloadAndDimensions(800, 600);
+    mockImageDownloadAndDimensions(600, 400);
 
     const results = await processAllSectionCandidates(selections);
 
     expect(results).toHaveLength(2);
     expect(results[0]?.sectionHeadline).toBe('Section A');
     expect(results[1]?.sectionHeadline).toBe('Section B');
+    expect(results[0]?.buffer).toBeDefined();
+    expect(results[1]?.buffer).toBeDefined();
   });
 
   it('should pass excludeUrls to each section processing', async () => {
@@ -402,9 +529,8 @@ describe('processAllSectionCandidates', () => {
       ]),
     ];
 
-    mockGetImageDimensions
-      .mockResolvedValueOnce({ width: 800, height: 600, inferred: false })
-      .mockResolvedValueOnce({ width: 700, height: 500, inferred: false });
+    mockImageDownloadAndDimensions(800, 600);
+    mockImageDownloadAndDimensions(700, 500);
 
     const results = await processAllSectionCandidates(selections, {
       excludeUrls: [heroImage.url],
@@ -413,8 +539,8 @@ describe('processAllSectionCandidates', () => {
     expect(results).toHaveLength(2);
     expect(results[0]?.image.url).toBe('https://example.com/s1.jpg');
     expect(results[1]?.image.url).toBe('https://example.com/s2.jpg');
-    // Only 2 dimension checks (hero images were excluded)
-    expect(mockGetImageDimensions).toHaveBeenCalledTimes(2);
+    // Only 2 downloads (hero images were excluded)
+    expect(mockDownloadImage).toHaveBeenCalledTimes(2);
   });
 
   it('should include null for sections with no valid candidates', async () => {
@@ -426,9 +552,8 @@ describe('processAllSectionCandidates', () => {
       createMockSectionSelection('Bad Section', 1, [{ imageIndex: 0, image: image2 }]),
     ];
 
-    mockGetImageDimensions
-      .mockResolvedValueOnce({ width: 800, height: 600, inferred: false })
-      .mockResolvedValueOnce({ width: 100, height: 80, inferred: false }); // Too small
+    mockImageDownloadAndDimensions(800, 600);
+    mockImageDownloadAndDimensions(100, 80); // Too small
 
     const results = await processAllSectionCandidates(selections, {
       minWidth: 500,
@@ -456,11 +581,10 @@ describe('processAllSectionCandidates', () => {
       ]),
     ];
 
-    // First call: Section A probes shared image (succeeds)
-    // Second call: Section B probes backup image (shared is excluded)
-    mockGetImageDimensions
-      .mockResolvedValueOnce({ width: 800, height: 600, inferred: false })  // shared for A
-      .mockResolvedValueOnce({ width: 700, height: 500, inferred: false }); // backup for B
+    // First download: Section A downloads shared image (succeeds)
+    // Second download: Section B downloads backup image (shared is excluded)
+    mockImageDownloadAndDimensions(800, 600); // shared for A
+    mockImageDownloadAndDimensions(700, 500); // backup for B
 
     const results = await processAllSectionCandidates(selections, {
       minWidth: 500,
@@ -471,77 +595,29 @@ describe('processAllSectionCandidates', () => {
     expect(results[0]?.image.url).toBe('https://example.com/shared.jpg');
     // Section B gets the backup (shared is excluded because Section A used it)
     expect(results[1]?.image.url).toBe('https://example.com/backup.jpg');
-    // Only 2 dimension checks (shared once, backup once)
-    expect(mockGetImageDimensions).toHaveBeenCalledTimes(2);
+    // Only 2 downloads (shared once, backup once)
+    expect(mockDownloadImage).toHaveBeenCalledTimes(2);
   });
 
-  it('should use dimension cache to avoid redundant probes', async () => {
-    // Same image URL appears in different sections' candidate lists
-    const sameUrlImage1 = createMockImage({ url: 'https://example.com/image.jpg' });
-    const sameUrlImage2 = createMockImage({ url: 'https://example.com/image.jpg' });
-    const differentImage = createMockImage({ url: 'https://example.com/other.jpg' });
+  it('should handle download failures gracefully', async () => {
+    const image1 = createMockImage({ url: 'https://example.com/good.jpg' });
+    const image2 = createMockImage({ url: 'https://example.com/broken.jpg' });
     
     const selections = [
-      // Section A: same URL image (will be selected)
-      createMockSectionSelection('Section A', 0, [
-        { imageIndex: 0, image: sameUrlImage1 },
-      ]),
-      // Section B: same URL (excluded), then different image
-      createMockSectionSelection('Section B', 1, [
-        { imageIndex: 0, image: sameUrlImage2 }, // Same URL - will be excluded
-        { imageIndex: 1, image: differentImage },
-      ]),
+      createMockSectionSelection('Good Section', 0, [{ imageIndex: 0, image: image1 }]),
+      createMockSectionSelection('Broken Section', 1, [{ imageIndex: 0, image: image2 }]),
     ];
 
-    mockGetImageDimensions
-      .mockResolvedValueOnce({ width: 800, height: 600, inferred: false })  // image.jpg
-      .mockResolvedValueOnce({ width: 700, height: 500, inferred: false }); // other.jpg
+    mockImageDownloadAndDimensions(800, 600);
+    mockImageDownloadFailure();
 
     const results = await processAllSectionCandidates(selections, {
       minWidth: 500,
     });
 
     expect(results).toHaveLength(2);
-    expect(results[0]?.image.url).toBe('https://example.com/image.jpg');
-    expect(results[1]?.image.url).toBe('https://example.com/other.jpg');
-    // Only 2 probes: image.jpg probed once, other.jpg probed once
-    // (image.jpg not re-probed for Section B because it's excluded via dedup)
-    expect(mockGetImageDimensions).toHaveBeenCalledTimes(2);
-  });
-
-  it('should use cached dimensions when same URL appears and is not excluded', async () => {
-    // Two sections with same image URL where first section rejects it (too small)
-    // Second section should use cached dimensions instead of re-probing
-    const tinyImage = createMockImage({ url: 'https://example.com/tiny.jpg' });
-    const goodImage = createMockImage({ url: 'https://example.com/good.jpg' });
-    
-    const selections = [
-      // Section A: tiny image only (will fail, returns null)
-      createMockSectionSelection('Section A', 0, [
-        { imageIndex: 0, image: tinyImage },
-      ]),
-      // Section B: tiny image (should use cache), then good image
-      createMockSectionSelection('Section B', 1, [
-        { imageIndex: 0, image: tinyImage }, // Same URL, will use cache
-        { imageIndex: 1, image: goodImage },
-      ]),
-    ];
-
-    mockGetImageDimensions
-      .mockResolvedValueOnce({ width: 100, height: 80, inferred: false })   // tiny.jpg (too small)
-      .mockResolvedValueOnce({ width: 800, height: 600, inferred: false }); // good.jpg
-
-    const results = await processAllSectionCandidates(selections, {
-      minWidth: 500,
-    });
-
-    expect(results).toHaveLength(2);
-    // Section A fails (tiny image too small)
-    expect(results[0]).toBeNull();
-    // Section B succeeds with good image (tiny used cached dims, still too small)
-    expect(results[1]?.image.url).toBe('https://example.com/good.jpg');
-    // Only 2 probes total (tiny.jpg cached, not re-probed for Section B)
-    expect(mockGetImageDimensions).toHaveBeenCalledTimes(2);
+    expect(results[0]).not.toBeNull();
+    expect(results[1]).toBeNull(); // Failed section returns null
   });
 });
 
@@ -557,6 +633,8 @@ describe('toHeroAssignment', () => {
       altText: 'Test hero image',
       dimensions: { width: 1920, height: 1080, inferred: true },
       selectedCandidateIndex: 0,
+      buffer: Buffer.from('test'),
+      mimeType: 'image/jpeg',
     };
 
     const assignment = toHeroAssignment(result);
@@ -577,6 +655,8 @@ describe('toSectionAssignment', () => {
       caption: 'Phase 2 attack pattern',
       dimensions: { width: 800, height: 600, inferred: false },
       selectedCandidateIndex: 0,
+      buffer: Buffer.from('test'),
+      mimeType: 'image/jpeg',
     };
 
     const assignment = toSectionAssignment(result);
@@ -597,6 +677,8 @@ describe('toSectionAssignment', () => {
       altText: 'Item icon',
       dimensions: { width: 600, height: 400, inferred: false },
       selectedCandidateIndex: 1,
+      buffer: Buffer.from('test'),
+      mimeType: 'image/jpeg',
     };
 
     const assignment = toSectionAssignment(result);
@@ -618,6 +700,8 @@ describe('toSectionAssignments', () => {
         altText: 'Alt 1',
         dimensions: { width: 800, height: 600, inferred: false },
         selectedCandidateIndex: 0,
+        buffer: Buffer.from('test1'),
+        mimeType: 'image/jpeg',
       },
       null, // Failed section
       {
@@ -627,6 +711,8 @@ describe('toSectionAssignments', () => {
         altText: 'Alt 3',
         dimensions: { width: 600, height: 450, inferred: false },
         selectedCandidateIndex: 0,
+        buffer: Buffer.from('test3'),
+        mimeType: 'image/png',
       },
     ];
 

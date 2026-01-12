@@ -19,9 +19,9 @@ import type { Logger } from '../../../utils/logger';
 import type { ArticlePlan } from '../article-plan';
 import type { TokenUsage } from '../types';
 import type { CollectedImage, ImagePool } from '../image-pool';
-import { getImagesForSection, getImagesByPriority, getPoolSummary } from '../image-pool';
+import { getImagesForSection, getPoolSummary } from '../image-pool';
 import { IMAGE_CURATOR_CONFIG, IMAGE_DIMENSION_CONFIG } from '../config';
-import { createTokenUsageFromResult } from '../types';
+import { createTokenUsageFromResult, addTokenUsage } from '../types';
 import { normalizeHeadline, findMatchingHeadline, buildH2LineMap } from '../utils/headline-utils';
 import { extractFilenameFromUrl, normalizeImageUrlForDedupe } from '../utils/url-utils';
 
@@ -175,63 +175,44 @@ const SectionCandidateSchema = z.object({
 });
 
 /**
- * Schema for section selections with ranked candidates.
+ * Schema for per-section relevance scoring response.
+ * Used for text-based evaluation of candidates.
  */
-const SectionSelectionSchema = z.object({
-  sectionHeadline: z.string().describe('The section headline this selection is for'),
-  candidates: z.array(SectionCandidateSchema).max(IMAGE_DIMENSION_CONFIG.MAX_SECTION_CANDIDATES)
-    .describe(`Up to ${IMAGE_DIMENSION_CONFIG.MAX_SECTION_CANDIDATES} ranked candidates in order of preference (best first)`),
+const SectionRelevanceResponseSchema = z.object({
+  rankedCandidates: z.array(SectionCandidateSchema).max(IMAGE_CURATOR_CONFIG.TEXT_TOP_RESULTS)
+    .describe(`Up to ${IMAGE_CURATOR_CONFIG.TEXT_TOP_RESULTS} ranked candidates in order of relevance (best first)`),
 });
 
 /**
- * Full response schema for ranked candidate selection.
+ * Schema for hero image selection response.
  */
-const ImageCuratorResponseSchema = z.object({
+const HeroSelectionResponseSchema = z.object({
   heroCandidates: z.array(HeroCandidateSchema).max(IMAGE_DIMENSION_CONFIG.MAX_HERO_CANDIDATES)
     .describe(`Up to ${IMAGE_DIMENSION_CONFIG.MAX_HERO_CANDIDATES} ranked hero image candidates in order of preference (best first)`),
-  sectionSelections: z.array(SectionSelectionSchema)
-    .describe('Image selections for each section'),
 });
 
-type ImageCuratorResponse = z.infer<typeof ImageCuratorResponseSchema>;
+type SectionRelevanceResponse = z.infer<typeof SectionRelevanceResponseSchema>;
+type HeroSelectionResponse = z.infer<typeof HeroSelectionResponseSchema>;
 type HeroCandidate = z.infer<typeof HeroCandidateSchema>;
 type SectionCandidate = z.infer<typeof SectionCandidateSchema>;
-type SectionSelection = z.infer<typeof SectionSelectionSchema>;
 
 // ============================================================================
 // Prompts
 // ============================================================================
 
-function buildImageCuratorSystemPrompt(): string {
-  return `You are an expert image curator for a gaming wiki. Your job is to select the best images for article sections and generate SEO-optimized alt text.
+/**
+ * System prompt for hero image selection.
+ */
+function buildHeroSystemPrompt(): string {
+  return `You are an expert image curator for a gaming wiki. Select the best hero/featured images for the article.
 
-## Ranked Selection System
+## Selection Criteria
 
-You must provide RANKED candidates for each selection, not single choices. This allows fallback to the next-best option if the top pick is unavailable or too small.
-
-**For hero image**: Provide up to 10 candidates ranked by preference (best first).
-**For each section**: Provide up to 3 candidates ranked by preference (best first).
-
-The system will use your top-ranked candidate if it meets dimension requirements, otherwise try the next candidate.
-
-## Image Selection Criteria
-
-1. **Relevance**: Image must directly relate to content
-   - For boss guides: show the boss, the arena, or the attack patterns
-   - For location guides: show the location, map, or key landmarks
-   - For item guides: show the item, where to find it, or how it's used
-
+1. **Relevance**: Image should represent the overall article topic
 2. **Quality**: Prefer high-quality screenshots and artwork
    - Official images (from IGDB) are highest quality
    - Avoid UI overlays, watermarks, or cluttered screenshots
-   - Prefer images that are well-composed and clear
-
-3. **Variety**: Don't pick similar images for different sections
-   - Each section should have a distinct visual
-
-4. **Coverage**: You MUST select candidates for EVERY section
-   - Provide at least 1 candidate per section, ideally 3
-   - If candidates are limited, include what's available
+3. **Visual Impact**: Hero images should be visually striking
 
 ## Alt Text Guidelines
 
@@ -239,54 +220,84 @@ Write SEO-friendly alt text that:
 - Is 80-120 characters long
 - Includes the game name naturally
 - Describes what's shown in the image
-- Is useful for accessibility (screen readers)
 - Avoids "image of" or "screenshot of" prefixes
-
-Examples:
-- "Malenia, Blade of Miquella preparing her Waterfowl Dance attack in Elden Ring"
-- "Map showing all Tears of the Kingdom Shrine locations in Hyrule"
-- "The Master Sword pedestal in Korok Forest from Zelda TOTK"
 
 ## Response Format
 
-**heroCandidates**: Array of up to 10 hero image candidates, ranked best first
-- imageIndex: Index from hero pool
+Provide up to 10 candidates ranked by preference (best first):
+- imageIndex: Index from the candidate pool (0-based)
 - altText: SEO-optimized alt text
-- relevanceScore: 0-100
+- relevanceScore: 0-100 (how relevant is this for the article hero)`;
+}
 
-**sectionSelections**: Array with one entry per section
-- sectionHeadline: Section name
-- candidates: Array of up to 3 candidates, ranked best first
-  - imageIndex: Index from section candidates
-  - altText: SEO-optimized alt text
-  - caption: Optional descriptive caption
-  - relevanceScore: 0-100
+/**
+ * System prompt for per-section text-based relevance scoring.
+ */
+function buildSectionSystemPrompt(): string {
+  return `You are an expert image curator for a gaming wiki. Evaluate image candidates for a specific article section.
 
-IMPORTANT: Every section MUST have at least one candidate.`;
+## IMPORTANT: Text-Based Evaluation Only
+
+You are evaluating images based ONLY on their text metadata (description, source, context).
+Do NOT consider visual quality - that will be checked separately.
+
+## Selection Criteria
+
+1. **Relevance**: How well does the description/context match the section topic?
+   - Direct match (e.g., "boss fight" for a boss guide section) = high score
+   - Tangential match = medium score
+   - Unrelated = low score
+
+2. **Source Quality**: Use as tiebreaker for similar relevance
+   - IGDB (Official) images are typically higher quality
+   - Source articles with headers matching the section are good
+   - Generic web images are lower confidence
+
+3. **Context Clues**: Consider the source query and nearest header
+   - If sourceQuery matches section goal, higher relevance
+   - If nearestHeader matches section headline, higher relevance
+
+## Alt Text Guidelines
+
+Write SEO-friendly alt text that:
+- Is 80-120 characters long
+- Includes the game name naturally
+- Describes what the image likely shows (based on metadata)
+- Avoids "image of" or "screenshot of" prefixes
+
+## Response Format
+
+Return up to ${IMAGE_CURATOR_CONFIG.TEXT_TOP_RESULTS} candidates ranked by relevance (best first):
+- imageIndex: Index from the candidate pool (0-based)
+- altText: SEO-optimized alt text
+- caption: Optional brief descriptive caption
+- relevanceScore: 0-100 (based on text metadata relevance)`;
 }
 
 // Note: extractFilenameFromUrl and normalizeImageUrlForDedupe are imported from '../utils/url-utils'
 
-function buildImageCuratorUserPrompt(
-  context: ImageCuratorContext,
-  candidatesPerSection: Map<string, readonly CollectedImage[]>,
-  heroCandidatePool: readonly CollectedImage[]
+/**
+ * Builds the user prompt for hero image selection.
+ */
+function buildHeroUserPrompt(
+  articleTitle: string,
+  gameName: string,
+  candidates: readonly CollectedImage[]
 ): string {
   const lines: string[] = [
-    `# Image Curation for: ${context.articleTitle}`,
-    `Game: ${context.gameName}`,
+    `# Hero Image Selection for: ${articleTitle}`,
+    `Game: ${gameName}`,
+    '',
+    `Select up to ${IMAGE_DIMENSION_CONFIG.MAX_HERO_CANDIDATES} candidates ranked by preference.`,
+    '',
+    '## Candidate Images',
     '',
   ];
 
-  // Add hero candidate pool first
-  lines.push('## Hero Image Candidates');
-  lines.push('Select up to 10 candidates ranked by preference for the featured/hero image.');
-  lines.push('');
-  
-  if (heroCandidatePool.length === 0) {
+  if (candidates.length === 0) {
     lines.push('No hero image candidates available.');
   } else {
-    heroCandidatePool.forEach((img, idx) => {
+    candidates.forEach((img, idx) => {
       const urlFilename = extractFilenameFromUrl(img.url);
       lines.push(`${idx}. ${img.source.toUpperCase()}${img.isOfficial ? ' (Official)' : ''} [${urlFilename}]`);
       if (img.description) {
@@ -295,50 +306,59 @@ function buildImageCuratorUserPrompt(
       if (img.igdbType) {
         lines.push(`   Type: ${img.igdbType}`);
       }
+      // Context from source extraction (nearestHeader or surrounding paragraph)
+      if (img.sourceQuery) {
+        lines.push(`   Context: "${img.sourceQuery}"`);
+      }
+      if (img.sourceDomain) {
+        lines.push(`   Source: ${img.sourceDomain}`);
+      }
     });
   }
-  lines.push('');
-  
-  // Add section info with their candidate images
-  lines.push('## Article Sections');
-  lines.push('For each section, select up to 3 candidates ranked by preference.');
-  lines.push('');
 
-  // Note: candidatesPerSection is keyed by normalized headlines for reliable matching
-  for (const section of context.plan.sections) {
-    const normalizedKey = normalizeHeadline(section.headline);
-    const candidates = candidatesPerSection.get(normalizedKey) ?? [];
-    
-    lines.push(`### ${section.headline}`);
-    lines.push(`Goal: ${section.goal}`);
-    lines.push('');
-    
-    if (candidates.length === 0) {
-      lines.push('No candidate images available.');
-    } else {
-      lines.push('Candidate images:');
-      candidates.forEach((img, idx) => {
-        // Extract filename from URL for identification (helps distinguish IGDB screenshots)
-        const urlFilename = extractFilenameFromUrl(img.url);
-        lines.push(`${idx}. ${img.source.toUpperCase()}${img.isOfficial ? ' (Official)' : ''} [${urlFilename}]`);
-        if (img.description) {
-          lines.push(`   Description: ${img.description}`);
-        }
-        if (img.igdbType) {
-          lines.push(`   Type: ${img.igdbType}`);
-        }
-        if (img.sourceQuery) {
-          lines.push(`   Found via: "${img.sourceQuery}"`);
-        }
-        if (img.sourceDomain) {
-          lines.push(`   Source: ${img.sourceDomain}`);
-        }
-      });
-    }
-    lines.push('');
+  return lines.join('\n');
+}
+
+/**
+ * Builds the user prompt for per-section text-based relevance scoring.
+ */
+function buildSectionUserPrompt(
+  gameName: string,
+  sectionHeadline: string,
+  sectionGoal: string,
+  candidates: readonly CollectedImage[]
+): string {
+  const lines: string[] = [
+    `# Section: ${sectionHeadline}`,
+    `Game: ${gameName}`,
+    `Goal: ${sectionGoal}`,
+    '',
+    `Evaluate these ${candidates.length} candidates and return the top ${IMAGE_CURATOR_CONFIG.TEXT_TOP_RESULTS} most relevant.`,
+    '',
+    '## Candidate Images (evaluate by metadata only)',
+    '',
+  ];
+
+  if (candidates.length === 0) {
+    lines.push('No candidate images available.');
+  } else {
+    candidates.forEach((img, idx) => {
+      const urlFilename = extractFilenameFromUrl(img.url);
+      lines.push(`${idx}. ${img.source.toUpperCase()}${img.isOfficial ? ' (Official)' : ''} [${urlFilename}]`);
+      if (img.description) {
+        lines.push(`   Description: ${img.description}`);
+      }
+      if (img.igdbType) {
+        lines.push(`   Type: ${img.igdbType}`);
+      }
+      if (img.sourceQuery) {
+        lines.push(`   Found via: "${img.sourceQuery}"`);
+      }
+      if (img.sourceDomain) {
+        lines.push(`   Source: ${img.sourceDomain}`);
+      }
+    });
   }
-  
-  lines.push('**IMPORTANT**: Images selected as hero candidates should NOT be selected for sections. Try to use different images for each selection.');
 
   return lines.join('\n');
 }
@@ -350,15 +370,202 @@ function buildImageCuratorUserPrompt(
 // Note: normalizeHeadline, findMatchingHeadline, and buildH2LineMap are imported from '../utils/headline-utils'
 
 // ============================================================================
+// Per-Section LLM Functions
+// ============================================================================
+
+/**
+ * Runs hero image selection with LLM.
+ */
+async function runHeroSelection(
+  candidates: readonly CollectedImage[],
+  articleTitle: string,
+  gameName: string,
+  deps: ImageCuratorDeps
+): Promise<{ heroCandidates: HeroCandidateOutput[]; tokenUsage: TokenUsage }> {
+  const { model, generateObject: genObject, logger: log, signal } = deps;
+
+  if (candidates.length === 0) {
+    return { heroCandidates: [], tokenUsage: { input: 0, output: 0 } };
+  }
+
+  log?.debug(`[ImageCurator] Running hero selection with ${candidates.length} candidates`);
+
+  const result = await genObject({
+    model,
+    schema: HeroSelectionResponseSchema,
+    system: buildHeroSystemPrompt(),
+    prompt: buildHeroUserPrompt(articleTitle, gameName, candidates),
+    temperature: IMAGE_CURATOR_CONFIG.TEMPERATURE,
+    abortSignal: signal,
+  });
+
+  const heroCandidates: HeroCandidateOutput[] = [];
+  for (const candidate of result.object.heroCandidates) {
+    if (candidate.imageIndex < 0 || candidate.imageIndex >= candidates.length) {
+      log?.warn(`[ImageCurator] Invalid hero candidate index: ${candidate.imageIndex}`);
+      continue;
+    }
+    heroCandidates.push({
+      imageIndex: candidate.imageIndex,
+      image: candidates[candidate.imageIndex],
+      altText: candidate.altText,
+      relevanceScore: candidate.relevanceScore,
+    });
+  }
+
+  return {
+    heroCandidates,
+    tokenUsage: createTokenUsageFromResult(result),
+  };
+}
+
+/**
+ * Runs text-based relevance scoring for a single section.
+ */
+async function runSectionRelevanceScoring(
+  sectionHeadline: string,
+  sectionGoal: string,
+  sectionIndex: number,
+  candidates: readonly CollectedImage[],
+  gameName: string,
+  deps: ImageCuratorDeps
+): Promise<{ selection: SectionSelectionOutput | null; tokenUsage: TokenUsage }> {
+  const { model, generateObject: genObject, logger: log, signal } = deps;
+
+  if (candidates.length === 0) {
+    log?.debug(`[ImageCurator] Section "${sectionHeadline}": no candidates, skipping`);
+    return { selection: null, tokenUsage: { input: 0, output: 0 } };
+  }
+
+  log?.debug(`[ImageCurator] Section "${sectionHeadline}": evaluating ${candidates.length} candidates`);
+
+  const result = await genObject({
+    model,
+    schema: SectionRelevanceResponseSchema,
+    system: buildSectionSystemPrompt(),
+    prompt: buildSectionUserPrompt(gameName, sectionHeadline, sectionGoal, candidates),
+    temperature: IMAGE_CURATOR_CONFIG.TEMPERATURE,
+    abortSignal: signal,
+  });
+
+  const sectionCandidates: SectionCandidateOutput[] = [];
+  for (const candidate of result.object.rankedCandidates) {
+    if (candidate.imageIndex < 0 || candidate.imageIndex >= candidates.length) {
+      log?.warn(`[ImageCurator] Invalid section candidate index: ${candidate.imageIndex} for "${sectionHeadline}"`);
+      continue;
+    }
+    sectionCandidates.push({
+      imageIndex: candidate.imageIndex,
+      image: candidates[candidate.imageIndex],
+      altText: candidate.altText,
+      caption: candidate.caption,
+      relevanceScore: candidate.relevanceScore,
+    });
+  }
+
+  if (sectionCandidates.length === 0) {
+    return { selection: null, tokenUsage: createTokenUsageFromResult(result) };
+  }
+
+  return {
+    selection: {
+      sectionHeadline,
+      sectionIndex,
+      candidates: sectionCandidates,
+    },
+    tokenUsage: createTokenUsageFromResult(result),
+  };
+}
+
+/**
+ * Runs text-based relevance scoring for all sections with concurrency control.
+ */
+async function runAllSectionRelevanceScoring(
+  context: ImageCuratorContext,
+  candidatesPerSection: Map<string, readonly CollectedImage[]>,
+  deps: ImageCuratorDeps
+): Promise<{ selections: SectionSelectionOutput[]; tokenUsage: TokenUsage }> {
+  const { logger: log, signal } = deps;
+  const concurrency = IMAGE_CURATOR_CONFIG.SECTION_CURATOR_CONCURRENCY;
+  
+  log?.info(`[ImageCurator] Processing ${context.plan.sections.length} sections with concurrency ${concurrency}`);
+
+  const selections: SectionSelectionOutput[] = [];
+  let totalTokenUsage: TokenUsage = { input: 0, output: 0 };
+
+  // Process sections in batches for concurrency control
+  for (let i = 0; i < context.plan.sections.length; i += concurrency) {
+    // Check for cancellation
+    if (signal?.aborted) {
+      log?.debug('[ImageCurator] Processing cancelled');
+      break;
+    }
+
+    const batch = context.plan.sections.slice(i, i + concurrency);
+    const batchNum = Math.floor(i / concurrency) + 1;
+    const totalBatches = Math.ceil(context.plan.sections.length / concurrency);
+    
+    log?.debug(`[ImageCurator] Processing batch ${batchNum}/${totalBatches} (${batch.length} sections)`);
+
+    // Process batch in parallel with error resilience
+    const batchResults = await Promise.allSettled(
+      batch.map((section, batchIdx) => {
+        const sectionIndex = i + batchIdx;
+        const normalizedKey = normalizeHeadline(section.headline);
+        const candidates = candidatesPerSection.get(normalizedKey) ?? [];
+        
+        return runSectionRelevanceScoring(
+          section.headline,
+          section.goal,
+          sectionIndex,
+          candidates,
+          context.gameName,
+          deps
+        );
+      })
+    );
+
+    // Collect results, handling individual failures gracefully
+    for (let j = 0; j < batchResults.length; j++) {
+      const result = batchResults[j];
+      const sectionHeadline = batch[j].headline;
+      
+      if (result.status === 'fulfilled') {
+        totalTokenUsage = addTokenUsage(totalTokenUsage, result.value.tokenUsage);
+        if (result.value.selection) {
+          selections.push(result.value.selection);
+        }
+      } else {
+        // Log error but continue with other sections
+        const errorMsg = result.reason instanceof Error 
+          ? result.reason.message 
+          : String(result.reason);
+        log?.warn(
+          `[ImageCurator] Section "${sectionHeadline}" scoring failed: ${errorMsg}`
+        );
+      }
+    }
+  }
+
+  return { selections, tokenUsage: totalTokenUsage };
+}
+
+// ============================================================================
 // Main Function
 // ============================================================================
 
 /**
  * Runs the Image Curator agent to select ranked image candidates.
  *
- * This function returns RANKED CANDIDATES, not final selections.
- * The caller (image-phase.ts) should process these candidates through
- * dimension validation to select the first valid image for each slot.
+ * Uses per-section LLM calls for text-based relevance scoring:
+ * 1. Hero selection: Separate LLM call for hero image candidates
+ * 2. Section selection: Per-section LLM calls with concurrency control
+ *
+ * This approach:
+ * - Evaluates 30 candidates per section (vs 5 before)
+ * - Uses text metadata only (cheap, no image tokens)
+ * - Avoids huge prompts by processing sections individually
+ * - Enables concurrency for faster processing
  *
  * @param context - Context with article content, plan, and image pool
  * @param deps - Dependencies (model, generateObject, logger)
@@ -368,11 +575,24 @@ export async function runImageCurator(
   context: ImageCuratorContext,
   deps: ImageCuratorDeps
 ): Promise<ImageCuratorOutput> {
-  const { model, generateObject: genObject, logger: log, signal } = deps;
+  const { logger: log, signal } = deps;
   const poolSummary = getPoolSummary(context.imagePool);
 
+  // Early abort check before any work
+  if (signal?.aborted) {
+    log?.debug('[ImageCurator] Aborted before starting');
+    return {
+      heroCandidates: [],
+      sectionSelections: [],
+      tokenUsage: { input: 0, output: 0 },
+      poolSummary,
+      candidatesPerSection: new Map(),
+      heroCandidatePool: [],
+    };
+  }
+
   log?.info(`[ImageCurator] Starting curation for "${context.articleTitle}"`);
-  log?.info(`[ImageCurator] Pool: ${poolSummary.total} images (${poolSummary.igdb} IGDB, ${poolSummary.tavily} Tavily, ${poolSummary.exa} Exa)`);
+  log?.info(`[ImageCurator] Pool: ${poolSummary.total} images (${poolSummary.igdb} IGDB, ${poolSummary.tavily} Tavily, ${poolSummary.exa} Exa, ${poolSummary.source} source)`);
 
   // Handle empty pool
   if (context.imagePool.count === 0) {
@@ -387,108 +607,65 @@ export async function runImageCurator(
     };
   }
 
-  // Get hero candidate pool - all images sorted by priority
-  // We show the curator all images and let it pick the best 10
-  const heroCandidatePool = getImagesByPriority(context.imagePool);
+  // Get hero candidate pool - all images in collection order (no sourceQuality bias)
+  // The LLM decides relevance based on description/context, not presentation order
+  const heroCandidatePool = context.imagePool.images;
   log?.debug(`[ImageCurator] Hero candidate pool: ${heroCandidatePool.length} images`);
 
-  // Get candidates for each section (use normalized headlines as keys for reliable lookup)
+  // Get candidates for each section (30 per section for text-based evaluation)
   const candidatesPerSection = new Map<string, readonly CollectedImage[]>();
-  
   for (const section of context.plan.sections) {
     const candidates = getImagesForSection(
       context.imagePool,
-      section.headline,
-      IMAGE_CURATOR_CONFIG.MAX_CANDIDATES_PER_SECTION
+      IMAGE_CURATOR_CONFIG.TEXT_CANDIDATES_PER_SECTION
     );
     const normalizedKey = normalizeHeadline(section.headline);
     candidatesPerSection.set(normalizedKey, candidates);
   }
 
-  // Build prompts
-  const systemPrompt = buildImageCuratorSystemPrompt();
-  const userPrompt = buildImageCuratorUserPrompt(context, candidatesPerSection, heroCandidatePool);
+  let totalTokenUsage: TokenUsage = { input: 0, output: 0 };
 
-  // Call LLM to select ranked candidates
-  log?.debug('[ImageCurator] Calling LLM for ranked image selection...');
-  
-  const result = await genObject({
-    model,
-    schema: ImageCuratorResponseSchema,
-    system: systemPrompt,
-    prompt: userPrompt,
-    temperature: IMAGE_CURATOR_CONFIG.TEMPERATURE,
-    abortSignal: signal,
-  });
+  // ===== STEP 1: Hero Selection =====
+  log?.info('[ImageCurator] Running hero selection...');
+  const heroResult = await runHeroSelection(
+    heroCandidatePool,
+    context.articleTitle,
+    context.gameName,
+    deps
+  );
+  totalTokenUsage = addTokenUsage(totalTokenUsage, heroResult.tokenUsage);
 
-  const response = result.object;
-  const tokenUsage = createTokenUsageFromResult(result);
-
-  log?.debug(`[ImageCurator] LLM response: ${response.heroCandidates.length} hero candidates, ${response.sectionSelections.length} sections`);
-
-  // Build hero candidate outputs with resolved images
-  const heroCandidates: HeroCandidateOutput[] = [];
-  for (const candidate of response.heroCandidates) {
-    if (candidate.imageIndex < 0 || candidate.imageIndex >= heroCandidatePool.length) {
-      log?.warn(`[ImageCurator] Invalid hero candidate index: ${candidate.imageIndex}`);
-      continue;
-    }
-    heroCandidates.push({
-      imageIndex: candidate.imageIndex,
-      image: heroCandidatePool[candidate.imageIndex],
-      altText: candidate.altText,
-      relevanceScore: candidate.relevanceScore,
-    });
+  // Check for cancellation after hero selection
+  if (signal?.aborted) {
+    log?.debug('[ImageCurator] Processing cancelled after hero selection');
+    return {
+      heroCandidates: heroResult.heroCandidates,
+      sectionSelections: [],
+      tokenUsage: totalTokenUsage,
+      poolSummary,
+      candidatesPerSection,
+      heroCandidatePool,
+    };
   }
 
-  // Build section selection outputs with resolved images
-  const sectionSelections: SectionSelectionOutput[] = [];
+  // ===== STEP 2: Per-Section Text-Based Relevance Scoring =====
+  log?.info('[ImageCurator] Running per-section relevance scoring...');
+  const sectionResult = await runAllSectionRelevanceScoring(
+    context,
+    candidatesPerSection,
+    deps
+  );
+  totalTokenUsage = addTokenUsage(totalTokenUsage, sectionResult.tokenUsage);
 
-  for (const selection of response.sectionSelections) {
-    const normalizedSelectionHeadline = normalizeHeadline(selection.sectionHeadline);
-    const sectionCandidates = candidatesPerSection.get(normalizedSelectionHeadline) ?? [];
-    
-    // Find section index in plan
-    const sectionIndex = context.plan.sections.findIndex(
-      s => normalizeHeadline(s.headline) === normalizedSelectionHeadline
-    );
-
-    if (sectionIndex < 0) {
-      log?.warn(`[ImageCurator] Section not found in plan: "${selection.sectionHeadline}"`);
-      continue;
-    }
-
-    // Build candidate outputs for this section
-    const candidates: SectionCandidateOutput[] = [];
-    for (const candidate of selection.candidates) {
-      if (candidate.imageIndex < 0 || candidate.imageIndex >= sectionCandidates.length) {
-        log?.warn(`[ImageCurator] Invalid section candidate index: ${candidate.imageIndex} for "${selection.sectionHeadline}"`);
-        continue;
-      }
-      candidates.push({
-        imageIndex: candidate.imageIndex,
-        image: sectionCandidates[candidate.imageIndex],
-        altText: candidate.altText,
-        caption: candidate.caption,
-        relevanceScore: candidate.relevanceScore,
-      });
-    }
-
-    if (candidates.length > 0) {
-      sectionSelections.push({
-        sectionHeadline: selection.sectionHeadline,
-        sectionIndex,
-        candidates,
-      });
-    }
-  }
-
-  log?.info(`[ImageCurator] Returning ${heroCandidates.length} hero candidates, ${sectionSelections.length} section selections`);
+  log?.info(
+    `[ImageCurator] Returning ${heroResult.heroCandidates.length} hero candidates, ` +
+    `${sectionResult.selections.length} section selections`
+  );
 
   return {
-    heroCandidates,
-    sectionSelections,
-    tokenUsage,
+    heroCandidates: heroResult.heroCandidates,
+    sectionSelections: sectionResult.selections,
+    tokenUsage: totalTokenUsage,
     poolSummary,
     candidatesPerSection,
     heroCandidatePool,

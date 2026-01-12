@@ -30,11 +30,12 @@ import {
   toSectionAssignments,
   type ProcessedHeroResult,
   type ProcessedSectionResult,
+  type QualityValidator,
 } from './services/image-candidate-processor';
-import { IMAGE_DIMENSION_CONFIG } from './config';
-import { processHeroImage, processSectionImage, getHighResIGDBUrl, type HeroImageResult, type SectionImageResult } from './hero-image';
+import { IMAGE_DIMENSION_CONFIG, IMAGE_QUALITY_VALIDATION_CONFIG } from './config';
+import { validateImageQuality } from './agents/image-quality-checker';
+import { processHeroImage, processSectionImage, type HeroImageResult, type SectionImageResult } from './hero-image';
 import { 
-  uploadImageFromUrl, 
   uploadImageBuffer,
   createImageFilename,
   type ImageUploadResult,
@@ -43,7 +44,6 @@ import {
 import { insertImagesIntoMarkdown, type ImageInsertionResult } from './image-inserter';
 import { IMAGE_CURATOR_CONFIG } from './config';
 import { addTokenUsage, createEmptyTokenUsage } from './types';
-import { downloadImageWithRetry } from './services/image-downloader';
 import { getOrCreateArticleFolder, type FolderResult } from './services/folder-service';
 import { slugify } from '../../utils/slug';
 
@@ -388,6 +388,32 @@ export async function runImagePhase(
   // the first valid image for each slot (hero, sections).
   log?.info(`${logPrefix} Processing candidates with dimension validation...`);
 
+  // Create quality validator for hero if enabled
+  // Hero images are validated for watermarks and clarity (most important image)
+  let heroQualityValidator: QualityValidator | undefined;
+  let heroQualityTokenUsage: TokenUsage = { input: 0, output: 0 };
+  if (IMAGE_QUALITY_VALIDATION_CONFIG.ENABLED_FOR_HERO) {
+    log?.debug(`${logPrefix} Hero quality validation enabled`);
+    heroQualityValidator = async (buffer: Buffer, mimeType: string) => {
+      const { result, tokenUsage } = await validateImageQuality(buffer, {
+        model,
+        generateObject,
+        logger: log,
+        signal,
+      }, { forceEnabled: true });
+      // Track token usage
+      heroQualityTokenUsage = addTokenUsage(heroQualityTokenUsage, tokenUsage);
+      return {
+        passed: result.passed,
+        reason: result.passed
+          ? undefined
+          : result.hasWatermark
+            ? 'Watermark detected'
+            : `Clarity too low (${result.clarityScore})`,
+      };
+    };
+  }
+
   // Process hero candidates
   let heroResult: ProcessedHeroResult | null = null;
   if (curatorOutput.heroCandidates.length > 0) {
@@ -395,6 +421,7 @@ export async function runImagePhase(
       minWidth: IMAGE_DIMENSION_CONFIG.HERO_MIN_WIDTH,
       logger: log,
       signal,
+      qualityValidator: heroQualityValidator,
     });
     if (heroResult) {
       log?.info(
@@ -425,21 +452,20 @@ export async function runImagePhase(
   log?.info(`${logPrefix} Dimension validation complete: hero=${heroAssignment ? 'yes' : 'no'}, sections=${sectionAssignments.length}`);
 
   // ===== STEP 3: Process and Upload Hero Image =====
-  // All hero images are processed (resize/optimize) for consistent quality
+  // Hero images are processed (resize/optimize) for consistent quality
+  // We use the buffer from heroResult if available (already downloaded during dimension validation)
   let heroUpload: ImageUploadResult | undefined;
   let heroImageFailed = false;
-  if (heroAssignment) {
+  if (heroResult && heroAssignment) {
     try {
       const isIgdb = heroAssignment.image.source === 'igdb';
       
-      // Get the source URL (high-res for IGDB, original for web)
-      const sourceUrl = isIgdb
-        ? getHighResIGDBUrl(heroAssignment.image.url)
-        : heroAssignment.image.url;
-      
-      log?.info(`${logPrefix} Processing hero image from ${heroAssignment.image.source}`);
+      // Process the hero image for optimal display
+      // Use the buffer we already have (no re-download needed!)
+      log?.info(`${logPrefix} Processing hero image from ${heroAssignment.image.source} (using cached buffer)`);
       const processedHero = await processHeroImage({
-        imageUrl: sourceUrl,
+        buffer: heroResult.buffer,
+        mimeType: heroResult.mimeType,
         logger: log,
         signal,
       });
@@ -479,7 +505,7 @@ export async function runImagePhase(
   }
 
   // ===== STEP 4: Upload Section Images (Batched for Concurrency Control) =====
-  // Upload images in batches to prevent overwhelming Strapi
+  // Upload images using buffers (already downloaded during dimension validation)
   const uploaderDeps: ImageUploaderDeps = { strapi, logger: log };
   const concurrency = IMAGE_CURATOR_CONFIG.UPLOAD_CONCURRENCY;
   
@@ -491,42 +517,56 @@ export async function runImagePhase(
   // Track sections where upload failed for debugging
   const failedSections: string[] = [];
 
-  // Process uploads in batches using the dimension-validated assignments
-  const assignments = sectionAssignments;
-  for (let i = 0; i < assignments.length; i += concurrency) {
+  // Filter out null results upfront for cleaner batch processing
+  const validSectionResults = sectionResults.filter(
+    (r): r is ProcessedSectionResult => r !== null
+  );
+
+  // Process uploads in batches using the dimension-validated results (which include buffers)
+  for (let i = 0; i < validSectionResults.length; i += concurrency) {
     // Check if aborted before starting new batch (prevents orphan uploads on timeout)
     if (signal?.aborted) {
       log?.warn(`${logPrefix} Aborted before batch upload, stopping`);
       break;
     }
 
-    const batch = assignments.slice(i, i + concurrency);
+    const batch = validSectionResults.slice(i, i + concurrency);
     const batchNum = Math.floor(i / concurrency) + 1;
-    const totalBatches = Math.ceil(assignments.length / concurrency);
+    const totalBatches = Math.ceil(validSectionResults.length / concurrency);
     
     log?.debug(`${logPrefix} Uploading batch ${batchNum}/${totalBatches} (${batch.length} images)`);
     
     const batchResults = await Promise.allSettled(
-      batch.map(async (assignment) => {
-        const upload = await uploadImageFromUrl(
+      batch.map(async (result) => {
+        // Use buffer upload (no re-download needed!)
+        const upload = await uploadImageBuffer(
           {
-            url: assignment.image.url,
-            filename: createImageFilename(articleTitle, assignment.sectionHeadline, assignment.sectionIndex),
-            altText: assignment.altText,
-            caption: assignment.caption,
+            buffer: result.buffer,
+            filename: createImageFilename(articleTitle, result.sectionHeadline, result.sectionIndex),
+            mimeType: result.mimeType,
+            altText: result.altText,
+            caption: result.caption,
             // Source metadata stored in provider_metadata for frontend attribution
             sourceMetadata: {
-              sourceUrl: assignment.image.url,
-              sourceDomain: assignment.image.sourceDomain,
-              imageSource: toImageSourceType(assignment.image.source),
+              sourceUrl: result.image.url,
+              sourceDomain: result.image.sourceDomain,
+              imageSource: toImageSourceType(result.image.source),
             },
-            signal,
             // Folder organization: /images/{game_slug}/{article_slug}
             folderId: articleFolder?.id,
             folderPath: articleFolder?.path,
           },
           uploaderDeps
         );
+        
+        // Convert to assignment format for downstream compatibility
+        const assignment: SectionImageAssignment = {
+          sectionHeadline: result.sectionHeadline,
+          sectionIndex: result.sectionIndex,
+          image: result.image,
+          altText: result.altText,
+          caption: result.caption,
+        };
         return { assignment, upload };
       })
     );
@@ -539,23 +579,23 @@ export async function runImagePhase(
         break;
       }
       
-      const result = batchResults[j];
-      if (result.status === 'fulfilled') {
-        uploadedSectionImages.push(result.value);
-        log?.debug(`${logPrefix} Section image uploaded: ${result.value.upload.url}`);
+      const batchResult = batchResults[j];
+      if (batchResult.status === 'fulfilled') {
+        uploadedSectionImages.push(batchResult.value);
+        log?.debug(`${logPrefix} Section image uploaded: ${batchResult.value.upload.url}`);
       } else {
-        const assignment = batch[j];
-        const errorMsg = result.reason instanceof Error ? result.reason.message : String(result.reason);
-        failedSections.push(assignment.sectionHeadline);
+        const result = batch[j];
+        const errorMsg = batchResult.reason instanceof Error ? batchResult.reason.message : String(batchResult.reason);
+        failedSections.push(result.sectionHeadline);
         log?.warn(
           `${logPrefix} Section image upload failed: ` +
-          `section="${assignment.sectionHeadline}", url="${assignment.image.url}", error=${errorMsg}`
+          `section="${result.sectionHeadline}", url="${result.image.url}", error=${errorMsg}`
         );
       }
     }
   }
 
-  log?.info(`${logPrefix} Uploaded ${uploadedSectionImages.length}/${assignments.length} section images`);
+  log?.info(`${logPrefix} Uploaded ${uploadedSectionImages.length}/${validSectionResults.length} section images`);
   if (failedSections.length > 0) {
     log?.warn(`${logPrefix} Failed sections: ${failedSections.join(', ')}`);
   }
@@ -581,7 +621,7 @@ export async function runImagePhase(
       heroImageFailed,
       sectionImages: uploadedSectionImages.map(s => s.upload),
       failedSections: failedSections.length > 0 ? failedSections : undefined,
-      tokenUsage: curatorOutput.tokenUsage,
+      tokenUsage: addTokenUsage(curatorOutput.tokenUsage, heroQualityTokenUsage),
       poolSummary: { total: poolSummary.total, igdb: poolSummary.igdb, web: webCount },
     };
   }
@@ -599,7 +639,7 @@ export async function runImagePhase(
     heroImageFailed,
     sectionImages: insertionResult.sectionImages,
     failedSections: failedSections.length > 0 ? failedSections : undefined,
-    tokenUsage: curatorOutput.tokenUsage,
+    tokenUsage: addTokenUsage(curatorOutput.tokenUsage, heroQualityTokenUsage),
     poolSummary: { total: poolSummary.total, igdb: poolSummary.igdb, web: webCount },
   };
 }

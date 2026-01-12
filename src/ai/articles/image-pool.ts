@@ -58,11 +58,12 @@ export interface CollectedImage {
   /** IGDB-specific image type */
   readonly igdbType?: IGDBImageType;
   /**
-   * Priority score for selection (higher = prefer).
+   * Source quality score (higher = prefer as tiebreaker).
+   * Used only when relevance scores are equal - not for filtering.
    * IGDB artworks: 100, IGDB screenshots: 80, IGDB cover: 60
    * Web images: 40 (adjusted by domain quality)
    */
-  readonly priority: number;
+  readonly sourceQuality: number;
 }
 
 /**
@@ -85,11 +86,17 @@ export interface ImagePool {
 // Constants
 // ============================================================================
 
-/** Priority scores for image sources */
-const IMAGE_PRIORITY = {
+/**
+ * Source quality tiers for images.
+ * 
+ * These values are used as TIEBREAKERS only, not for filtering.
+ * When two images have similar relevance, prefer higher quality sources.
+ * The actual relevance is determined by the LLM text-based scoring.
+ */
+const SOURCE_QUALITY = {
   IGDB_ARTWORK: 100,
   IGDB_SCREENSHOT: 80,
-  // Source article images (extracted from cleaned content) - medium priority
+  // Source article images (extracted from cleaned content) - medium quality
   // Better context than web search but not official like IGDB
   SOURCE_HIGH_QUALITY: 65,
   IGDB_COVER: 60,
@@ -294,28 +301,29 @@ function hasLowQualityDescription(description?: string): boolean {
 }
 
 /**
- * Gets priority score for an image based on its source and domain.
+ * Gets source quality score for an image based on its source and domain.
+ * Used as tiebreaker when relevance scores are equal.
  */
-function getImagePriority(source: ImageSource, igdbType?: IGDBImageType, domain?: string): number {
+function getSourceQuality(source: ImageSource, igdbType?: IGDBImageType, domain?: string): number {
   if (source === 'igdb') {
     switch (igdbType) {
       case 'artwork':
-        return IMAGE_PRIORITY.IGDB_ARTWORK;
+        return SOURCE_QUALITY.IGDB_ARTWORK;
       case 'screenshot':
-        return IMAGE_PRIORITY.IGDB_SCREENSHOT;
+        return SOURCE_QUALITY.IGDB_SCREENSHOT;
       case 'cover':
-        return IMAGE_PRIORITY.IGDB_COVER;
+        return SOURCE_QUALITY.IGDB_COVER;
       default:
-        return IMAGE_PRIORITY.IGDB_SCREENSHOT;
+        return SOURCE_QUALITY.IGDB_SCREENSHOT;
     }
   }
 
-  // Web images get priority based on domain quality
+  // Web images get quality based on domain
   if (domain && HIGH_QUALITY_DOMAINS.has(domain)) {
-    return IMAGE_PRIORITY.WEB_HIGH_QUALITY;
+    return SOURCE_QUALITY.WEB_HIGH_QUALITY;
   }
 
-  return IMAGE_PRIORITY.WEB_DEFAULT;
+  return SOURCE_QUALITY.WEB_DEFAULT;
 }
 
 // ============================================================================
@@ -355,7 +363,7 @@ export function addIGDBImages(
       source: 'igdb',
       isOfficial: true,
       igdbType: 'artwork',
-      priority: getImagePriority('igdb', 'artwork'),
+      sourceQuality: getSourceQuality('igdb', 'artwork'),
       description: 'Official game artwork',
     });
   }
@@ -371,7 +379,7 @@ export function addIGDBImages(
       source: 'igdb',
       isOfficial: true,
       igdbType: 'screenshot',
-      priority: getImagePriority('igdb', 'screenshot'),
+      sourceQuality: getSourceQuality('igdb', 'screenshot'),
       description: 'Official game screenshot',
     });
   }
@@ -385,7 +393,7 @@ export function addIGDBImages(
       source: 'igdb',
       isOfficial: true,
       igdbType: 'cover',
-      priority: getImagePriority('igdb', 'cover'),
+      sourceQuality: getSourceQuality('igdb', 'cover'),
       description: 'Official game cover art',
     });
   }
@@ -440,7 +448,7 @@ export function addWebImages(
       sourceDomain: domain,
       sourceQuery,
       isOfficial: false,
-      priority: getImagePriority(source, undefined, domain),
+      sourceQuality: getSourceQuality(source, undefined, domain),
     });
   }
 
@@ -494,7 +502,7 @@ export function addExaImages(
             sourceDomain,
             sourceQuery,
             isOfficial: false,
-            priority: getImagePriority('exa', undefined, sourceDomain),
+            sourceQuality: getSourceQuality('exa', undefined, sourceDomain),
           });
         }
       }
@@ -517,7 +525,7 @@ export function addExaImages(
           sourceDomain,
           sourceQuery,
           isOfficial: false,
-          priority: getImagePriority('exa', undefined, sourceDomain),
+          sourceQuality: getSourceQuality('exa', undefined, sourceDomain),
         });
       }
     }
@@ -583,8 +591,8 @@ export function addSourceImages(
       // Use context as the source query for better matching in image curator
       sourceQuery: img.nearestHeader ?? img.contextParagraph?.slice(0, 100),
       isOfficial: false,
-      // Pass description and header for quality-aware priority calculation
-      priority: getSourceImagePriority(sourceDomain, img.description, img.nearestHeader),
+      // Pass description and header for quality-aware scoring
+      sourceQuality: getSourceImageQuality(sourceDomain, img.description, img.nearestHeader),
     });
   }
 
@@ -605,23 +613,24 @@ export function addSourceImages(
 }
 
 /**
- * Gets priority score for a source image based on domain quality and metadata.
+ * Gets source quality score for a source image based on domain quality and metadata.
+ * Used as tiebreaker when relevance scores are equal.
  *
  * @param sourceDomain - Domain the image came from
  * @param description - Image description (may be cleaned filename or alt text)
  * @param nearestHeader - Nearest H2/H3 header above the image
- * @returns Priority score
+ * @returns Source quality score
  */
-function getSourceImagePriority(
+function getSourceImageQuality(
   sourceDomain: string,
   description?: string,
   nearestHeader?: string
 ): number {
-  // Start with base priority based on domain
-  let priority: number;
+  // Start with base quality based on domain
+  let quality: number;
   
   if (HIGH_QUALITY_DOMAINS.has(sourceDomain)) {
-    priority = IMAGE_PRIORITY.SOURCE_HIGH_QUALITY;
+    quality = SOURCE_QUALITY.SOURCE_HIGH_QUALITY;
   } else {
     // Check for common low-quality patterns
     const lowerDomain = sourceDomain.toLowerCase();
@@ -630,28 +639,28 @@ function getSourceImagePriority(
       lowerDomain.includes('tumblr') ||
       lowerDomain.includes('pinterest')
     ) {
-      priority = IMAGE_PRIORITY.SOURCE_LOW_QUALITY;
+      quality = SOURCE_QUALITY.SOURCE_LOW_QUALITY;
     } else {
-      priority = IMAGE_PRIORITY.SOURCE_DEFAULT;
+      quality = SOURCE_QUALITY.SOURCE_DEFAULT;
     }
   }
   
-  // Boost priority if image has good section context
+  // Boost quality if image has good section context
   // Images with headers are more likely to be relevant to specific sections
   if (nearestHeader && nearestHeader.length > 3) {
-    priority += 5;
+    quality += 5;
   }
   
   // Penalize images with missing or very short descriptions
   if (!description || description.length < 10) {
-    priority -= 10;
+    quality -= 10;
   }
   
   // Note: hasLowQualityDescription check removed - images with low-quality
   // descriptions are already filtered in addSourceImages() before this function
   
-  // Ensure priority doesn't go below minimum useful threshold
-  return Math.max(priority, IMAGE_PRIORITY.WEB_LOW_QUALITY);
+  // Ensure quality doesn't go below minimum useful threshold
+  return Math.max(quality, SOURCE_QUALITY.WEB_LOW_QUALITY);
 }
 
 /**
@@ -688,10 +697,11 @@ export function mergeImagePools(pool1: ImagePool, pool2: ImagePool): ImagePool {
 }
 
 /**
- * Gets images sorted by priority (highest first).
+ * Gets images sorted by source quality (highest first).
+ * Used for hero image selection when no better ordering is available.
  */
-export function getImagesByPriority(pool: ImagePool): readonly CollectedImage[] {
-  return [...pool.images].sort((a, b) => b.priority - a.priority);
+export function getImagesBySourceQuality(pool: ImagePool): readonly CollectedImage[] {
+  return [...pool.images].sort((a, b) => b.sourceQuality - a.sourceQuality);
 }
 
 /**
@@ -713,9 +723,9 @@ export function getBestHeroImage(
   // If no images at all, return undefined
   if (pool.count === 0) return undefined;
 
-  // If no title provided, fall back to highest priority image
+  // If no title provided, fall back to highest quality image
   if (!articleTitle) {
-    return getImagesByPriority(pool)[0];
+    return getImagesBySourceQuality(pool)[0];
   }
 
   // Extract keywords from article title (words > 3 chars)
@@ -726,7 +736,7 @@ export function getBestHeroImage(
 
   // Score ALL images by title relevance (not just IGDB)
   const scored = pool.images.map((img) => {
-    let score = img.priority;
+    let score = img.sourceQuality;
 
     // Big boost for description matching title keywords
     if (img.description) {
@@ -758,55 +768,23 @@ export function getBestHeroImage(
 }
 
 /**
- * Gets images matching a section topic (by query relevance).
+ * Gets candidate images for a section.
+ *
+ * Returns up to `limit` candidates for LLM text-based relevance scoring.
+ * No complex scoring is done here - the LLM decides relevance.
+ * Source quality is used only as a tiebreaker for deduplication ordering.
  *
  * @param pool - Image pool
- * @param sectionHeadline - The section headline to match
- * @param limit - Maximum number of images to return
- * @returns Matching images sorted by priority
+ * @param limit - Maximum number of candidates to return (default: 30)
+ * @returns Deduplicated images for LLM evaluation
  */
 export function getImagesForSection(
   pool: ImagePool,
-  sectionHeadline: string,
-  limit: number = 5
+  limit: number = 30
 ): readonly CollectedImage[] {
-  const headlineLower = sectionHeadline.toLowerCase();
-  const keywords = headlineLower.split(/\s+/).filter((w) => w.length > 3);
-
-  // Score images by how well their query/description matches the section
-  const scored = pool.images.map((img) => {
-    let matchScore = 0;
-
-    // Check query match
-    if (img.sourceQuery) {
-      const queryLower = img.sourceQuery.toLowerCase();
-      for (const keyword of keywords) {
-        if (queryLower.includes(keyword)) {
-          matchScore += 10;
-        }
-      }
-    }
-
-    // Check description match
-    if (img.description) {
-      const descLower = img.description.toLowerCase();
-      for (const keyword of keywords) {
-        if (descLower.includes(keyword)) {
-          matchScore += 5;
-        }
-      }
-    }
-
-    return {
-      image: img,
-      score: matchScore + img.priority * 0.1, // Add priority as tiebreaker
-    };
-  });
-
-  return scored
-    .sort((a, b) => b.score - a.score)
-    .slice(0, limit)
-    .map((s) => s.image);
+  // Return all images sorted by source quality (as tiebreaker)
+  // The LLM will determine actual relevance via text-based scoring
+  return getImagesBySourceQuality(pool).slice(0, limit);
 }
 
 /**

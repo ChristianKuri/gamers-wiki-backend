@@ -12,7 +12,7 @@ import {
   addExaImages,
   addSourceImages,
   mergeImagePools,
-  getImagesByPriority,
+  getImagesBySourceQuality,
   getBestHeroImage,
   getImagesForSection,
   getPoolSummary,
@@ -49,7 +49,7 @@ describe('ImagePool', () => {
       expect(updated.images[0].igdbType).toBe('screenshot');
     });
 
-    it('should add IGDB artwork with higher priority', () => {
+    it('should add IGDB artwork with higher source quality', () => {
       const pool = createEmptyImagePool();
       const artworks = [
         'https://images.igdb.com/igdb/image/upload/t_screenshot_big/xyz789.jpg',
@@ -59,10 +59,10 @@ describe('ImagePool', () => {
       const updated = addIGDBImages(pool, [], artworks);
 
       expect(updated.images[0].igdbType).toBe('artwork');
-      expect(updated.images[0].priority).toBe(100); // IGDB_ARTWORK priority
+      expect(updated.images[0].sourceQuality).toBe(100); // IGDB_ARTWORK source quality
     });
 
-    it('should add cover image with lower priority', () => {
+    it('should add cover image with lower source quality', () => {
       const pool = createEmptyImagePool();
       const coverUrl = 'https://images.igdb.com/igdb/image/upload/t_cover_big/cover123.jpg';
 
@@ -70,7 +70,7 @@ describe('ImagePool', () => {
 
       expect(updated.count).toBe(1);
       expect(updated.images[0].igdbType).toBe('cover');
-      expect(updated.images[0].priority).toBe(60); // IGDB_COVER priority
+      expect(updated.images[0].sourceQuality).toBe(60); // IGDB_COVER source quality
     });
 
     it('should deduplicate URLs', () => {
@@ -156,7 +156,7 @@ describe('ImagePool', () => {
       expect(updated.images[0].url).toContain('example.com');
     });
 
-    it('should give higher priority to quality domains', () => {
+    it('should give higher source quality to quality domains', () => {
       const pool = createEmptyImagePool();
       const images = [
         { url: 'https://ign.com/image.jpg' },
@@ -168,8 +168,8 @@ describe('ImagePool', () => {
       const ignImage = updated.images.find(i => i.url.includes('ign.com'));
       const unknownImage = updated.images.find(i => i.url.includes('unknown-site.com'));
 
-      expect(ignImage?.priority).toBe(50); // HIGH_QUALITY
-      expect(unknownImage?.priority).toBe(40); // DEFAULT
+      expect(ignImage?.sourceQuality).toBe(50); // HIGH_QUALITY
+      expect(unknownImage?.sourceQuality).toBe(40); // DEFAULT
     });
   });
 
@@ -220,8 +220,8 @@ describe('ImagePool', () => {
     });
   });
 
-  describe('getImagesByPriority', () => {
-    it('should sort images by priority descending', () => {
+  describe('getImagesBySourceQuality', () => {
+    it('should sort images by source quality descending', () => {
       let pool = createEmptyImagePool();
       // Now artworks and screenshots are passed as separate arrays
       pool = addIGDBImages(pool, 
@@ -232,11 +232,11 @@ describe('ImagePool', () => {
         { url: 'https://random.com/img.jpg' }, // 40
       ], 'query');
 
-      const sorted = getImagesByPriority(pool);
+      const sorted = getImagesBySourceQuality(pool);
 
-      expect(sorted[0].priority).toBe(100);
-      expect(sorted[1].priority).toBe(80);
-      expect(sorted[2].priority).toBe(40);
+      expect(sorted[0].sourceQuality).toBe(100);
+      expect(sorted[1].sourceQuality).toBe(80);
+      expect(sorted[2].sourceQuality).toBe(40);
     });
   });
 
@@ -273,18 +273,35 @@ describe('ImagePool', () => {
   });
 
   describe('getImagesForSection', () => {
-    it('should match images by query keywords', () => {
+    it('should return candidates for LLM evaluation (sorted by source quality)', () => {
       let pool = createEmptyImagePool();
+      // Add IGDB images (higher quality than web)
+      pool = addIGDBImages(pool, ['https://images.igdb.com/ss.jpg'], []);
       pool = addWebImages(pool, [
         { url: 'https://example.com/boss.jpg', description: 'The boss arena' },
         { url: 'https://example.com/weapon.jpg', description: 'Sword upgrade' },
       ], 'boss guide');
 
-      const matches = getImagesForSection(pool, 'Boss Battle Strategies');
+      const candidates = getImagesForSection(pool);
 
-      expect(matches.length).toBeGreaterThan(0);
-      // Boss image should rank higher due to query match
-      expect(matches[0].url).toContain('boss.jpg');
+      // Should return all images sorted by source quality (IGDB first)
+      expect(candidates.length).toBe(3);
+      expect(candidates[0].source).toBe('igdb'); // Highest quality source
+    });
+
+    it('should limit to requested number of candidates', () => {
+      let pool = createEmptyImagePool();
+      pool = addWebImages(pool, [
+        { url: 'https://example.com/1.jpg' },
+        { url: 'https://example.com/2.jpg' },
+        { url: 'https://example.com/3.jpg' },
+        { url: 'https://example.com/4.jpg' },
+        { url: 'https://example.com/5.jpg' },
+      ], 'query');
+
+      const candidates = getImagesForSection(pool, 3);
+
+      expect(candidates.length).toBe(3);
     });
   });
 
@@ -495,19 +512,19 @@ describe('ImagePool', () => {
     });
   });
 
-  describe('Priority based on metadata quality', () => {
-    it('should give higher priority to images with headers', () => {
+  describe('Source quality based on metadata quality', () => {
+    it('should give higher source quality to images with headers', () => {
       let pool = createEmptyImagePool();
       pool = addSourceImages(pool, [
         { url: 'https://example.com/img1.jpg', description: 'Screenshot without header context', position: 0 },
         { url: 'https://example.com/img2.jpg', description: 'Screenshot with header', position: 1, nearestHeader: 'Phase 1 Strategy' },
       ], 'https://example.com/article', 'example.com');
 
-      // Image with header should have higher priority
+      // Image with header should have higher source quality
       const withHeader = pool.images.find(i => i.url.includes('img2'));
       const withoutHeader = pool.images.find(i => i.url.includes('img1'));
       
-      expect(withHeader!.priority).toBeGreaterThan(withoutHeader!.priority);
+      expect(withHeader!.sourceQuality).toBeGreaterThan(withoutHeader!.sourceQuality);
     });
 
     it('should penalize images with very short descriptions', () => {
@@ -520,7 +537,7 @@ describe('ImagePool', () => {
       const shortDesc = pool.images.find(i => i.url.includes('short'));
       const longDesc = pool.images.find(i => i.url.includes('long'));
       
-      expect(longDesc!.priority).toBeGreaterThan(shortDesc!.priority);
+      expect(longDesc!.sourceQuality).toBeGreaterThan(shortDesc!.sourceQuality);
     });
   });
 

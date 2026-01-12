@@ -5,6 +5,8 @@
  * All magic numbers and tuning parameters should be defined here.
  */
 
+import { AI_DEFAULT_MODELS } from '../config/utils';
+
 // ============================================================================
 // UNIFIED EXCLUDED DOMAINS LIST
 // ============================================================================
@@ -697,10 +699,21 @@ export const IMAGE_CURATOR_CONFIG = {
    */
   MAX_IMAGES_PER_ARTICLE: 6,
   /**
-   * Maximum candidate images to evaluate per section.
-   * Limits vision API costs by pre-filtering to top candidates.
+   * Candidates to send to LLM for text-based relevance scoring per section.
+   * Increased from 5 to 30 - LLM evaluates more candidates via text metadata.
    */
-  MAX_CANDIDATES_PER_SECTION: 5,
+  TEXT_CANDIDATES_PER_SECTION: 30,
+  /**
+   * Top results to return from text-based relevance scoring per section.
+   * These are then validated for dimensions before final selection.
+   */
+  TEXT_TOP_RESULTS: 5,
+  /**
+   * Max concurrent section LLM calls.
+   * Trade-off: Too low = slow (sequential), too high = API rate limits / cost spikes.
+   * 3 is a conservative default balancing speed vs API stability.
+   */
+  SECTION_CURATOR_CONCURRENCY: 3,
   /**
    * Temperature for Image Curator LLM calls.
    * Low for consistent, deterministic image selection.
@@ -708,7 +721,7 @@ export const IMAGE_CURATOR_CONFIG = {
   TEMPERATURE: 0.2,
   /**
    * Timeout for LLM image curation call (ms).
-   * Vision API calls can be slow.
+   * Text-based calls are fast, but allow buffer for network.
    */
   TIMEOUT_MS: 60000,
   /**
@@ -760,6 +773,50 @@ export const IMAGE_CURATOR_CONFIG = {
    * Quality (1-100) for optimized section images.
    */
   SECTION_QUALITY: 85,
+} as const;
+
+// ============================================================================
+// Image Quality Validation Configuration (Optional Visual Validation)
+// ============================================================================
+
+export const IMAGE_QUALITY_VALIDATION_CONFIG = {
+  /**
+   * Enable vision-based quality validation (watermarks, clarity) for section images.
+   * Off by default - expensive for many sections.
+   * When enabled, validates top candidates with vision LLM.
+   */
+  ENABLED: false,
+  /**
+   * Enable vision-based quality validation for hero image.
+   * On by default - hero is the most important image and must not have watermarks.
+   * Only validates the single hero candidate that passes dimension check.
+   */
+  ENABLED_FOR_HERO: true,
+  /**
+   * Maximum candidates to validate with vision per section.
+   * Only top candidates (after dimension validation) are checked.
+   */
+  MAX_CANDIDATES_PER_SECTION: 3,
+  /**
+   * Minimum clarity score to accept (0-100).
+   * Images below this are rejected for blur/quality issues.
+   */
+  MIN_CLARITY_SCORE: 50,
+  /**
+   * Model to use for vision-based quality validation.
+   * Gemini 2.5 Flash-Lite is cheap and fast for watermark/clarity checks.
+   */
+  MODEL_ID: AI_DEFAULT_MODELS.ARTICLE_IMAGE_QUALITY_CHECKER,
+  /**
+   * Temperature for quality validation LLM calls.
+   * Low for consistent, deterministic quality assessment.
+   */
+  TEMPERATURE: 0.1,
+  /**
+   * Timeout for quality validation LLM call (ms).
+   * Vision calls can be slower than text-only.
+   */
+  TIMEOUT_MS: 30000,
 } as const;
 
 // ============================================================================
@@ -1434,7 +1491,9 @@ function validateConfiguration(): void {
 
   // Image Curator Config
   validatePositive(IMAGE_CURATOR_CONFIG.MAX_IMAGES_PER_ARTICLE, 'IMAGE_CURATOR_CONFIG.MAX_IMAGES_PER_ARTICLE');
-  validatePositive(IMAGE_CURATOR_CONFIG.MAX_CANDIDATES_PER_SECTION, 'IMAGE_CURATOR_CONFIG.MAX_CANDIDATES_PER_SECTION');
+  validatePositive(IMAGE_CURATOR_CONFIG.TEXT_CANDIDATES_PER_SECTION, 'IMAGE_CURATOR_CONFIG.TEXT_CANDIDATES_PER_SECTION');
+  validatePositive(IMAGE_CURATOR_CONFIG.TEXT_TOP_RESULTS, 'IMAGE_CURATOR_CONFIG.TEXT_TOP_RESULTS');
+  validatePositive(IMAGE_CURATOR_CONFIG.SECTION_CURATOR_CONCURRENCY, 'IMAGE_CURATOR_CONFIG.SECTION_CURATOR_CONCURRENCY');
   validatePositive(IMAGE_CURATOR_CONFIG.TIMEOUT_MS, 'IMAGE_CURATOR_CONFIG.TIMEOUT_MS');
   validatePositive(IMAGE_CURATOR_CONFIG.PHASE_TIMEOUT_MS, 'IMAGE_CURATOR_CONFIG.PHASE_TIMEOUT_MS');
   validatePositive(IMAGE_CURATOR_CONFIG.UPLOAD_CONCURRENCY, 'IMAGE_CURATOR_CONFIG.UPLOAD_CONCURRENCY');
@@ -1445,6 +1504,13 @@ function validateConfiguration(): void {
     'IMAGE_CURATOR_CONFIG.HERO_ASPECT_RATIO_MIN',
     'IMAGE_CURATOR_CONFIG.HERO_ASPECT_RATIO_MAX'
   );
+  
+  // Image Quality Validation Config
+  validatePositive(IMAGE_QUALITY_VALIDATION_CONFIG.MAX_CANDIDATES_PER_SECTION, 'IMAGE_QUALITY_VALIDATION_CONFIG.MAX_CANDIDATES_PER_SECTION');
+  validateMinMax(0, IMAGE_QUALITY_VALIDATION_CONFIG.MIN_CLARITY_SCORE, '0', 'IMAGE_QUALITY_VALIDATION_CONFIG.MIN_CLARITY_SCORE');
+  validateMinMax(IMAGE_QUALITY_VALIDATION_CONFIG.MIN_CLARITY_SCORE, 100, 'IMAGE_QUALITY_VALIDATION_CONFIG.MIN_CLARITY_SCORE', '100');
+  validateTemperature(IMAGE_QUALITY_VALIDATION_CONFIG.TEMPERATURE, 'IMAGE_QUALITY_VALIDATION_CONFIG.TEMPERATURE');
+  validatePositive(IMAGE_QUALITY_VALIDATION_CONFIG.TIMEOUT_MS, 'IMAGE_QUALITY_VALIDATION_CONFIG.TIMEOUT_MS');
 
   // Image Pool Config
   validatePositive(IMAGE_POOL_CONFIG.MIN_IMAGE_WIDTH, 'IMAGE_POOL_CONFIG.MIN_IMAGE_WIDTH');

@@ -61,10 +61,18 @@ export interface HeroImageResult {
 
 /**
  * Options for hero image processing.
+ * 
+ * Supports two modes:
+ * 1. URL mode: Provide `imageUrl` to download and process
+ * 2. Buffer mode: Provide `buffer` and `mimeType` (skips download, saves bandwidth)
  */
 export interface HeroImageOptions {
-  /** IGDB image URL to use as base */
-  readonly imageUrl: string;
+  /** Image URL to download from (used if buffer not provided) */
+  readonly imageUrl?: string;
+  /** Pre-downloaded image buffer (skips download if provided) */
+  readonly buffer?: Buffer;
+  /** MIME type of the pre-downloaded buffer */
+  readonly mimeType?: string;
   /** Optional custom config */
   readonly config?: Partial<HeroImageConfig>;
   /** Logger for debugging */
@@ -104,8 +112,12 @@ const SUPPORTED_INPUT_FORMATS = new Set(['jpeg', 'png', 'webp', 'gif', 'tiff', '
 // ============================================================================
 
 /**
- * Processes a hero image (download, resize, optimize).
+ * Processes a hero image (download if needed, resize, optimize).
  * Text overlay for article title is handled via CSS on the frontend.
+ *
+ * Supports two modes:
+ * 1. URL mode: Downloads from `imageUrl` (for backward compatibility)
+ * 2. Buffer mode: Uses provided `buffer` directly (saves bandwidth, no re-download)
  *
  * Outputs WebP by default for better compression (~30% smaller than JPEG).
  * Falls back to JPEG if WebP is not supported or explicitly requested.
@@ -114,32 +126,45 @@ const SUPPORTED_INPUT_FORMATS = new Set(['jpeg', 'png', 'webp', 'gif', 'tiff', '
  * @returns Processed hero image result with buffer
  *
  * @example
+ * // URL mode (downloads the image)
  * const result = await processHeroImage({
  *   imageUrl: 'https://images.igdb.com/igdb/image/upload/t_1080p/abc123.jpg',
  * });
  *
  * @example
- * // Force JPEG output
+ * // Buffer mode (no download needed)
  * const result = await processHeroImage({
- *   imageUrl: 'https://images.igdb.com/image.jpg',
- *   config: { format: 'jpeg' },
+ *   buffer: existingBuffer,
+ *   mimeType: 'image/jpeg',
  * });
  */
 export async function processHeroImage(options: HeroImageOptions): Promise<HeroImageResult> {
-  const { imageUrl, config: customConfig, logger, signal } = options;
+  const { imageUrl, buffer: providedBuffer, mimeType, config: customConfig, logger, signal } = options;
   const config = { ...DEFAULT_CONFIG, ...customConfig };
 
-  logger?.info(`[HeroImage] Processing hero image from: ${imageUrl}`);
-
-  // Download the source image using consolidated downloader (with SSRF protection + retry)
-  const downloadResult = await downloadImageWithRetry({
-    url: imageUrl,
-    logger,
-    signal,
-  });
+  // Get source buffer (use provided or download)
+  let sourceBuffer: Buffer;
+  const originalUrl = imageUrl ?? 'buffer://provided';
+  
+  if (providedBuffer) {
+    // Buffer mode: use provided buffer directly (no download)
+    logger?.info('[HeroImage] Processing hero image from provided buffer');
+    sourceBuffer = providedBuffer;
+  } else if (imageUrl) {
+    // URL mode: download the source image
+    logger?.info(`[HeroImage] Processing hero image from: ${imageUrl}`);
+    const downloadResult = await downloadImageWithRetry({
+      url: imageUrl,
+      logger,
+      signal,
+    });
+    sourceBuffer = downloadResult.buffer;
+  } else {
+    throw new Error('Either imageUrl or buffer must be provided');
+  }
 
   // Get image metadata and validate format
-  const metadata = await sharp(downloadResult.buffer).metadata();
+  const metadata = await sharp(sourceBuffer).metadata();
   logger?.debug(`[HeroImage] Source: ${metadata.width}x${metadata.height} ${metadata.format}`);
 
   // Validate format is supported by Sharp for processing
@@ -152,7 +177,7 @@ export async function processHeroImage(options: HeroImageOptions): Promise<HeroI
 
   // Start processing pipeline
   // Note: Sharp methods return new instances, so const is appropriate here
-  const pipeline = sharp(downloadResult.buffer).resize(config.width, config.height, {
+  const pipeline = sharp(sourceBuffer).resize(config.width, config.height, {
     fit: 'cover',
     position: 'center',
   });
@@ -172,7 +197,7 @@ export async function processHeroImage(options: HeroImageOptions): Promise<HeroI
   return {
     buffer: outputBuffer,
     mimeType: FORMAT_MIME_TYPES[config.format],
-    originalUrl: imageUrl,
+    originalUrl,
     width: config.width,
     height: config.height,
     format: config.format,

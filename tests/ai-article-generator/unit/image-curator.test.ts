@@ -3,6 +3,10 @@
  *
  * Tests for the LLM-based image selection agent.
  * Uses mocked generateObject to test selection logic.
+ *
+ * Note: The curator now uses per-section LLM calls:
+ * - One call for hero image selection
+ * - One call per section for relevance scoring
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach, type Mock } from 'vitest';
@@ -15,33 +19,40 @@ import type { LanguageModel, generateObject } from 'ai';
 // Mock Types
 // ============================================================================
 
-/** Mock hero candidate structure */
+/** Mock hero candidate structure (for hero selection call) */
 interface MockHeroCandidate {
   imageIndex: number;
   altText: string;
   relevanceScore: number;
 }
 
-/** Mock section candidate structure */
+/** Mock section candidate structure (for section relevance call) */
 interface MockSectionCandidate {
   imageIndex: number;
   altText: string;
   caption?: string;
   relevanceScore: number;
-  preferredLayout?: 'full' | 'float_left';
 }
 
-/** Mock section selection structure */
-interface MockSectionSelection {
-  sectionHeadline: string;
-  candidates: MockSectionCandidate[];
-}
-
-/** Mock LLM result structure matching generateObject return type */
-interface MockLLMResult {
+/** Mock hero selection response */
+interface MockHeroSelectionResult {
   object: {
     heroCandidates: MockHeroCandidate[];
-    sectionSelections: MockSectionSelection[];
+  };
+  usage: { inputTokens: number; outputTokens: number };
+  finishReason: string;
+  warnings: unknown[];
+  experimental_providerMetadata: undefined;
+  response: { id: string; timestamp: Date; modelId: string };
+  request: Record<string, unknown>;
+  toJsonResponse: () => Response;
+  rawResponse: undefined;
+}
+
+/** Mock section relevance response (per-section call) */
+interface MockSectionRelevanceResult {
+  object: {
+    rankedCandidates: MockSectionCandidate[];
   };
   usage: { inputTokens: number; outputTokens: number };
   finishReason: string;
@@ -54,7 +65,7 @@ interface MockLLMResult {
 }
 
 /** Typed mock for generateObject that matches the expected interface */
-type MockGenerateObject = Mock<Parameters<typeof generateObject>, Promise<MockLLMResult>>;
+type MockGenerateObject = Mock<Parameters<typeof generateObject>, Promise<MockHeroSelectionResult | MockSectionRelevanceResult>>;
 
 // ============================================================================
 // Mocks
@@ -124,15 +135,26 @@ function createMockDeps(): ImageCuratorDeps {
   };
 }
 
-// Helper to create mock LLM result with correct token structure
-function createMockLLMResult(response: {
-  heroCandidates: MockHeroCandidate[];
-  sectionSelections: MockSectionSelection[];
-}): MockLLMResult {
+// Helper to create mock hero selection result
+function createMockHeroResult(heroCandidates: MockHeroCandidate[]): MockHeroSelectionResult {
   return {
-    object: response,
-    // Use the structure expected by createTokenUsageFromResult
+    object: { heroCandidates },
     usage: { inputTokens: 100, outputTokens: 50 },
+    finishReason: 'stop',
+    warnings: [],
+    experimental_providerMetadata: undefined,
+    response: { id: '1', timestamp: new Date(), modelId: 'test' },
+    request: {},
+    toJsonResponse: () => new Response(),
+    rawResponse: undefined,
+  };
+}
+
+// Helper to create mock section relevance result
+function createMockSectionResult(rankedCandidates: MockSectionCandidate[]): MockSectionRelevanceResult {
+  return {
+    object: { rankedCandidates },
+    usage: { inputTokens: 50, outputTokens: 25 },
     finishReason: 'stop',
     warnings: [],
     experimental_providerMetadata: undefined,
@@ -173,12 +195,12 @@ describe('Image Curator Agent', () => {
         [artworkUrl]
       );
 
-      mockGenerateObject.mockResolvedValueOnce(createMockLLMResult({
-        heroCandidates: [
-          { imageIndex: 0, altText: 'Epic boss battle in Test Game', relevanceScore: 90 },
-        ],
-        sectionSelections: [],
-      }));
+      // First call: hero selection
+      mockGenerateObject.mockResolvedValueOnce(createMockHeroResult([
+        { imageIndex: 0, altText: 'Epic boss battle in Test Game', relevanceScore: 90 },
+      ]));
+      // Second call: section relevance for 'Boss Guide'
+      mockGenerateObject.mockResolvedValueOnce(createMockSectionResult([]));
 
       const result = await runImageCurator(context, createMockDeps());
 
@@ -187,56 +209,26 @@ describe('Image Curator Agent', () => {
       expect(result.heroCandidates[0].altText).toBe('Epic boss battle in Test Game');
     });
 
-    it('should skip candidates with invalid image index', async () => {
+    it('should skip hero candidates with invalid image index', async () => {
       const context = createMockContext(
         ['Section 1'],
         ['https://images.igdb.com/igdb/image/upload/t_screenshot_big/ss1.jpg'],
         []
       );
 
-      mockGenerateObject.mockResolvedValueOnce(createMockLLMResult({
-        heroCandidates: [
-          { imageIndex: 99, altText: 'Invalid hero', relevanceScore: 90 }, // Invalid index
-        ],
-        sectionSelections: [
-          {
-            sectionHeadline: 'Section 1',
-            candidates: [
-              { imageIndex: 99, altText: 'Invalid selection', relevanceScore: 90 }, // Invalid index
-            ],
-          },
-        ],
-      }));
+      // Hero call with invalid index
+      mockGenerateObject.mockResolvedValueOnce(createMockHeroResult([
+        { imageIndex: 99, altText: 'Invalid hero', relevanceScore: 90 }, // Invalid index
+      ]));
+      // Section call with invalid index
+      mockGenerateObject.mockResolvedValueOnce(createMockSectionResult([
+        { imageIndex: 99, altText: 'Invalid selection', relevanceScore: 90 }, // Invalid index
+      ]));
 
       const result = await runImageCurator(context, createMockDeps());
 
       // Should skip the invalid candidates
       expect(result.heroCandidates).toHaveLength(0);
-      expect(result.sectionSelections).toHaveLength(0);
-    });
-
-    it('should skip sections not found in the plan', async () => {
-      const context = createMockContext(
-        ['Real Section'],
-        ['https://images.igdb.com/igdb/image/upload/t_screenshot_big/ss1.jpg'],
-        []
-      );
-
-      mockGenerateObject.mockResolvedValueOnce(createMockLLMResult({
-        heroCandidates: [],
-        sectionSelections: [
-          {
-            sectionHeadline: 'Non-existent Section',
-            candidates: [
-              { imageIndex: 0, altText: 'Should be skipped', relevanceScore: 90 },
-            ],
-          },
-        ],
-      }));
-
-      const result = await runImageCurator(context, createMockDeps());
-
-      // Should skip the section not in the plan
       expect(result.sectionSelections).toHaveLength(0);
     });
 
@@ -248,17 +240,12 @@ describe('Image Curator Agent', () => {
         []
       );
 
-      mockGenerateObject.mockResolvedValueOnce(createMockLLMResult({
-        heroCandidates: [],
-        sectionSelections: [
-          {
-            sectionHeadline: 'Section 1',
-            candidates: [
-              { imageIndex: 0, altText: 'Section image alt', relevanceScore: 85 },
-            ],
-          },
-        ],
-      }));
+      // Hero call
+      mockGenerateObject.mockResolvedValueOnce(createMockHeroResult([]));
+      // Section call
+      mockGenerateObject.mockResolvedValueOnce(createMockSectionResult([
+        { imageIndex: 0, altText: 'Section image alt', relevanceScore: 85 },
+      ]));
 
       const result = await runImageCurator(context, createMockDeps());
 
@@ -267,19 +254,29 @@ describe('Image Curator Agent', () => {
       expect(result.sectionSelections[0].candidates[0].image.url).toContain('ss1.jpg');
     });
 
-    it('should track token usage from LLM call', async () => {
+    it('should track token usage from LLM calls', async () => {
       const context = createMockContext(
         ['Section 1'],
         ['https://images.igdb.com/igdb/image/upload/t_screenshot_big/ss1.jpg'],
         []
       );
 
+      // Hero call with specific token usage
       mockGenerateObject.mockResolvedValueOnce({
-        object: {
-          heroCandidates: [],
-          sectionSelections: [],
-        },
-        usage: { inputTokens: 500, outputTokens: 200 },
+        object: { heroCandidates: [] },
+        usage: { inputTokens: 200, outputTokens: 100 },
+        finishReason: 'stop',
+        warnings: [],
+        experimental_providerMetadata: undefined,
+        response: { id: '1', timestamp: new Date(), modelId: 'test' },
+        request: {},
+        toJsonResponse: () => new Response(),
+        rawResponse: undefined,
+      });
+      // Section call with specific token usage
+      mockGenerateObject.mockResolvedValueOnce({
+        object: { rankedCandidates: [] },
+        usage: { inputTokens: 300, outputTokens: 100 },
         finishReason: 'stop',
         warnings: [],
         experimental_providerMetadata: undefined,
@@ -291,9 +288,9 @@ describe('Image Curator Agent', () => {
 
       const result = await runImageCurator(context, createMockDeps());
 
-      // TokenUsage uses 'input' and 'output' field names
-      expect(result.tokenUsage.input).toBe(500);
-      expect(result.tokenUsage.output).toBe(200);
+      // TokenUsage should be summed from hero + section calls
+      expect(result.tokenUsage.input).toBe(500); // 200 + 300
+      expect(result.tokenUsage.output).toBe(200); // 100 + 100
     });
 
     it('should return screenshot candidates when no artwork available', async () => {
@@ -303,12 +300,12 @@ describe('Image Curator Agent', () => {
         [] // No artworks
       );
 
-      mockGenerateObject.mockResolvedValueOnce(createMockLLMResult({
-        heroCandidates: [
-          { imageIndex: 0, altText: 'Screenshot hero', relevanceScore: 85 },
-        ],
-        sectionSelections: [],
-      }));
+      // Hero call
+      mockGenerateObject.mockResolvedValueOnce(createMockHeroResult([
+        { imageIndex: 0, altText: 'Screenshot hero', relevanceScore: 85 },
+      ]));
+      // Section call
+      mockGenerateObject.mockResolvedValueOnce(createMockSectionResult([]));
 
       const result = await runImageCurator(context, createMockDeps());
 
@@ -329,14 +326,14 @@ describe('Image Curator Agent', () => {
         signal: controller.signal,
       };
 
-      mockGenerateObject.mockResolvedValueOnce(createMockLLMResult({
-        heroCandidates: [],
-        sectionSelections: [],
-      }));
+      // Hero call
+      mockGenerateObject.mockResolvedValueOnce(createMockHeroResult([]));
+      // Section call
+      mockGenerateObject.mockResolvedValueOnce(createMockSectionResult([]));
 
       await runImageCurator(context, deps);
 
-      // Verify signal was passed to generateObject
+      // Verify signal was passed to generateObject (both calls)
       expect(mockGenerateObject).toHaveBeenCalledWith(
         expect.objectContaining({
           abortSignal: controller.signal,
@@ -352,6 +349,61 @@ describe('Image Curator Agent', () => {
       // Empty pool means no LLM call, so token usage should be empty
       expect(result.tokenUsage.input).toBe(0);
       expect(result.tokenUsage.output).toBe(0);
+    });
+
+    it('should make multiple section calls for multiple sections', async () => {
+      const context = createMockContext(
+        ['Section 1', 'Section 2', 'Section 3'],
+        ['https://images.igdb.com/igdb/image/upload/t_screenshot_big/ss1.jpg'],
+        []
+      );
+
+      // Hero call
+      mockGenerateObject.mockResolvedValueOnce(createMockHeroResult([]));
+      // Section calls (one per section)
+      mockGenerateObject.mockResolvedValueOnce(createMockSectionResult([]));
+      mockGenerateObject.mockResolvedValueOnce(createMockSectionResult([]));
+      mockGenerateObject.mockResolvedValueOnce(createMockSectionResult([]));
+
+      await runImageCurator(context, createMockDeps());
+
+      // Should have 1 hero call + 3 section calls = 4 total
+      expect(mockGenerateObject).toHaveBeenCalledTimes(4);
+    });
+
+    it('should include sourceQuery and sourceDomain in hero prompt', async () => {
+      // Create context with web images that have context/source info
+      let imagePool = createEmptyImagePool();
+      imagePool = addWebImages(imagePool, [
+        {
+          url: 'https://example.com/boss-fight.jpg',
+          description: 'Epic boss battle screenshot',
+        },
+      ], 'boss guide');
+
+      const context: ImageCuratorContext = {
+        markdown: '# Test\n\n## Section 1\n\nContent.',
+        plan: createMockPlan(['Section 1']),
+        imagePool,
+        gameName: 'Test Game',
+        articleTitle: 'Test Article',
+      };
+
+      // Hero call
+      mockGenerateObject.mockResolvedValueOnce(createMockHeroResult([]));
+      // Section call
+      mockGenerateObject.mockResolvedValueOnce(createMockSectionResult([]));
+
+      await runImageCurator(context, createMockDeps());
+
+      // Verify hero selection call includes context fields in prompt
+      const heroCall = mockGenerateObject.mock.calls[0];
+      const heroPrompt = heroCall[0].prompt as string;
+      
+      // Should include source domain
+      expect(heroPrompt).toContain('Source: example.com');
+      // Should include context (sourceQuery is the search query used to find the image)
+      expect(heroPrompt).toContain('Context: "boss guide"');
     });
   });
 });
