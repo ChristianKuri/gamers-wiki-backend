@@ -29,7 +29,7 @@ import {
   type ImageDimensions,
 } from './image-dimensions';
 import { downloadImage } from './image-downloader';
-import { IMAGE_DIMENSION_CONFIG } from '../config';
+import { IMAGE_DIMENSION_CONFIG, IMAGE_CURATOR_CONFIG } from '../config';
 import { normalizeImageUrlForDedupe } from '../utils/url-utils';
 
 // ============================================================================
@@ -128,6 +128,29 @@ export interface ProcessSectionOptions {
 }
 
 // ============================================================================
+// Aspect Ratio Validation
+// ============================================================================
+
+/**
+ * Validates that an image's aspect ratio (width/height) is within the specified range.
+ * @param dimensions - Image dimensions
+ * @param minRatio - Minimum aspect ratio (width/height)
+ * @param maxRatio - Maximum aspect ratio (width/height)
+ * @returns true if aspect ratio is within range, false otherwise
+ */
+function isValidAspectRatio(
+  dimensions: ImageDimensions,
+  minRatio: number,
+  maxRatio: number
+): boolean {
+  if (dimensions.height === 0) {
+    return false; // Invalid dimensions
+  }
+  const aspectRatio = dimensions.width / dimensions.height;
+  return aspectRatio >= minRatio && aspectRatio <= maxRatio;
+}
+
+// ============================================================================
 // Hero Candidate Processing
 // ============================================================================
 
@@ -164,6 +187,7 @@ export async function processHeroCandidates(
   let tooSmall = 0;
   let downloadFailures = 0;
   let qualityFailures = 0;
+  let invalidAspectRatio = 0;
 
   for (let i = 0; i < candidates.length; i++) {
     const candidate = candidates[i];
@@ -196,6 +220,17 @@ export async function processHeroCandidates(
         };
         
         if (dims.width >= minWidth) {
+          // Check aspect ratio
+          if (!isValidAspectRatio(dims, IMAGE_CURATOR_CONFIG.HERO_ASPECT_RATIO_MIN, IMAGE_CURATOR_CONFIG.HERO_ASPECT_RATIO_MAX)) {
+            const aspectRatio = dims.width / dims.height;
+            logger?.debug(
+              `[CandidateProcessor] Hero candidate ${i} invalid aspect ratio: ${aspectRatio.toFixed(2)} ` +
+              `(required: ${IMAGE_CURATOR_CONFIG.HERO_ASPECT_RATIO_MIN}-${IMAGE_CURATOR_CONFIG.HERO_ASPECT_RATIO_MAX})`
+            );
+            invalidAspectRatio++;
+            continue; // Try next candidate
+          }
+          
           // Run quality validation if provided (for hero images)
           if (qualityValidator) {
             logger?.debug(`[CandidateProcessor] Hero candidate ${i}: running quality validation`);
@@ -252,6 +287,17 @@ export async function processHeroCandidates(
         };
         
         if (dims.width >= minWidth) {
+          // Check aspect ratio
+          if (!isValidAspectRatio(dims, IMAGE_CURATOR_CONFIG.HERO_ASPECT_RATIO_MIN, IMAGE_CURATOR_CONFIG.HERO_ASPECT_RATIO_MAX)) {
+            const aspectRatio = dims.width / dims.height;
+            logger?.debug(
+              `[CandidateProcessor] Hero candidate ${i} invalid aspect ratio: ${aspectRatio.toFixed(2)} ` +
+              `(required: ${IMAGE_CURATOR_CONFIG.HERO_ASPECT_RATIO_MIN}-${IMAGE_CURATOR_CONFIG.HERO_ASPECT_RATIO_MAX})`
+            );
+            invalidAspectRatio++;
+            continue; // Try next candidate
+          }
+          
           // Run quality validation if provided (for hero images)
           if (qualityValidator) {
             logger?.debug(`[CandidateProcessor] Hero candidate ${i}: running quality validation`);
@@ -296,6 +342,11 @@ export async function processHeroCandidates(
     `${probeFailures} probe failures`,
     `${tooSmall} too small (min ${minWidth}px)`,
   ];
+  if (invalidAspectRatio > 0) {
+    failureParts.push(
+      `${invalidAspectRatio} invalid aspect ratio (required: ${IMAGE_CURATOR_CONFIG.HERO_ASPECT_RATIO_MIN}-${IMAGE_CURATOR_CONFIG.HERO_ASPECT_RATIO_MAX})`
+    );
+  }
   if (qualityFailures > 0) {
     failureParts.push(`${qualityFailures} quality failures`);
   }
@@ -356,6 +407,7 @@ export async function processSectionCandidates(
   let excluded = 0;
   let downloadFailures = 0;
   let tooSmall = 0;
+  let invalidAspectRatio = 0;
 
   for (let i = 0; i < selection.candidates.length; i++) {
     const candidate = selection.candidates[i];
@@ -398,6 +450,17 @@ export async function processSectionCandidates(
       };
 
       if (dims.width >= minWidth) {
+        // Check aspect ratio
+        if (!isValidAspectRatio(dims, IMAGE_CURATOR_CONFIG.SECTION_ASPECT_RATIO_MIN, IMAGE_CURATOR_CONFIG.SECTION_ASPECT_RATIO_MAX)) {
+          const aspectRatio = dims.width / dims.height;
+          logger?.debug(
+            `[CandidateProcessor] Section candidate ${i} invalid aspect ratio: ${aspectRatio.toFixed(2)} ` +
+            `(required: ${IMAGE_CURATOR_CONFIG.SECTION_ASPECT_RATIO_MIN}-${IMAGE_CURATOR_CONFIG.SECTION_ASPECT_RATIO_MAX})`
+          );
+          invalidAspectRatio++;
+          continue; // Try next candidate
+        }
+        
         logger?.info(
           `[CandidateProcessor] Section candidate ${i} selected for "${selection.sectionHeadline}": ` +
           `${dims.width}x${dims.height}`
@@ -432,6 +495,11 @@ export async function processSectionCandidates(
   if (excluded > 0) reasons.push(`${excluded} excluded`);
   if (downloadFailures > 0) reasons.push(`${downloadFailures} download failures`);
   if (tooSmall > 0) reasons.push(`${tooSmall} too small`);
+  if (invalidAspectRatio > 0) {
+    reasons.push(
+      `${invalidAspectRatio} invalid aspect ratio (required: ${IMAGE_CURATOR_CONFIG.SECTION_ASPECT_RATIO_MIN}-${IMAGE_CURATOR_CONFIG.SECTION_ASPECT_RATIO_MAX})`
+    );
+  }
   
   logger?.warn(
     `[CandidateProcessor] Section "${selection.sectionHeadline}": ` +

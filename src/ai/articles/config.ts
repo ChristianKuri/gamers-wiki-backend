@@ -754,10 +754,17 @@ export const IMAGE_CURATOR_CONFIG = {
   /**
    * Preferred aspect ratios for hero images (width/height).
    * Hero images look best in 16:9 or similar wide formats.
-   * @planned Currently unused - reserved for future aspect ratio validation
+   * Images outside this range are discarded as unusable.
    */
-  HERO_ASPECT_RATIO_MIN: 1.2, // Minimum width/height ratio
-  HERO_ASPECT_RATIO_MAX: 2.5, // Maximum width/height ratio
+  HERO_ASPECT_RATIO_MIN: 1.3, // Minimum width/height ratio
+  HERO_ASPECT_RATIO_MAX: 2.4, // Maximum width/height ratio
+  /**
+   * Preferred aspect ratios for section images (width/height).
+   * Section images must be wider than taller for proper blog layout.
+   * Images outside this range are discarded as unusable.
+   */
+  SECTION_ASPECT_RATIO_MIN: 1.3, // Minimum width/height ratio
+  SECTION_ASPECT_RATIO_MAX: 2.4, // Maximum width/height ratio
   /**
    * Enable optimization (resize/compress) for section images.
    * When true, section images are resized to MAX_SECTION_WIDTH and converted to WebP.
@@ -1503,6 +1510,12 @@ function validateConfiguration(): void {
     IMAGE_CURATOR_CONFIG.HERO_ASPECT_RATIO_MAX,
     'IMAGE_CURATOR_CONFIG.HERO_ASPECT_RATIO_MIN',
     'IMAGE_CURATOR_CONFIG.HERO_ASPECT_RATIO_MAX'
+  );
+  validateMinMax(
+    IMAGE_CURATOR_CONFIG.SECTION_ASPECT_RATIO_MIN,
+    IMAGE_CURATOR_CONFIG.SECTION_ASPECT_RATIO_MAX,
+    'IMAGE_CURATOR_CONFIG.SECTION_ASPECT_RATIO_MIN',
+    'IMAGE_CURATOR_CONFIG.SECTION_ASPECT_RATIO_MAX'
   );
   
   // Image Quality Validation Config

@@ -17,6 +17,7 @@ import {
 } from '../../../src/ai/articles/services/image-candidate-processor';
 import type { HeroCandidateOutput, SectionSelectionOutput } from '../../../src/ai/articles/agents/image-curator';
 import type { CollectedImage } from '../../../src/ai/articles/image-pool';
+import { IMAGE_CURATOR_CONFIG } from '../../../src/ai/articles/config';
 
 // ============================================================================
 // Test Helpers
@@ -313,6 +314,78 @@ describe('processHeroCandidates', () => {
       expect(qualityValidator).not.toHaveBeenCalled();
     });
   });
+
+  describe('aspect ratio validation', () => {
+    it('should reject hero images with aspect ratio below minimum', async () => {
+      const image1 = createMockImage({ url: 'https://example.com/narrow.jpg' });
+      const image2 = createMockImage({ url: 'https://example.com/good.jpg' });
+      const candidates = [
+        createMockHeroCandidate(0, image1), // Too narrow (portrait-like)
+        createMockHeroCandidate(1, image2), // Valid aspect ratio
+      ];
+
+      // First image: 1000x1000 = 1.0 aspect ratio (below 1.3 minimum)
+      mockImageDownloadAndDimensions(1000, 1000);
+      // Second image: 1920x1080 = 1.78 aspect ratio (within 1.3-2.4 range)
+      mockImageDownloadAndDimensions(1920, 1080);
+
+      const result = await processHeroCandidates(candidates, { minWidth: 800 });
+
+      expect(result).not.toBeNull();
+      expect(result?.image).toBe(image2);
+      expect(result?.selectedCandidateIndex).toBe(1);
+    });
+
+    it('should reject hero images with aspect ratio above maximum', async () => {
+      const image1 = createMockImage({ url: 'https://example.com/ultrawide.jpg' });
+      const image2 = createMockImage({ url: 'https://example.com/good.jpg' });
+      const candidates = [
+        createMockHeroCandidate(0, image1), // Too wide (ultrawide)
+        createMockHeroCandidate(1, image2), // Valid aspect ratio
+      ];
+
+      // First image: 2560x800 = 3.2 aspect ratio (above 2.4 maximum)
+      mockImageDownloadAndDimensions(2560, 800);
+      // Second image: 1920x1080 = 1.78 aspect ratio (within 1.3-2.4 range)
+      mockImageDownloadAndDimensions(1920, 1080);
+
+      const result = await processHeroCandidates(candidates, { minWidth: 800 });
+
+      expect(result).not.toBeNull();
+      expect(result?.image).toBe(image2);
+      expect(result?.selectedCandidateIndex).toBe(1);
+    });
+
+    it('should accept hero images with valid aspect ratio', async () => {
+      const image = createMockImage({ url: 'https://example.com/good.jpg' });
+      const candidates = [createMockHeroCandidate(0, image)];
+
+      // 1920x1080 = 1.78 aspect ratio (within 1.3-2.4 range)
+      mockImageDownloadAndDimensions(1920, 1080);
+
+      const result = await processHeroCandidates(candidates, { minWidth: 800 });
+
+      expect(result).not.toBeNull();
+      expect(result?.dimensions.width).toBe(1920);
+      expect(result?.dimensions.height).toBe(1080);
+    });
+
+    it('should return null when all hero candidates have invalid aspect ratios', async () => {
+      const image1 = createMockImage({ url: 'https://example.com/narrow1.jpg' });
+      const image2 = createMockImage({ url: 'https://example.com/narrow2.jpg' });
+      const candidates = [
+        createMockHeroCandidate(0, image1), // 1.0 aspect ratio (below minimum)
+        createMockHeroCandidate(1, image2), // 1.0 aspect ratio (below minimum)
+      ];
+
+      mockImageDownloadAndDimensions(1000, 1000);
+      mockImageDownloadAndDimensions(1200, 1200);
+
+      const result = await processHeroCandidates(candidates, { minWidth: 800 });
+
+      expect(result).toBeNull();
+    });
+  });
 });
 
 // ============================================================================
@@ -383,14 +456,15 @@ describe('processSectionCandidates', () => {
       { imageIndex: 0, image },
     ]);
 
-    mockImageDownloadAndDimensions(600, 800);
+    // 1920x1080 = 1.78 aspect ratio (within 1.3-2.4 range)
+    mockImageDownloadAndDimensions(1920, 1080);
 
     const result = await processSectionCandidates(selection, {
       minWidth: 500,
     });
 
     expect(result).not.toBeNull();
-    expect(result?.dimensions.width).toBe(600);
+    expect(result?.dimensions.width).toBe(1920);
   });
 
   it('should preserve caption from candidate', async () => {
@@ -484,6 +558,88 @@ describe('processSectionCandidates', () => {
     expect(result).toBeNull();
     // No download should happen since all candidates were excluded
     expect(mockDownloadImage).not.toHaveBeenCalled();
+  });
+
+  describe('aspect ratio validation', () => {
+    it('should reject section images with aspect ratio below minimum', async () => {
+      const image1 = createMockImage({ url: 'https://example.com/narrow.jpg' });
+      const image2 = createMockImage({ url: 'https://example.com/good.jpg' });
+      const selection = createMockSectionSelection('Boss Guide', 0, [
+        { imageIndex: 0, image: image1 }, // Too narrow
+        { imageIndex: 1, image: image2 }, // Valid aspect ratio
+      ]);
+
+      // First image: 800x1000 = 0.8 aspect ratio (below 1.3 minimum)
+      mockImageDownloadAndDimensions(800, 1000);
+      // Second image: 1920x1080 = 1.78 aspect ratio (within 1.3-2.4 range)
+      mockImageDownloadAndDimensions(1920, 1080);
+
+      const result = await processSectionCandidates(selection, {
+        minWidth: 500,
+      });
+
+      expect(result).not.toBeNull();
+      expect(result?.image).toBe(image2);
+      expect(result?.selectedCandidateIndex).toBe(1);
+    });
+
+    it('should reject section images with aspect ratio above maximum', async () => {
+      const image1 = createMockImage({ url: 'https://example.com/ultrawide.jpg' });
+      const image2 = createMockImage({ url: 'https://example.com/good.jpg' });
+      const selection = createMockSectionSelection('Location', 1, [
+        { imageIndex: 0, image: image1 }, // Too wide
+        { imageIndex: 1, image: image2 }, // Valid aspect ratio
+      ]);
+
+      // First image: 2560x800 = 3.2 aspect ratio (above 2.4 maximum)
+      mockImageDownloadAndDimensions(2560, 800);
+      // Second image: 1920x1080 = 1.78 aspect ratio (within 1.3-2.4 range)
+      mockImageDownloadAndDimensions(1920, 1080);
+
+      const result = await processSectionCandidates(selection, {
+        minWidth: 500,
+      });
+
+      expect(result).not.toBeNull();
+      expect(result?.image).toBe(image2);
+      expect(result?.selectedCandidateIndex).toBe(1);
+    });
+
+    it('should accept section images with valid aspect ratio', async () => {
+      const image = createMockImage({ url: 'https://example.com/good.jpg' });
+      const selection = createMockSectionSelection('Strategy', 3, [
+        { imageIndex: 0, image },
+      ]);
+
+      // 1920x1080 = 1.78 aspect ratio (within 1.3-2.4 range)
+      mockImageDownloadAndDimensions(1920, 1080);
+
+      const result = await processSectionCandidates(selection, {
+        minWidth: 500,
+      });
+
+      expect(result).not.toBeNull();
+      expect(result?.dimensions.width).toBe(1920);
+      expect(result?.dimensions.height).toBe(1080);
+    });
+
+    it('should return null when all section candidates have invalid aspect ratios', async () => {
+      const image1 = createMockImage({ url: 'https://example.com/narrow1.jpg' });
+      const image2 = createMockImage({ url: 'https://example.com/narrow2.jpg' });
+      const selection = createMockSectionSelection('Items', 4, [
+        { imageIndex: 0, image: image1 }, // 1.0 aspect ratio (below minimum)
+        { imageIndex: 1, image: image2 }, // 1.0 aspect ratio (below minimum)
+      ]);
+
+      mockImageDownloadAndDimensions(1000, 1000);
+      mockImageDownloadAndDimensions(1200, 1200);
+
+      const result = await processSectionCandidates(selection, {
+        minWidth: 500,
+      });
+
+      expect(result).toBeNull();
+    });
   });
 });
 
