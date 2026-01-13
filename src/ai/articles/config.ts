@@ -5,6 +5,8 @@
  * All magic numbers and tuning parameters should be defined here.
  */
 
+import { AI_DEFAULT_MODELS } from '../config/utils';
+
 // ============================================================================
 // UNIFIED EXCLUDED DOMAINS LIST
 // ============================================================================
@@ -677,6 +679,303 @@ export const FIXER_CONFIG = {
 } as const;
 
 // ============================================================================
+// Image Curator Agent Configuration (Autonomous Image Selection)
+// ============================================================================
+
+export const IMAGE_CURATOR_CONFIG = {
+  /**
+   * Whether image curation is enabled by default for each article category.
+   * Can be overridden per-request via `enableImages` option.
+   */
+  ENABLED_BY_CATEGORY: {
+    guides: true,
+    reviews: true,
+    news: true,
+    lists: true,
+  } as const satisfies Record<'news' | 'reviews' | 'guides' | 'lists', boolean>,
+  /**
+   * Maximum images per article (hero + section images).
+   * Includes 1 hero image + up to this many section images.
+   */
+  MAX_IMAGES_PER_ARTICLE: 6,
+  /**
+   * Candidates to send to LLM for text-based relevance scoring per section.
+   * Increased from 5 to 30 - LLM evaluates more candidates via text metadata.
+   */
+  TEXT_CANDIDATES_PER_SECTION: 30,
+  /**
+   * Top results to return from text-based relevance scoring per section.
+   * These are then validated for dimensions before final selection.
+   */
+  TEXT_TOP_RESULTS: 5,
+  /**
+   * Max concurrent section LLM calls.
+   * Trade-off: Too low = slow (sequential), too high = API rate limits / cost spikes.
+   * 3 is a conservative default balancing speed vs API stability.
+   */
+  SECTION_CURATOR_CONCURRENCY: 3,
+  /**
+   * Temperature for Image Curator LLM calls.
+   * Low for consistent, deterministic image selection.
+   */
+  TEMPERATURE: 0.2,
+  /**
+   * Timeout for LLM image curation call (ms).
+   * Text-based calls are fast, but allow buffer for network.
+   */
+  TIMEOUT_MS: 60000,
+  /**
+   * Timeout for entire image phase (ms).
+   * Includes curation + all image downloads + all uploads.
+   * Set higher than TIMEOUT_MS to allow for network operations.
+   */
+  PHASE_TIMEOUT_MS: 120000,
+  /**
+   * Maximum concurrent image evaluations.
+   * @planned Currently unused - reserved for future batch evaluation feature
+   */
+  BATCH_SIZE: 5,
+  /**
+   * Maximum concurrent image uploads to Strapi.
+   * Prevents overwhelming the server when articles have many images.
+   * Configurable via IMAGE_UPLOAD_CONCURRENCY env var.
+   */
+  UPLOAD_CONCURRENCY: parseInt(process.env.IMAGE_UPLOAD_CONCURRENCY ?? '3', 10),
+  /**
+   * Minimum image width (px) for section images.
+   * @see Use with DimensionValidationOptions in image-downloader.ts
+   */
+  MIN_IMAGE_WIDTH: 400,
+  /**
+   * Minimum image height (px) for section images.
+   * @see Use with DimensionValidationOptions in image-downloader.ts
+   */
+  MIN_IMAGE_HEIGHT: 300,
+  /**
+   * Preferred aspect ratios for hero images (width/height).
+   * Hero images look best in 16:9 or similar wide formats.
+   * Images outside this range are discarded as unusable.
+   */
+  HERO_ASPECT_RATIO_MIN: 1.3, // Minimum width/height ratio
+  HERO_ASPECT_RATIO_MAX: 2.4, // Maximum width/height ratio
+  /**
+   * Preferred aspect ratios for section images (width/height).
+   * Section images must be wider than taller for proper blog layout.
+   * Images outside this range are discarded as unusable.
+   */
+  SECTION_ASPECT_RATIO_MIN: 1.3, // Minimum width/height ratio
+  SECTION_ASPECT_RATIO_MAX: 2.4, // Maximum width/height ratio
+  /**
+   * Enable optimization (resize/compress) for section images.
+   * When true, section images are resized to MAX_SECTION_WIDTH and converted to WebP.
+   * Controlled via IMAGE_OPTIMIZE_SECTIONS env var.
+   */
+  OPTIMIZE_SECTION_IMAGES: process.env.IMAGE_OPTIMIZE_SECTIONS === 'true',
+  /**
+   * Maximum width for section images when optimization is enabled.
+   * Images larger than this are resized while maintaining aspect ratio.
+   */
+  MAX_SECTION_WIDTH: 800,
+  /**
+   * Quality (1-100) for optimized section images.
+   */
+  SECTION_QUALITY: 85,
+} as const;
+
+// ============================================================================
+// Image Quality Validation Configuration (Optional Visual Validation)
+// ============================================================================
+
+export const IMAGE_QUALITY_VALIDATION_CONFIG = {
+  /**
+   * Enable vision-based quality validation (watermarks, clarity) for section images.
+   * Off by default - expensive for many sections.
+   * When enabled, validates top candidates with vision LLM.
+   */
+  ENABLED: false,
+  /**
+   * Enable vision-based quality validation for hero image.
+   * On by default - hero is the most important image and must not have watermarks.
+   * Only validates the single hero candidate that passes dimension check.
+   */
+  ENABLED_FOR_HERO: true,
+  /**
+   * Maximum candidates to validate with vision per section.
+   * Only top candidates (after dimension validation) are checked.
+   */
+  MAX_CANDIDATES_PER_SECTION: 3,
+  /**
+   * Minimum clarity score to accept (0-100).
+   * Images below this are rejected for blur/quality issues.
+   */
+  MIN_CLARITY_SCORE: 50,
+  /**
+   * Model to use for vision-based quality validation.
+   * Gemini 2.5 Flash-Lite is cheap and fast for watermark/clarity checks.
+   */
+  MODEL_ID: AI_DEFAULT_MODELS.ARTICLE_IMAGE_QUALITY_CHECKER,
+  /**
+   * Temperature for quality validation LLM calls.
+   * Low for consistent, deterministic quality assessment.
+   */
+  TEMPERATURE: 0.1,
+  /**
+   * Timeout for quality validation LLM call (ms).
+   * Vision calls can be slower than text-only.
+   */
+  TIMEOUT_MS: 30000,
+} as const;
+
+// ============================================================================
+// Image Pool Configuration
+// ============================================================================
+
+export const IMAGE_POOL_CONFIG = {
+  /**
+   * Minimum dimension (width or height) for images with explicit sizes in URLs.
+   * Images with w=199 or h=150 in query params will be filtered out.
+   * Images WITHOUT dimensions in URL are NOT filtered (could be full-size).
+   * Configurable threshold for tuning image quality filtering.
+   */
+  MIN_URL_DIMENSION: 200,
+  /**
+   * Minimum image width (px) for pool inclusion.
+   * More lenient than curator selection to keep candidates available.
+   */
+  MIN_IMAGE_WIDTH: 200,
+  /**
+   * Minimum image height (px) for pool inclusion.
+   */
+  MIN_IMAGE_HEIGHT: 150,
+  /**
+   * Domains to exclude from image pool (social media, watermarked, etc.)
+   */
+  EXCLUDED_DOMAINS: [
+    'pinterest.com',
+    'pinterest.co.uk',
+    'facebook.com',
+    'twitter.com',
+    'x.com',
+    'instagram.com',
+    'tiktok.com',
+    'linkedin.com',
+  ] as const,
+  /**
+   * High-quality gaming domains that get priority boost.
+   */
+  HIGH_QUALITY_DOMAINS: [
+    'ign.com',
+    'gamespot.com',
+    'polygon.com',
+    'kotaku.com',
+    'eurogamer.net',
+    'pcgamer.com',
+    'rockpapershotgun.com',
+    'gamesradar.com',
+    'fextralife.com',
+    'game8.co',
+    'gamewith.net',
+    'neoseeker.com',
+    'gematsu.com',
+    'pushsquare.com',
+    'nintendolife.com',
+    'dualshockers.com',
+  ] as const,
+  /**
+   * Known image CDN patterns for URL detection.
+   * URLs containing these patterns are treated as images even without file extensions.
+   */
+  KNOWN_IMAGE_CDNS: [
+    'images.igdb.com',
+    'cloudinary.com',
+    'imgur.com',
+    'i.imgur.com',
+    'cdn.discordapp.com',
+    'media.discordapp.net',
+    'staticflickr.com',
+    'twimg.com',
+    'pbs.twimg.com',
+    'wp-content/uploads',
+    'static0.gamerantimages.com',
+    'static0.thegamerimages.com',
+    'oyster.ignimgs.com',
+    'fextralife.com/file',
+  ] as const,
+} as const;
+
+// ============================================================================
+// Image Downloader Configuration
+// ============================================================================
+
+export const IMAGE_DOWNLOADER_CONFIG = {
+  /**
+   * User-Agent string for image downloads.
+   * Includes contact URL per web scraping best practices.
+   */
+  USER_AGENT: 'GamersWiki/1.0 (Article Image Generator; +https://gamers.wiki)',
+  /**
+   * Timeout for image downloads (ms).
+   */
+  TIMEOUT_MS: 30000,
+  /**
+   * Maximum image file size (bytes).
+   * 10MB default - larger images are rejected.
+   */
+  MAX_SIZE_BYTES: 10 * 1024 * 1024,
+  /**
+   * Maximum retry attempts for transient download failures.
+   */
+  MAX_RETRIES: 3,
+  /**
+   * Initial delay before first retry (ms).
+   */
+  INITIAL_RETRY_DELAY_MS: 1000,
+  /**
+   * Backoff multiplier for retry delays.
+   */
+  RETRY_BACKOFF_MULTIPLIER: 2,
+} as const;
+
+// ============================================================================
+// Image Dimension Validation Configuration
+// ============================================================================
+
+export const IMAGE_DIMENSION_CONFIG = {
+  /**
+   * Minimum width (px) for hero/featured images.
+   * Hero images need to be larger for prominent display.
+   * Images below this will try the next candidate.
+   */
+  HERO_MIN_WIDTH: 800,
+  /**
+   * Minimum width (px) for section images.
+   * All section images use full-width layout with standard markdown.
+   * Images below this threshold are rejected (try next candidate).
+   */
+  SECTION_MIN_WIDTH: 500,
+  /**
+   * Maximum hero image candidates from curator.
+   * More candidates = better fallback options if top picks are too small.
+   */
+  MAX_HERO_CANDIDATES: 10,
+  /**
+   * Maximum section image candidates from curator.
+   * 3 candidates per section provides good fallback coverage.
+   */
+  MAX_SECTION_CANDIDATES: 3,
+  /**
+   * Timeout for dimension probing per image (ms).
+   */
+  DIMENSION_PROBE_TIMEOUT_MS: 15000,
+  /**
+   * Number of retries for failed dimension probes.
+   * Helps with transient network failures.
+   * 1 = one retry after initial failure (2 total attempts).
+   */
+  DIMENSION_PROBE_RETRIES: 1,
+} as const;
+
+// ============================================================================
 // Cleaner Agent Configuration
 // ============================================================================
 
@@ -803,6 +1102,19 @@ export const CLEANER_CONFIG = {
    * When false, only checks DB cache - doesn't run LLM on misses.
    */
   ENABLED: true,
+  /**
+   * Whether to use the source cache for cleaned content.
+   * When false, bypasses cache reads (treats all URLs as cache misses) but still
+   * stores cleaned results to update the cache. Useful for testing new features
+   * like image extraction where cached entries don't have the new fields.
+   */
+  CACHE_ENABLED: true,
+  /**
+   * Maximum number of images to extract per source.
+   * Caps image extraction to avoid bloating the image pool with too many
+   * images from a single source. Images beyond this limit are dropped.
+   */
+  MAX_IMAGES_PER_SOURCE: 20,
   /**
    * Whether to use LLM pre-filter before full cleaning.
    * Pre-filter uses title + snippet to check relevance.
@@ -1183,6 +1495,57 @@ function validateConfiguration(): void {
     'SEO_CONSTRAINTS.MIN_KEYWORD_OCCURRENCES',
     'SEO_CONSTRAINTS.MAX_KEYWORD_OCCURRENCES'
   );
+
+  // Image Curator Config
+  validatePositive(IMAGE_CURATOR_CONFIG.MAX_IMAGES_PER_ARTICLE, 'IMAGE_CURATOR_CONFIG.MAX_IMAGES_PER_ARTICLE');
+  validatePositive(IMAGE_CURATOR_CONFIG.TEXT_CANDIDATES_PER_SECTION, 'IMAGE_CURATOR_CONFIG.TEXT_CANDIDATES_PER_SECTION');
+  validatePositive(IMAGE_CURATOR_CONFIG.TEXT_TOP_RESULTS, 'IMAGE_CURATOR_CONFIG.TEXT_TOP_RESULTS');
+  validatePositive(IMAGE_CURATOR_CONFIG.SECTION_CURATOR_CONCURRENCY, 'IMAGE_CURATOR_CONFIG.SECTION_CURATOR_CONCURRENCY');
+  validatePositive(IMAGE_CURATOR_CONFIG.TIMEOUT_MS, 'IMAGE_CURATOR_CONFIG.TIMEOUT_MS');
+  validatePositive(IMAGE_CURATOR_CONFIG.PHASE_TIMEOUT_MS, 'IMAGE_CURATOR_CONFIG.PHASE_TIMEOUT_MS');
+  validatePositive(IMAGE_CURATOR_CONFIG.UPLOAD_CONCURRENCY, 'IMAGE_CURATOR_CONFIG.UPLOAD_CONCURRENCY');
+  validateTemperature(IMAGE_CURATOR_CONFIG.TEMPERATURE, 'IMAGE_CURATOR_CONFIG.TEMPERATURE');
+  validateMinMax(
+    IMAGE_CURATOR_CONFIG.HERO_ASPECT_RATIO_MIN,
+    IMAGE_CURATOR_CONFIG.HERO_ASPECT_RATIO_MAX,
+    'IMAGE_CURATOR_CONFIG.HERO_ASPECT_RATIO_MIN',
+    'IMAGE_CURATOR_CONFIG.HERO_ASPECT_RATIO_MAX'
+  );
+  validateMinMax(
+    IMAGE_CURATOR_CONFIG.SECTION_ASPECT_RATIO_MIN,
+    IMAGE_CURATOR_CONFIG.SECTION_ASPECT_RATIO_MAX,
+    'IMAGE_CURATOR_CONFIG.SECTION_ASPECT_RATIO_MIN',
+    'IMAGE_CURATOR_CONFIG.SECTION_ASPECT_RATIO_MAX'
+  );
+  
+  // Image Quality Validation Config
+  validatePositive(IMAGE_QUALITY_VALIDATION_CONFIG.MAX_CANDIDATES_PER_SECTION, 'IMAGE_QUALITY_VALIDATION_CONFIG.MAX_CANDIDATES_PER_SECTION');
+  validateMinMax(0, IMAGE_QUALITY_VALIDATION_CONFIG.MIN_CLARITY_SCORE, '0', 'IMAGE_QUALITY_VALIDATION_CONFIG.MIN_CLARITY_SCORE');
+  validateMinMax(IMAGE_QUALITY_VALIDATION_CONFIG.MIN_CLARITY_SCORE, 100, 'IMAGE_QUALITY_VALIDATION_CONFIG.MIN_CLARITY_SCORE', '100');
+  validateTemperature(IMAGE_QUALITY_VALIDATION_CONFIG.TEMPERATURE, 'IMAGE_QUALITY_VALIDATION_CONFIG.TEMPERATURE');
+  validatePositive(IMAGE_QUALITY_VALIDATION_CONFIG.TIMEOUT_MS, 'IMAGE_QUALITY_VALIDATION_CONFIG.TIMEOUT_MS');
+
+  // Image Pool Config
+  validatePositive(IMAGE_POOL_CONFIG.MIN_IMAGE_WIDTH, 'IMAGE_POOL_CONFIG.MIN_IMAGE_WIDTH');
+  validatePositive(IMAGE_POOL_CONFIG.MIN_IMAGE_HEIGHT, 'IMAGE_POOL_CONFIG.MIN_IMAGE_HEIGHT');
+
+  // Image Dimension Config
+  validatePositive(IMAGE_DIMENSION_CONFIG.HERO_MIN_WIDTH, 'IMAGE_DIMENSION_CONFIG.HERO_MIN_WIDTH');
+  validatePositive(IMAGE_DIMENSION_CONFIG.SECTION_MIN_WIDTH, 'IMAGE_DIMENSION_CONFIG.SECTION_MIN_WIDTH');
+  validatePositive(IMAGE_DIMENSION_CONFIG.MAX_HERO_CANDIDATES, 'IMAGE_DIMENSION_CONFIG.MAX_HERO_CANDIDATES');
+  validatePositive(IMAGE_DIMENSION_CONFIG.MAX_SECTION_CANDIDATES, 'IMAGE_DIMENSION_CONFIG.MAX_SECTION_CANDIDATES');
+  validatePositive(IMAGE_DIMENSION_CONFIG.DIMENSION_PROBE_TIMEOUT_MS, 'IMAGE_DIMENSION_CONFIG.DIMENSION_PROBE_TIMEOUT_MS');
+  validateMinMax(
+    IMAGE_DIMENSION_CONFIG.DIMENSION_PROBE_RETRIES,
+    10,
+    'IMAGE_DIMENSION_CONFIG.DIMENSION_PROBE_RETRIES',
+    '10 (max)'
+  );
+
+  // Image Downloader Config
+  validatePositive(IMAGE_DOWNLOADER_CONFIG.TIMEOUT_MS, 'IMAGE_DOWNLOADER_CONFIG.TIMEOUT_MS');
+  validatePositive(IMAGE_DOWNLOADER_CONFIG.MAX_SIZE_BYTES, 'IMAGE_DOWNLOADER_CONFIG.MAX_SIZE_BYTES');
+  validatePositive(IMAGE_DOWNLOADER_CONFIG.MAX_RETRIES, 'IMAGE_DOWNLOADER_CONFIG.MAX_RETRIES');
 }
 
 // Run validation at module load time

@@ -24,6 +24,7 @@ import {
   type ResearchPool,
   type SearchCategory,
   type SearchQueryStats,
+  type SearchResultImage,
   type SearchResultItem,
   type SearchSource,
   type TokenUsage,
@@ -699,6 +700,18 @@ interface RawSearchResultItem {
   /** AI-generated summary (Exa only) */
   readonly summary?: string;
   readonly score?: number;
+  /** Representative image for the result (Exa only) */
+  readonly image?: string;
+  /** Images extracted from the page (Exa with extras.imageLinks) */
+  readonly imageLinks?: readonly string[];
+}
+
+/**
+ * Image from a search response.
+ */
+interface RawSearchImage {
+  readonly url: string;
+  readonly description?: string;
 }
 
 /**
@@ -717,14 +730,23 @@ export function processSearchResults(
   rawResults: {
     answer?: string | null;
     results: readonly RawSearchResultItem[];
+    /** Query-level images (Tavily with include_images) */
+    images?: readonly RawSearchImage[];
   },
   searchSource: SearchSource = 'tavily',
   costUsd?: number
 ): CategorizedSearchResult {
   const processedResults: SearchResultItem[] = rawResults.results
-    .map((r) => {
+    .map((r): SearchResultItem | null => {
       const normalized = normalizeUrl(r.url);
       if (!normalized) return null;
+
+      // Collect per-result images (Exa's image and imageLinks)
+      const resultImages: readonly SearchResultImage[] = [
+        ...(r.image ? [{ url: r.image }] : []),
+        ...(r.imageLinks ?? []).map((imgUrl) => ({ url: imgUrl })),
+      ];
+
       return {
         title: r.title,
         url: normalized,
@@ -734,14 +756,24 @@ export function processSearchResults(
         // Preserve summary if available (Exa only)
         ...(r.summary ? { summary: r.summary } : {}),
         ...(typeof r.score === 'number' ? { score: r.score } : {}),
+        // Include images if any found
+        ...(resultImages.length > 0 ? { images: resultImages } : {}),
       };
     })
     .filter((r): r is SearchResultItem => r !== null);
+
+  // Convert query-level images (from Tavily)
+  const queryImages = rawResults.images?.map((img) => ({
+    url: img.url,
+    ...(img.description ? { description: img.description } : {}),
+  }));
 
   return {
     query,
     answer: rawResults.answer ?? null,
     results: processedResults,
+    // Include query-level images if present
+    ...(queryImages && queryImages.length > 0 ? { images: queryImages } : {}),
     category,
     timestamp: Date.now(),
     searchSource,
@@ -886,6 +918,74 @@ export interface CleanedSearchProcessingResult {
 }
 
 /**
+ * Result of checking whether a cache result should be treated as a miss.
+ */
+export interface CacheBypassCheckResult {
+  /** Whether this result should be treated as a miss (needs cleaning) */
+  shouldBypass: boolean;
+  /** The raw source to attach, if found */
+  rawSource?: RawSourceInput;
+  /** Reason for bypass decision (for debugging) */
+  reason: 'not_cache_hit' | 'excluded_domain' | 'scrape_failure_retry' | 'legacy_reprocessing' | 'cache_disabled' | 'no_raw_content' | 'use_cache';
+}
+
+/**
+ * Determines if a cache result should be bypassed and treated as a miss.
+ * Encapsulates the complex cache bypass logic for clarity and testability.
+ *
+ * Exported for testing purposes.
+ */
+export function shouldBypassCacheResult(
+  cacheResult: { hit: boolean; url: string; cached?: { scrapeSucceeded?: boolean } | null },
+  rawSources: readonly RawSourceInput[],
+  excludedDomainsSet: Set<string>,
+  cacheEnabled: boolean,
+  scrapeFailureRetryUrls: Set<string>,
+  needsReprocessingUrls: Set<string>
+): CacheBypassCheckResult {
+  // Standard miss (not in cache) - always needs cleaning
+  if (!cacheResult.hit) {
+    return { shouldBypass: true, reason: 'not_cache_hit' };
+  }
+
+  // Check excluded domains first
+  const domain = extractDomainFromUrl(cacheResult.url);
+  if (excludedDomainsSet.has(domain)) {
+    return { shouldBypass: false, reason: 'excluded_domain' };
+  }
+
+  // Find raw source for potential re-cleaning
+  const rawSource = rawSources.find(s => normalizeUrl(s.url) === normalizeUrl(cacheResult.url));
+
+  // Cache bypass mode - treat all non-excluded hits as misses
+  if (!cacheEnabled) {
+    // Check if it's a persistent scrape failure (no raw content even now)
+    if (cacheResult.cached && !cacheResult.cached.scrapeSucceeded && 
+        (!rawSource || rawSource.content.length <= CLEANER_CONFIG.MIN_CONTENT_LENGTH)) {
+      return { shouldBypass: false, reason: 'scrape_failure_retry' };
+    }
+    
+    if (rawSource) {
+      return { shouldBypass: true, rawSource, reason: 'cache_disabled' };
+    }
+    return { shouldBypass: false, reason: 'no_raw_content' };
+  }
+
+  // Scrape failure retry (was in cache as failure, now has content)
+  if (scrapeFailureRetryUrls.has(cacheResult.url) && rawSource) {
+    return { shouldBypass: true, rawSource, reason: 'scrape_failure_retry' };
+  }
+
+  // Legacy data needing reprocessing (NULL relevance)
+  if (needsReprocessingUrls.has(cacheResult.url) && rawSource) {
+    return { shouldBypass: true, rawSource, reason: 'legacy_reprocessing' };
+  }
+
+  // Normal cache hit - use cached data
+  return { shouldBypass: false, reason: 'use_cache' };
+}
+
+/**
  * Processes search results with optional content cleaning.
  *
  * When cleaningDeps is provided:
@@ -916,7 +1016,13 @@ export async function processSearchResultsWithCleaning(
       raw_content?: string;
       summary?: string;
       score?: number;
+      /** Representative image (Exa only) */
+      image?: string;
+      /** Images from the page (Exa with extras.imageLinks) */
+      imageLinks?: readonly string[];
     }[];
+    /** Query-level images (Tavily with include_images) */
+    images?: readonly RawSearchImage[];
   },
   searchSource: SearchSource = 'tavily',
   costUsd?: number,
@@ -991,8 +1097,14 @@ export async function processSearchResultsWithCleaning(
     };
   }
 
-  // Check cache for all URLs
+  // Check cache for all URLs (unless cache is disabled)
+  // When cache is disabled, we still check to get metadata like scrape failures,
+  // but we treat all as misses so content gets re-cleaned with latest prompts
   const cacheResults = await checkSourceCache(strapi, rawSources);
+  const cacheEnabled = CLEANER_CONFIG.CACHE_ENABLED;
+  if (!cacheEnabled) {
+    logger?.info?.(`[Cleaner] Cache bypass enabled - will re-clean all sources`);
+  }
 
   // Get excluded domains from cleaningDeps (includes both static and DB exclusions)
   const excludedDomainsSet = new Set(cleaningDeps.excludedDomains ?? []);
@@ -1080,40 +1192,43 @@ export async function processSearchResultsWithCleaning(
     return true;
   });
 
-  // Separate valid cache hits and misses
+  // Separate valid cache hits and misses using the helper function
   // Include scrape failure retries and legacy reprocessing as misses (they need to be re-cleaned)
-  const hits = validHits;
+  // When cache is disabled, treat ALL sources as misses (bypass cache reads)
+  const hits = cacheEnabled ? validHits : [];
   const misses = cacheResults.filter((r) => {
-    // Standard miss (not in cache)
+    // Standard miss (not in cache) with raw content available
     if (!r.hit && r.raw) return true;
-    // Scrape failure retry (was in cache as failure, now has content)
-    if (scrapeFailureRetryUrls.has(r.url)) {
-      // Find and attach the raw source
-      const rawSource = rawSources.find(s => normalizeUrl(s.url) === normalizeUrl(r.url));
-      if (rawSource) {
-        // Mutate to add raw (safe since we're building new results)
-        (r as { raw?: RawSourceInput }).raw = rawSource;
-        return true;
-      }
+    
+    // Use helper for complex bypass logic
+    const bypassCheck = shouldBypassCacheResult(
+      r,
+      rawSources,
+      excludedDomainsSet,
+      cacheEnabled,
+      scrapeFailureRetryUrls,
+      needsReprocessingUrls
+    );
+    
+    if (bypassCheck.shouldBypass && bypassCheck.rawSource) {
+      // Attach raw source so it can be re-cleaned
+      (r as { raw?: RawSourceInput }).raw = bypassCheck.rawSource;
+      return true;
     }
-    // Legacy data needing reprocessing (NULL relevance)
-    if (needsReprocessingUrls.has(r.url)) {
-      // Find and attach the raw source
-      const rawSource = rawSources.find(s => normalizeUrl(s.url) === normalizeUrl(r.url));
-      if (rawSource) {
-        (r as { raw?: RawSourceInput }).raw = rawSource;
-        return true;
-      }
-    }
+    
     return false;
   });
 
   // Log cache status (include excluded count if any)
   const cleanerEnabled = CLEANER_CONFIG.ENABLED;
-  const excludedCacheCount = cacheResults.filter((r) => r.hit).length - hits.length;
+  const excludedCacheCount = cacheResults.filter((r) => r.hit).length - (cacheEnabled ? hits.length : 0);
+  const bypassedCacheCount = !cacheEnabled ? cacheResults.filter((r) => r.hit).length : 0;
   
-  if (hits.length > 0 || misses.length > 0 || excludedCacheCount > 0) {
+  if (hits.length > 0 || misses.length > 0 || excludedCacheCount > 0 || bypassedCacheCount > 0) {
     let logMsg = `Source cache: ${hits.length} hits, ${misses.length} misses for "${query.slice(0, 40)}..."`;
+    if (bypassedCacheCount > 0) {
+      logMsg += ` (${bypassedCacheCount} cache entries bypassed for re-cleaning)`;
+    }
     if (excludedCacheCount > 0) {
       logMsg += ` (${excludedCacheCount} cached sources from excluded domains skipped)`;
     }
@@ -1413,6 +1528,43 @@ export async function processSearchResultsWithCleaning(
           return null;
         }
 
+        // Collect per-result images (Exa's image and imageLinks) - preserve for image pipeline
+        const rawImages: SearchResultImage[] = [
+          ...(r.image ? [{ url: r.image }] : []),
+          ...(r.imageLinks ?? []).map((imgUrl) => ({ url: imgUrl })),
+        ];
+        
+        // Add images extracted from cleaned content (with context)
+        // These have better descriptions because the cleaner preserved them with alt text
+        // Note: Capping is done in extractImagesFromSource during extraction
+        const sourceImages = cleanedSource.images ?? [];
+        
+        // Create SearchResultImage versions for backward compatibility
+        const sourceImagesAsSearchResult: SearchResultImage[] = sourceImages
+          .map((img) => ({
+            url: img.url,
+            // Build rich description from extracted context
+            description: [
+              img.nearestHeader ? `[${img.nearestHeader}]` : null,
+              img.description,
+            ].filter(Boolean).join(' '),
+          }));
+        
+        // Dedupe by URL (prefer source images as they have better descriptions)
+        const seenUrls = new Set<string>();
+        const resultImages: readonly SearchResultImage[] = [
+          ...sourceImagesAsSearchResult.filter((img) => {
+            if (seenUrls.has(img.url)) return false;
+            seenUrls.add(img.url);
+            return true;
+          }),
+          ...rawImages.filter((img) => {
+            if (seenUrls.has(img.url)) return false;
+            seenUrls.add(img.url);
+            return true;
+          }),
+        ];
+
         // Use cleaned content
         return {
           title: r.title,
@@ -1424,11 +1576,21 @@ export async function processSearchResultsWithCleaning(
           ...(cleanedSource.keyFacts && cleanedSource.keyFacts.length > 0 ? { keyFacts: cleanedSource.keyFacts } : {}),
           ...(cleanedSource.dataPoints && cleanedSource.dataPoints.length > 0 ? { dataPoints: cleanedSource.dataPoints } : {}),
           ...(typeof r.score === 'number' ? { score: r.score } : {}),
+          // Preserve images for image pipeline (SearchResultImage format for backward compat)
+          ...(resultImages.length > 0 ? { images: resultImages } : {}),
+          // Preserve full SourceImage objects for proper 'source' attribution in image pool
+          ...(sourceImages.length > 0 ? { sourceImages: sourceImages } : {}),
           qualityScore: cleanedSource.qualityScore,
           relevanceScore: cleanedSource.relevanceScore,
           wasCached,
         };
       }
+
+      // Collect per-result images for fallback path too
+      const resultImages: readonly SearchResultImage[] = [
+        ...(r.image ? [{ url: r.image }] : []),
+        ...(r.imageLinks ?? []).map((imgUrl) => ({ url: imgUrl })),
+      ];
 
       // Fallback to raw content (no relevance/quality check - haven't cleaned it)
       return {
@@ -1437,6 +1599,8 @@ export async function processSearchResultsWithCleaning(
         content: r.raw_content ?? r.content ?? '',
         ...(r.summary ? { summary: r.summary } : {}),
         ...(typeof r.score === 'number' ? { score: r.score } : {}),
+        // Preserve images for image pipeline
+        ...(resultImages.length > 0 ? { images: resultImages } : {}),
       };
     })
     .filter((r): r is SearchResultItem => r !== null);
@@ -1471,11 +1635,19 @@ export async function processSearchResultsWithCleaning(
   // Combine prefilter and extraction for backwards-compatible cleaningTokenUsage
   const cleaningTokenUsage = addTokenUsage(prefilterTokenUsage, extractionTokenUsage);
 
+  // Convert query-level images (from Tavily with include_images) - preserve for image pipeline
+  const queryImages = rawResults.images?.map((img) => ({
+    url: img.url,
+    ...(img.description ? { description: img.description } : {}),
+  }));
+
   return {
     result: {
       query,
       answer: rawResults.answer ?? null,
       results: processedResults,
+      // Include query-level images if present (for image pipeline)
+      ...(queryImages && queryImages.length > 0 ? { images: queryImages } : {}),
       category,
       timestamp: Date.now(),
       searchSource,

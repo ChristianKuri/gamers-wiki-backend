@@ -23,6 +23,7 @@ import {
   type RawSourceInput,
   type TokenUsage,
 } from '../types';
+import { extractImagesFromSource } from '../utils/image-extractor';
 
 // Re-export config for backwards compatibility
 export { CLEANER_CONFIG } from '../config';
@@ -151,7 +152,9 @@ KEEP (preserve in cleanedContent):
 - Tables with data
 - Lists of items/steps
 - Quoted text that's part of the article
-- Image captions (describe as [Image: caption])
+- Images: preserve as markdown ![descriptive alt text](original_url)
+  - Keep the EXACT original image URL - do not modify or create URLs
+  - Write a descriptive alt text based on context (what the image shows)
 - Headings and subheadings
 - ALL substantive information
 
@@ -370,10 +373,25 @@ export async function cleanSingleSource(
     const cleanedLength = output.cleanedContent.length;
     const junkRatio = 1 - cleanedLength / originalLength;
     
+    // Extract images with validation and context (pass source URL for relative URL resolution)
+    const imageResult = extractImagesFromSource(source.content, output.cleanedContent, source.url);
+    if (imageResult.discardedCount > 0) {
+      // Log at warn level if high hallucination rate (>50% of images discarded)
+      const hallucinationRate = imageResult.parsedCount > 0
+        ? imageResult.discardedCount / imageResult.parsedCount
+        : 0;
+      if (hallucinationRate > 0.5) {
+        log.warn(`[Cleaner] High image hallucination rate for ${domain}: ${imageResult.discardedCount}/${imageResult.parsedCount} (${(hallucinationRate * 100).toFixed(0)}%) discarded`);
+      } else {
+        log.debug(`[Cleaner] Discarded ${imageResult.discardedCount} hallucinated image URL(s) for ${domain}`);
+      }
+    }
+    
     // Log completion with raw→cleaned ratio
     const preservedPct = ((cleanedLength / originalLength) * 100).toFixed(0);
     const costStr = tokenUsage.actualCostUsd ? ` ($${tokenUsage.actualCostUsd.toFixed(4)})` : '';
-    log.info(`Single-step clean complete: ${domain} - ${originalLength.toLocaleString()}→${cleanedLength.toLocaleString()}c (${preservedPct}%), Q:${output.qualityScore}, R:${output.relevanceScore}${costStr}`);
+    const imageStr = imageResult.images.length > 0 ? `, ${imageResult.images.length} images` : '';
+    log.info(`Single-step clean complete: ${domain} - ${originalLength.toLocaleString()}→${cleanedLength.toLocaleString()}c (${preservedPct}%), Q:${output.qualityScore}, R:${output.relevanceScore}${imageStr}${costStr}`);
 
     return {
       source: {
@@ -392,6 +410,7 @@ export async function cleanSingleSource(
         contentType: output.contentType,
         junkRatio: Math.max(0, Math.min(1, junkRatio)),
         searchSource: source.searchSource,
+        images: imageResult.images.length > 0 ? imageResult.images : null,
       },
       tokenUsage,
     };
@@ -421,6 +440,7 @@ export async function cleanSingleSource(
         contentType: 'raw fallback',
         junkRatio: 0, // Unknown junk ratio
         searchSource: source.searchSource,
+        images: null, // Not available for fallback
       },
       tokenUsage: createEmptyTokenUsage(),
     };
@@ -619,7 +639,9 @@ STRUCTURED INFORMATION:
 SPECIAL CONTENT:
 ✓ Code snippets, console commands, cheat codes
 ✓ Quoted text that's part of the article narrative
-✓ Image references → convert to [Image: description]
+✓ Images → preserve as markdown: ![descriptive alt text](original_url)
+  - Keep the EXACT original image URL unchanged
+  - Write a helpful alt text describing what the image shows
 ✓ Embedded video descriptions → [Video: description]
 
 ═══════════════════════════════════════════════════════════════════
@@ -1291,6 +1313,20 @@ export async function cleanSourceTwoStep(
   // Calculate junk ratio
   const junkRatio = 1 - cleanResult.cleanedContent.length / originalLength;
 
+  // Extract images with validation and context (pass source URL for relative URL resolution)
+  const imageResult = extractImagesFromSource(source.content, cleanResult.cleanedContent, source.url);
+  if (imageResult.discardedCount > 0) {
+    // Log at warn level if high hallucination rate (>50% of images discarded)
+    const hallucinationRate = imageResult.parsedCount > 0
+      ? imageResult.discardedCount / imageResult.parsedCount
+      : 0;
+    if (hallucinationRate > 0.5) {
+      log.warn(`[Cleaner] High image hallucination rate for ${domain}: ${imageResult.discardedCount}/${imageResult.parsedCount} (${(hallucinationRate * 100).toFixed(0)}%) discarded`);
+    } else {
+      log.debug(`[Cleaner] Discarded ${imageResult.discardedCount} hallucinated image URL(s) for ${domain}`);
+    }
+  }
+
   // Build cleaned source
   const cleanedSource: CleanedSource = {
     url: source.url,
@@ -1308,13 +1344,15 @@ export async function cleanSourceTwoStep(
     contentType: cleanResult.contentType,
     junkRatio: Math.max(0, Math.min(1, junkRatio)),
     searchSource: source.searchSource,
+    images: imageResult.images.length > 0 ? imageResult.images : null,
   };
 
   const costStr = totalTokenUsage.actualCostUsd 
     ? ` ($${totalTokenUsage.actualCostUsd.toFixed(4)})` 
     : '';
   const preservedPct = ((cleanResult.cleanedContent.length / originalLength) * 100).toFixed(0);
-  log.info(`Two-step clean complete: ${source.url} - ${originalLength.toLocaleString()}→${cleanResult.cleanedContent.length.toLocaleString()}c (${preservedPct}%), Q:${cleanResult.qualityScore}, R:${cleanResult.relevanceScore}${costStr}`);
+  const imageStr = imageResult.images.length > 0 ? `, ${imageResult.images.length} images` : '';
+  log.info(`Two-step clean complete: ${source.url} - ${originalLength.toLocaleString()}→${cleanResult.cleanedContent.length.toLocaleString()}c (${preservedPct}%), Q:${cleanResult.qualityScore}, R:${cleanResult.relevanceScore}${imageStr}${costStr}`);
 
   return {
     source: cleanedSource,

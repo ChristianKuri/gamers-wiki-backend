@@ -2216,6 +2216,7 @@ export interface ApiSourceContentSourceContent
         maxLength: 255;
       }>;
     games: Schema.Attribute.Relation<'manyToMany', 'api::game.game'>;
+    images: Schema.Attribute.JSON;
     junkRatio: Schema.Attribute.Decimal &
       Schema.Attribute.Required &
       Schema.Attribute.SetMinMax<

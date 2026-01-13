@@ -19,6 +19,7 @@ import type {
   DomainTier,
   RawSourceInput,
   SearchSource,
+  SourceImage,
   StoredDomainQuality,
   StoredSourceContent,
 } from './types';
@@ -42,6 +43,7 @@ interface SourceContentRow {
   detailed_summary: string | null;
   key_facts: string | null; // JSON string stored in DB
   data_points: string | null; // JSON string stored in DB
+  images: string | null; // JSON string stored in DB (SourceImage[])
   cleaned_content: string;
   original_content_length: number;
   quality_score: number | null; // null for scrape failures
@@ -72,6 +74,51 @@ function parseJsonArray(value: unknown): readonly string[] | null {
     }
   }
   return null;
+}
+
+/**
+ * Validates that an object has the basic shape of a SourceImage.
+ * Only validates required fields exist and have correct types.
+ */
+function isValidSourceImage(obj: unknown): obj is SourceImage {
+  if (!obj || typeof obj !== 'object') return false;
+  const img = obj as Record<string, unknown>;
+  // Required fields: url, description, position
+  if (typeof img.url !== 'string' || !img.url) return false;
+  if (typeof img.description !== 'string') return false;
+  if (typeof img.position !== 'number') return false;
+  return true;
+}
+
+/**
+ * Safely parse images JSON from database.
+ * Returns SourceImage[] or null for legacy data.
+ * Validates basic shape to handle corrupted data gracefully.
+ */
+function parseJsonImages(value: unknown): readonly SourceImage[] | null {
+  if (!value) return null;
+  
+  let parsed: unknown[];
+  
+  if (Array.isArray(value)) {
+    parsed = value;
+  } else if (typeof value === 'string') {
+    try {
+      const result = JSON.parse(value);
+      if (!Array.isArray(result)) return null;
+      parsed = result;
+    } catch {
+      return null;
+    }
+  } else {
+    return null;
+  }
+  
+  // Filter to only valid SourceImage objects
+  const validImages = parsed.filter(isValidSourceImage);
+  
+  // If no valid images, return null (not empty array)
+  return validImages.length > 0 ? validImages : null;
 }
 
 /**
@@ -115,17 +162,9 @@ interface DomainQualityRow {
 // URL Utilities
 // ============================================================================
 
-/**
- * Extracts the domain from a URL.
- */
-export function extractDomain(url: string): string {
-  try {
-    const parsed = new URL(url);
-    return parsed.hostname.replace(/^www\./, '');
-  } catch {
-    return '';
-  }
-}
+// Import and re-export domain utility from shared location for backwards compatibility
+import { extractDomain } from './utils/url-utils';
+export { extractDomain };
 
 // ============================================================================
 // Document Service Helpers
@@ -410,6 +449,8 @@ export async function checkSourceCache(
       // Parse JSON arrays from database strings
       keyFacts: parseJsonArray(row.key_facts),
       dataPoints: parseJsonArray(row.data_points),
+      // Parse images JSON (SourceImage[] or null)
+      images: parseJsonImages(row.images),
       cleanedContent: row.cleaned_content,
       originalContentLength: row.original_content_length,
       qualityScore: row.quality_score,
@@ -484,6 +525,7 @@ export async function checkSourceCache(
           detailedSummary: cached.detailedSummary,
           keyFacts: cached.keyFacts,
           dataPoints: cached.dataPoints,
+          images: cached.images ?? null,
           cleanedContent: cached.cleanedContent,
           originalContentLength: cached.originalContentLength,
           qualityScore: cached.qualityScore ?? 0,
@@ -622,6 +664,7 @@ export async function updateScrapeFailureToSuccess(
         detailed_summary: cleanedSource.detailedSummary ?? null,
         key_facts: cleanedSource.keyFacts ? JSON.stringify(cleanedSource.keyFacts) : null,
         data_points: cleanedSource.dataPoints ? JSON.stringify(cleanedSource.dataPoints) : null,
+        images: cleanedSource.images ? JSON.stringify(cleanedSource.images) : null,
         cleaned_content: cleanedSource.cleanedContent,
         original_content_length: cleanedSource.originalContentLength,
         quality_score: cleanedSource.qualityScore,
@@ -685,6 +728,7 @@ export async function updateReprocessedSource(
         detailed_summary: cleanedSource.detailedSummary ?? null,
         key_facts: cleanedSource.keyFacts ? JSON.stringify(cleanedSource.keyFacts) : null,
         data_points: cleanedSource.dataPoints ? JSON.stringify(cleanedSource.dataPoints) : null,
+        images: cleanedSource.images ? JSON.stringify(cleanedSource.images) : null,
         cleaned_content: cleanedSource.cleanedContent,
         original_content_length: cleanedSource.originalContentLength,
         quality_score: cleanedSource.qualityScore,
@@ -906,7 +950,32 @@ export async function storeCleanedSources(
         .first();
 
       if (existing) {
-        strapi.log.debug(`[SourceCache] Source already exists: ${normalizedUrl}`);
+        // If cache bypass is active, update existing record with fresh data (including images)
+        if (!CLEANER_CONFIG.CACHE_ENABLED) {
+          await knex('source_contents')
+            .where('id', existing.id)
+            .update({
+              title: source.title,
+              summary: source.summary ?? null,
+              detailed_summary: source.detailedSummary ?? null,
+              key_facts: source.keyFacts ? JSON.stringify(source.keyFacts) : null,
+              data_points: source.dataPoints ? JSON.stringify(source.dataPoints) : null,
+              images: source.images ? JSON.stringify(source.images) : null,
+              cleaned_content: source.cleanedContent,
+              original_content_length: source.originalContentLength,
+              quality_score: source.qualityScore,
+              relevance_score: source.relevanceScore,
+              quality_notes: source.qualityNotes,
+              content_type: source.contentType,
+              junk_ratio: source.junkRatio,
+              access_count: knex.raw('access_count + 1'),
+              last_accessed_at: new Date().toISOString(),
+              updated_at: new Date().toISOString(),
+            });
+          strapi.log.debug(`[SourceCache] Updated existing source (cache bypass): ${normalizedUrl}`);
+        } else {
+          strapi.log.debug(`[SourceCache] Source already exists: ${normalizedUrl}`);
+        }
         continue;
       }
 
@@ -919,6 +988,7 @@ export async function storeCleanedSources(
         detailedSummary: source.detailedSummary ?? null,
         keyFacts: source.keyFacts ?? null,
         dataPoints: source.dataPoints ?? null,
+        images: source.images ? JSON.stringify(source.images) : null,
         cleanedContent: source.cleanedContent,
         originalContentLength: source.originalContentLength,
         qualityScore: source.qualityScore,
@@ -1206,58 +1276,52 @@ export async function updateDomainQuality(strapi: Core.Strapi, domain: string): 
       ? `Scrape failure rate: ${(exaFailureRate * 100).toFixed(0)}% (${exaStats.failures}/${exaStats.attempts} failed)`
       : null;
 
-    // Check if domain quality record exists
-    const existing = await knex<DomainQualityRow>('domain_qualities')
-      .where('domain', domain)
-      .first();
-
-    if (existing) {
-      // Update existing record
-      await knex('domain_qualities')
-        .where('id', existing.id)
-        .update({
-          avg_quality_score: avgScore,
-          avg_relevance_score: avgRelevance,
-          total_sources: totalSources,
-          tier,
-          is_excluded: shouldExclude,
-          exclude_reason: excludeReason,
-          domain_type: domainType,
-          // Per-engine stats
-          tavily_attempts: tavilyStats.attempts,
-          tavily_scrape_failures: tavilyStats.failures,
-          exa_attempts: exaStats.attempts,
-          exa_scrape_failures: exaStats.failures,
-          is_excluded_tavily: shouldExcludeTavily,
-          is_excluded_exa: shouldExcludeExa,
-          tavily_exclude_reason: tavilyExcludeReason,
-          exa_exclude_reason: exaExcludeReason,
-          updated_at: new Date().toISOString(),
-        });
-    } else {
-      // Create new record via document service
-      await domainQualityService.create({
-        data: {
-          domain,
-          avgQualityScore: avgScore,
-          avgRelevanceScore: avgRelevance,
-          totalSources,
-          tier,
-          isExcluded: shouldExclude,
-          excludeReason: excludeReason,
-          domainType,
-          // Per-engine stats
-          tavilyAttempts: tavilyStats.attempts,
-          tavilyScrapeFailures: tavilyStats.failures,
-          exaAttempts: exaStats.attempts,
-          exaScrapeFailures: exaStats.failures,
-          isExcludedTavily: shouldExcludeTavily,
-          isExcludedExa: shouldExcludeExa,
-          tavilyExcludeReason: tavilyExcludeReason,
-          exaExcludeReason: exaExcludeReason,
-        } as Partial<DomainQualityDocument>,
+    // Use upsert pattern to avoid race conditions between concurrent article generations
+    // The domain column has a unique constraint, so onConflict handles updates atomically
+    const now = new Date().toISOString();
+    await knex('domain_qualities')
+      .insert({
+        domain,
+        avg_quality_score: avgScore,
+        avg_relevance_score: avgRelevance,
+        total_sources: totalSources,
+        tier,
+        is_excluded: shouldExclude,
+        exclude_reason: excludeReason,
+        domain_type: domainType,
+        // Per-engine stats
+        tavily_attempts: tavilyStats.attempts,
+        tavily_scrape_failures: tavilyStats.failures,
+        exa_attempts: exaStats.attempts,
+        exa_scrape_failures: exaStats.failures,
+        is_excluded_tavily: shouldExcludeTavily,
+        is_excluded_exa: shouldExcludeExa,
+        tavily_exclude_reason: tavilyExcludeReason,
+        exa_exclude_reason: exaExcludeReason,
+        created_at: now,
+        updated_at: now,
+        published_at: now,
+      })
+      .onConflict('domain')
+      .merge({
+        avg_quality_score: avgScore,
+        avg_relevance_score: avgRelevance,
+        total_sources: totalSources,
+        tier,
+        is_excluded: shouldExclude,
+        exclude_reason: excludeReason,
+        domain_type: domainType,
+        // Per-engine stats
+        tavily_attempts: tavilyStats.attempts,
+        tavily_scrape_failures: tavilyStats.failures,
+        exa_attempts: exaStats.attempts,
+        exa_scrape_failures: exaStats.failures,
+        is_excluded_tavily: shouldExcludeTavily,
+        is_excluded_exa: shouldExcludeExa,
+        tavily_exclude_reason: tavilyExcludeReason,
+        exa_exclude_reason: exaExcludeReason,
+        updated_at: now,
       });
-    }
 
     // Log exclusions
     if (shouldExclude) {

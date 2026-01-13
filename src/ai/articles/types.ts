@@ -78,9 +78,54 @@ export function isArticleGenerationError(error: unknown): error is ArticleGenera
   return error instanceof ArticleGenerationError;
 }
 
+/**
+ * Phase within the image pipeline where an error occurred.
+ */
+export type ImagePhaseStage = 'curator' | 'download' | 'upload' | 'insertion' | 'processing';
+
+/**
+ * Error specific to the image processing phase.
+ * Helps distinguish image-related failures for better observability and debugging.
+ */
+export class ImagePhaseError extends Error {
+  readonly name = 'ImagePhaseError';
+
+  constructor(
+    /** Which stage of the image pipeline failed */
+    readonly stage: ImagePhaseStage,
+    message: string,
+    /** URL of the image that caused the error (if applicable) */
+    readonly imageUrl?: string,
+    /** Original error that caused this failure */
+    readonly cause?: Error
+  ) {
+    super(message);
+    if (Error.captureStackTrace) {
+      Error.captureStackTrace(this, ImagePhaseError);
+    }
+  }
+}
+
+/**
+ * Type guard to check if an error is an ImagePhaseError.
+ */
+export function isImagePhaseError(error: unknown): error is ImagePhaseError {
+  return error instanceof ImagePhaseError;
+}
+
 // ============================================================================
 // Search Result Types
 // ============================================================================
+
+/**
+ * Image associated with a search result.
+ */
+export interface SearchResultImage {
+  /** Image URL */
+  readonly url: string;
+  /** Optional description (from Tavily with include_image_descriptions) */
+  readonly description?: string;
+}
 
 /**
  * A single search result item from Tavily or similar search API.
@@ -123,6 +168,17 @@ export interface SearchResultItem {
   readonly relevanceScore?: number;
   /** Whether this content was retrieved from cache (true) or newly cleaned (false) */
   readonly wasCached?: boolean;
+  /**
+   * Images associated with this result (from Exa's imageLinks).
+   * Per-result images extracted from the page.
+   */
+  readonly images?: readonly SearchResultImage[];
+  /**
+   * Source images extracted from cleaned content with full context.
+   * These have richer metadata (headers, paragraphs) than regular images.
+   * Used for proper 'source' attribution in the image pool.
+   */
+  readonly sourceImages?: readonly SourceImage[];
 }
 
 /**
@@ -156,6 +212,12 @@ export interface CategorizedSearchResult {
    * Only populated for Exa searches where the API returns costDollars.
    */
   readonly costUsd?: number;
+  /**
+   * Images returned at the query level (from Tavily with include_images).
+   * These are separate from per-result images and represent images
+   * found across the search results.
+   */
+  readonly images?: readonly SearchResultImage[];
 }
 
 // ============================================================================
@@ -438,6 +500,8 @@ export interface SearchQueryStats {
  * @property instruction - User directive for article focus
  * @property categoryHints - Preferred article categories to consider
  * @property targetWordCount - Target word count for the article (category defaults apply if not specified)
+ * @property screenshotUrls - IGDB screenshot and artwork URLs
+ * @property coverImageUrl - IGDB cover image URL
  */
 export interface GameArticleContext {
   readonly gameName: string;
@@ -466,6 +530,21 @@ export interface GameArticleContext {
    * Must be between WORD_COUNT_CONSTRAINTS.MIN_WORD_COUNT and MAX_WORD_COUNT.
    */
   readonly targetWordCount?: number;
+  /**
+   * IGDB screenshot URLs.
+   * Used for article image pool (section illustrations).
+   */
+  readonly screenshotUrls?: readonly string[];
+  /**
+   * IGDB artwork URLs.
+   * Artworks are higher priority than screenshots for hero images.
+   */
+  readonly artworkUrls?: readonly string[];
+  /**
+   * IGDB cover image URL.
+   * Used as fallback for hero image.
+   */
+  readonly coverImageUrl?: string | null;
 }
 
 /**
@@ -958,6 +1037,41 @@ export interface ReviewIssue {
 }
 
 /**
+ * Metadata about a single uploaded image.
+ * Simplified version of ImageUploadResult for draft output.
+ */
+export interface DraftImageInfo {
+  /** Strapi media ID */
+  readonly id: number;
+  /** Strapi document ID */
+  readonly documentId: string;
+  /** Public URL to the uploaded image */
+  readonly url: string;
+  /** Alt text */
+  readonly altText: string;
+  /** Caption if provided */
+  readonly caption?: string;
+}
+
+/**
+ * Image phase metadata for debugging and analytics.
+ */
+export interface DraftImageMetadata {
+  /** Hero image info (if uploaded) */
+  readonly heroImage?: DraftImageInfo;
+  /** Section images info */
+  readonly sectionImages: readonly DraftImageInfo[];
+  /** Sections where image upload failed */
+  readonly failedSections?: readonly string[];
+  /** Image pool summary */
+  readonly poolSummary: {
+    readonly total: number;
+    readonly igdb: number;
+    readonly web: number;
+  };
+}
+
+/**
  * A generated article draft ready for review/publishing.
  */
 export interface GameArticleDraft {
@@ -1004,6 +1118,11 @@ export interface GameArticleDraft {
   readonly reviewerInitialIssues?: readonly ReviewIssue[];
   /** Whether the Reviewer approved the article */
   readonly reviewerApproved?: boolean;
+  /**
+   * Image phase metadata for debugging and analytics.
+   * Only present if image phase was run and images were processed.
+   */
+  readonly imageMetadata?: DraftImageMetadata;
 }
 
 // ============================================================================
@@ -1192,6 +1311,14 @@ export interface IssueSeverityCounts {
 // ============================================================================
 
 /**
+ * Image from Tavily search (when include_images is enabled).
+ */
+export interface SearchFunctionImage {
+  readonly url: string;
+  readonly description?: string;
+}
+
+/**
  * Result from search function, includes optional cost tracking.
  */
 export interface SearchFunctionResult {
@@ -1202,6 +1329,8 @@ export interface SearchFunctionResult {
   readonly costUsd?: number;
   /** Credits used for this search (from Tavily API response) */
   readonly credits?: number;
+  /** Images from search (when includeImages is enabled) */
+  readonly images?: readonly SearchFunctionImage[];
 }
 
 /**
@@ -1216,6 +1345,10 @@ export type SearchFunction = (
     includeRawContent?: boolean;
     /** Domains to exclude (e.g., YouTube for no text content) */
     excludeDomains?: readonly string[];
+    /** Enable image search (Tavily include_images). Default: false */
+    includeImages?: boolean;
+    /** Include image descriptions (requires includeImages). Default: false */
+    includeImageDescriptions?: boolean;
   }
 ) => Promise<SearchFunctionResult>;
 
@@ -1308,6 +1441,23 @@ export interface RawSourceInput {
 }
 
 /**
+ * Image extracted from a cleaned source article.
+ * Contains the image URL, LLM-generated description, and contextual information.
+ */
+export interface SourceImage {
+  /** Original image URL from source */
+  readonly url: string;
+  /** LLM-generated description from cleaned content */
+  readonly description: string;
+  /** Nearest H2/H3 header above the image */
+  readonly nearestHeader?: string;
+  /** Paragraph containing or near the image */
+  readonly contextParagraph?: string;
+  /** Position in article (for ordering/priority) */
+  readonly position: number;
+}
+
+/**
  * Cleaned source output from the Cleaner agent.
  */
 export interface CleanedSource {
@@ -1337,6 +1487,11 @@ export interface CleanedSource {
   readonly contentType: string;
   readonly junkRatio: number;
   readonly searchSource: SearchSource;
+  /**
+   * Images extracted from source with contextual information.
+   * Null for cached entries that predate this feature.
+   */
+  readonly images?: readonly SourceImage[] | null;
 }
 
 /**
@@ -1397,6 +1552,11 @@ export interface StoredSourceContent {
   readonly searchSource: SearchSource;
   /** Whether scraping succeeded (content > MIN_CONTENT_LENGTH chars) */
   readonly scrapeSucceeded: boolean;
+  /**
+   * Images extracted from source with contextual information.
+   * Null for legacy entries that predate this feature.
+   */
+  readonly images?: readonly SourceImage[] | null;
 }
 
 /**

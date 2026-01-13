@@ -40,6 +40,9 @@
     "dataPoints": {
       "type": "json"
     },
+    "images": {
+      "type": "json"
+    },
     "cleanedContent": {
       "type": "richtext",
       "required": true
