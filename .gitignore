@@ -131,3 +131,6 @@ dist
 build
 .strapi-updater.json
 .strapi-cloud.json
+
+# Auto Claude data directory
+.auto-claude/
