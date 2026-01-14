@@ -15,7 +15,7 @@
  * @see config.ts IMAGE_QUALITY_VALIDATION_CONFIG for settings
  */
 
-import { generateObject } from 'ai';
+import { generateText, Output } from 'ai';
 import { z } from 'zod';
 
 import type { LanguageModel } from 'ai';
@@ -63,7 +63,7 @@ export interface QualityValidationOptions {
  */
 export interface QualityCheckerDeps {
   readonly model: LanguageModel;
-  readonly generateObject: typeof generateObject;
+  readonly generateText: typeof generateText;
   readonly logger?: Logger;
   readonly signal?: AbortSignal;
 }
@@ -135,7 +135,7 @@ Provide your assessment with:
  * When disabled, it returns a "passed" result without calling the LLM.
  *
  * @param imageBuffer - Downloaded image buffer to validate
- * @param deps - Dependencies (model, generateObject, logger)
+ * @param deps - Dependencies (model, generateText, logger)
  * @param options - Validation options
  * @returns Quality validation result
  */
@@ -144,7 +144,7 @@ export async function validateImageQuality(
   deps: QualityCheckerDeps,
   options: QualityValidationOptions = {}
 ): Promise<{ result: QualityValidationResult; tokenUsage: TokenUsage }> {
-  const { model, generateObject: genObject, logger: log, signal } = deps;
+  const { model, generateText: genText, logger: log, signal } = deps;
   const {
     minClarityScore = IMAGE_QUALITY_VALIDATION_CONFIG.MIN_CLARITY_SCORE,
     forceEnabled = false,
@@ -183,9 +183,11 @@ export async function validateImageQuality(
 
   try {
     // Call vision LLM with image
-    const result = await genObject({
+    const result = await genText({
       model,
-      schema: QualityValidationSchema,
+      output: Output.object({
+        schema: QualityValidationSchema,
+      }),
       messages: [
         {
           role: 'user',
@@ -202,7 +204,7 @@ export async function validateImageQuality(
       abortSignal: signal,
     });
 
-    const response = result.object;
+    const response = result.output;
     const tokenUsage = createTokenUsageFromResult(result);
 
     // Determine if image passed validation

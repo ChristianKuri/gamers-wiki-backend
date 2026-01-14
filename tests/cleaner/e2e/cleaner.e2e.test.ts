@@ -16,7 +16,7 @@ config();
 
 import { describe, it, expect, beforeAll } from 'vitest';
 import { createOpenRouter } from '@openrouter/ai-sdk-provider';
-import { generateObject } from 'ai';
+import { generateText, Output } from 'ai';
 
 import { tavilySearch, isTavilyConfigured } from '../../../src/ai/tools/tavily';
 import { cleanSingleSource } from '../../../src/ai/articles/agents/cleaner';
@@ -174,7 +174,7 @@ describeE2E('Cleaner Agent E2E', () => {
           searchSource: TEST_CONFIG.searchSource,
         },
         {
-          generateObject,
+          generateText,
           model,
           gameName: TEST_CONFIG.gameName,
         }

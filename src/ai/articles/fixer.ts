@@ -13,6 +13,7 @@
  */
 
 import type { LanguageModel } from 'ai';
+import { Output } from 'ai';
 import { z } from 'zod';
 
 import { createPrefixedLogger, type Logger } from '../../utils/logger';
@@ -43,7 +44,6 @@ import {
  */
 export interface FixerDeps {
   readonly generateText: typeof import('ai').generateText;
-  readonly generateObject: typeof import('ai').generateObject;
   readonly model: LanguageModel;
   readonly logger?: Logger;
   /** Optional AbortSignal for cancellation support */
@@ -314,11 +314,13 @@ export async function rewriteSectionWithFixes(
   try {
     const result = await withRetry(
       () =>
-        deps.generateObject({
+        deps.generateText({
           model: deps.model,
-          schema: ParagraphRewriteSchema,
+          output: Output.object({
+            schema: ParagraphRewriteSchema,
+          }),
           temperature,
-          maxOutputTokens: 6000,
+          maxOutputTokens: FIXER_CONFIG.MAX_OUTPUT_TOKENS_SMART_FIX,
           system: `You are an expert gaming guide editor. Your job is to REWRITE sections to fix issues.
 
 CRITICAL: DO NOT PATCH - REWRITE PARAGRAPHS
@@ -374,7 +376,7 @@ INSTRUCTIONS:
       { context: `Rewrite section: ${sectionName} (${actionableIssues.length} issues)`, signal: deps.signal }
     );
 
-    const { object } = result;
+    const { output: object } = result;
 
     // Use createTokenUsageFromResult to capture both tokens and actual cost from OpenRouter
     const tokenUsage = createTokenUsageFromResult(result);

@@ -104,13 +104,12 @@ export type ScoutProgressCallback = (
 
 export interface ScoutDeps {
   readonly search: SearchFunction;
-  readonly generateText: typeof import('ai').generateText;
   /**
-   * Optional generateObject for query optimization.
-   * When provided along with SCOUT_CONFIG.QUERY_OPTIMIZATION_ENABLED,
+   * Required generateText for core functionality and optional query optimization.
+   * When SCOUT_CONFIG.QUERY_OPTIMIZATION_ENABLED is true,
    * uses LLM to generate optimized search queries based on article intent.
    */
-  readonly generateObject?: typeof import('ai').generateObject;
+  readonly generateText: typeof import('ai').generateText;
   readonly model: LanguageModel;
   readonly logger?: Logger;
   /** Optional AbortSignal for cancellation support */
@@ -641,11 +640,11 @@ export async function runScout(
   let discoverySearchResult: ScoutSearchResult | undefined;
   let queryPlanningTokenUsage: TokenUsage = createEmptyTokenUsage();
 
-  if (SCOUT_CONFIG.QUERY_OPTIMIZATION_ENABLED && deps.generateObject) {
+  if (SCOUT_CONFIG.QUERY_OPTIMIZATION_ENABLED) {
     try {
       log.info('Running Scout Query Planner...');
       const plannerDeps: ScoutQueryPlannerDeps = {
-        generateObject: deps.generateObject,
+        generateText: deps.generateText,
         model: deps.model,
         logger: log,
         signal,

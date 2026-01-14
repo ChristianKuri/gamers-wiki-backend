@@ -1,13 +1,12 @@
 import type { Core } from '@strapi/strapi';
 import { z } from 'zod';
-import { createOpenAI } from '@ai-sdk/openai';
-import { generateObject } from 'ai';
+import { createOpenRouter } from '@openrouter/ai-sdk-provider';
+import { generateText, Output } from 'ai';
 
 import { getModel } from '../../../ai/config/utils';
 import type { IGDBSearchResult } from './igdb';
 
-const openrouter = createOpenAI({
-  baseURL: 'https://openrouter.ai/api/v1',
+const openrouter = createOpenRouter({
   apiKey: process.env.OPENROUTER_API_KEY || '',
 });
 
@@ -65,9 +64,11 @@ export async function normalizeGameQuery(
 ): Promise<NormalizedGameQuery> {
   const modelId = options?.model ?? getModel('GAME_MATCHER');
 
-  const { object } = await generateObject({
+  const { output } = await generateText({
     model: openrouter(modelId),
-    schema: NormalizeSchema,
+    output: Output.object({
+      schema: NormalizeSchema,
+    }),
     system:
       'You are a game name normalizer. Your job is to convert user queries (which may be abbreviated, ' +
       'typo-ridden, or colloquial) into the official game name(s) that IGDB (Internet Game Database) will recognize. ' +
@@ -85,7 +86,7 @@ Rules:
 - Return ONLY JSON matching the schema.`,
   });
 
-  return object;
+  return output;
 }
 
 /**
@@ -110,9 +111,11 @@ export async function pickBestIGDBGame(
 
   const modelId = options?.model ?? getModel('GAME_MATCHER');
 
-  const { object } = await generateObject({
+  const { output } = await generateText({
     model: openrouter(modelId),
-    schema: PickSchema,
+    output: Output.object({
+      schema: PickSchema,
+    }),
     system:
       'You are a game resolver. Your job is to select the correct IGDB game ID from the provided candidates. ' +
       'Prefer the main/base game (not DLC/editions) and the most widely known release when ambiguous.',
@@ -128,7 +131,7 @@ Rules:
 - If unsure, choose the most likely candidate and set confidence=low.`,
   });
 
-  if (!candidateIds.has(object.igdbId)) {
+  if (!candidateIds.has(output.igdbId)) {
     // Hard guard: never allow selecting an ID outside the set.
     return {
       igdbId: candidates[0].igdbId,
@@ -137,7 +140,7 @@ Rules:
     };
   }
 
-  return object;
+  return output;
 }
 
 /**

@@ -47,7 +47,8 @@
 
 import type { Core } from '@strapi/strapi';
 import { createOpenRouter } from '@openrouter/ai-sdk-provider';
-import { generateObject, generateText } from 'ai';
+import { generateText, wrapLanguageModel } from 'ai';
+import { devToolsMiddleware } from '@ai-sdk/devtools';
 
 import { getModel } from '../config';
 import { tavilySearch } from '../tools/tavily';
@@ -108,10 +109,9 @@ import { validateArticleDraft, validateArticlePlan, validateGameArticleContext, 
  * Commonly, only `strapi` is passed to enable content cleaning.
  */
 export interface ArticleGeneratorDeps {
-  readonly openrouter?: ReturnType<typeof createOpenRouter>;
+  readonly openrouter?: ReturnType<typeof createOpenRouter> | ((modelId: string) => import('ai').LanguageModel);
   readonly search?: typeof tavilySearch;
   readonly generateText?: typeof generateText;
-  readonly generateObject?: typeof generateObject;
   /**
    * Optional Strapi instance for content cleaning and caching.
    * When provided, search results are cleaned by the Cleaner agent
@@ -578,7 +578,6 @@ async function executeScoutPhase(
       runScout(context, {
         search: deps.search,
         generateText: deps.generateText,
-        generateObject: deps.generateObject,
         model: deps.openrouter(scoutModel),
         logger: createForwardingLogger('[Scout]', progressTracker.createLogForwarder('scout')),
         signal: basePhaseOptions.signal,
@@ -633,7 +632,7 @@ async function executeEditorPhase(
     'EDITOR_FAILED',
     () =>
       runEditor(context, scoutOutput, {
-        generateObject: deps.generateObject,
+        generateText: deps.generateText,
         model: deps.openrouter(editorModel),
         logger: createForwardingLogger('[Editor]', progressTracker.createLogForwarder('editor')),
         signal: basePhaseOptions.signal,
@@ -730,8 +729,8 @@ async function executeEditorPhaseWithRetry(
         'EDITOR_FAILED',
         () =>
           runEditor(context, scoutOutput, {
-            generateObject: deps.generateObject,
-            model: deps.openrouter(editorModel),
+            generateText: deps.generateText!,
+            model: deps.openrouter!(editorModel),
             logger: createForwardingLogger('[Editor]', progressTracker.createLogForwarder('editor')),
             signal: basePhaseOptions.signal,
             temperature: temperatureOverrides?.editor,
@@ -896,17 +895,32 @@ function createDefaultDeps(): ArticleGeneratorDeps {
     );
   }
 
+  // Create base OpenRouter client
+  const baseOpenRouter = createOpenRouter({
+    apiKey: process.env.OPENROUTER_API_KEY,
+    // Optional: custom base URL for proxies (uncomment if needed)
+    // baseUrl: process.env.OPENROUTER_BASE_URL,
+  });
+
+  // Wrap with DevTools if enabled (via AI_SDK_ENABLE_DEVTOOLS env var)
+  // DevTools middleware throws an error if NODE_ENV=production, so we only enable
+  // it when NODE_ENV is not 'production' (dev/test environments)
+  const shouldEnableDevTools = process.env.AI_SDK_ENABLE_DEVTOOLS === 'true' 
+    && process.env.NODE_ENV !== 'production';
+  
+  const openrouter = shouldEnableDevTools
+    ? (modelId: string) => wrapLanguageModel({
+        model: baseOpenRouter(modelId),
+        middleware: devToolsMiddleware(),
+      })
+    : baseOpenRouter;
+
   // Use dedicated OpenRouter provider for accurate cost tracking
   // providerMetadata.openrouter.usage.cost gives actual cost per call
   return {
-    openrouter: createOpenRouter({
-      apiKey: process.env.OPENROUTER_API_KEY,
-      // Optional: custom base URL for proxies (uncomment if needed)
-      // baseUrl: process.env.OPENROUTER_BASE_URL,
-    }),
+    openrouter,
     search: tavilySearch,
     generateText,
-    generateObject,
   };
 }
 
@@ -949,7 +963,6 @@ function createDefaultDeps(): ArticleGeneratorDeps {
  *   openrouter: mockOpenRouter,
  *   search: mockSearch,
  *   generateText: mockGenerateText,
- *   generateObject: mockGenerateObject,
  * });
  *
  * @example
@@ -982,7 +995,7 @@ export async function generateGameArticleDraft(
   // Use provided deps merged with defaults
   // This allows passing just { strapi } without replacing all deps
   const mergedDeps = { ...createDefaultDeps(), ...deps };
-  const { openrouter, search, generateText: genText, generateObject: genObject, strapi } = mergedDeps;
+  const { openrouter, search, generateText: genText, strapi } = mergedDeps;
 
   const scoutModel = getModel('ARTICLE_SCOUT');
   const editorModel = getModel('ARTICLE_EDITOR');
@@ -1031,7 +1044,6 @@ export async function generateGameArticleDraft(
     openrouter,
     search,
     generateText: genText,
-    generateObject: genObject,
     strapi,
   };
 
@@ -1049,7 +1061,7 @@ export async function generateGameArticleDraft(
     ]);
     cleaningDeps = {
       strapi,
-      generateObject: genObject,
+      generateText: genText,
       model: openrouter(cleanerModel),
       summarizerModel: openrouter(summarizerModel),
       prefilterModel: openrouter(prefilterModel),
@@ -1134,7 +1146,7 @@ export async function generateGameArticleDraft(
           topSources,
         },
         {
-          generateObject: resolvedDeps.generateObject,
+          generateText: resolvedDeps.generateText,
           model: resolvedDeps.openrouter(metadataModel),
           logger: createForwardingLogger('[Metadata]', progressTracker.createLogForwarder('metadata')),
           signal: basePhaseOptions.signal,
@@ -1190,7 +1202,6 @@ export async function generateGameArticleDraft(
 
     const fixerDeps: FixerDeps = {
       generateText: resolvedDeps.generateText,
-      generateObject: resolvedDeps.generateObject,
       model: resolvedDeps.openrouter(fixerModel),
       logger: createForwardingLogger('[Fixer]', progressTracker.createLogForwarder('reviewer')),
       signal: basePhaseOptions.signal,
@@ -1205,7 +1216,7 @@ export async function generateGameArticleDraft(
       'VALIDATION_FAILED',
       () =>
         runReviewer(currentMarkdown, plan, scoutOutput, {
-          generateObject: resolvedDeps.generateObject,
+          generateText: resolvedDeps.generateText,
           model: resolvedDeps.openrouter(reviewerModel),
           logger: createForwardingLogger('[Reviewer]', progressTracker.createLogForwarder('reviewer')),
           signal: basePhaseOptions.signal,
@@ -1274,7 +1285,7 @@ export async function generateGameArticleDraft(
         'VALIDATION_FAILED',
         () =>
           runReviewer(currentMarkdown, plan, scoutOutput, {
-            generateObject: resolvedDeps.generateObject,
+            generateText: resolvedDeps.generateText,
             model: resolvedDeps.openrouter(reviewerModel),
             logger: createForwardingLogger('[Reviewer]', progressTracker.createLogForwarder('reviewer')),
             signal: basePhaseOptions.signal,

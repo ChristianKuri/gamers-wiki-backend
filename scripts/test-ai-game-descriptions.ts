@@ -47,7 +47,7 @@ function loadEnvFile() {
 
 loadEnvFile();
 
-import { createOpenAI } from '@ai-sdk/openai';
+import { createOpenRouter } from '@openrouter/ai-sdk-provider';
 import { generateText } from 'ai';
 import { gameDescriptionsConfig } from '../src/ai/config';
 import type { GameDescriptionContext, SupportedLocale } from '../src/ai/config';
@@ -95,8 +95,7 @@ interface TestResult {
   charCount?: number;
 }
 
-const openrouter = createOpenAI({
-  baseURL: 'https://openrouter.ai/api/v1',
+const openrouter = createOpenRouter({
   apiKey: process.env.OPENROUTER_API_KEY || '',
 });
 

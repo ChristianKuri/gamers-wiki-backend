@@ -434,7 +434,7 @@ export const EDITOR_CONFIG = {
   /** Number of overview lines to include in prompt */
   OVERVIEW_LINES_IN_PROMPT: 10,
   /**
-   * Timeout for Editor generateObject calls in milliseconds.
+   * Timeout for Editor generateText calls in milliseconds.
    * If the LLM takes longer than this, abort and retry.
    * 30 seconds should be plenty for plan generation.
    */
@@ -455,7 +455,7 @@ export const METADATA_CONFIG = {
    */
   TEMPERATURE: 0.4,
   /**
-   * Timeout for Metadata generateObject calls in milliseconds.
+   * Timeout for Metadata generateText calls in milliseconds.
    * 30 seconds (same as Editor) to allow for processing article content.
    */
   TIMEOUT_MS: 30000,
