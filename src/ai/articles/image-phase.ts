@@ -14,7 +14,7 @@
 import { randomUUID } from 'crypto';
 import type { Core } from '@strapi/strapi';
 import type { LanguageModel } from 'ai';
-import { generateObject } from 'ai';
+import { generateText } from 'ai';
 
 import type { Logger } from '../../utils/logger';
 import type { ArticlePlan } from './article-plan';
@@ -365,7 +365,7 @@ export async function runImagePhase(
       },
       {
         model,
-        generateObject,
+        generateText,
         logger: log,
         signal,
       }
@@ -397,7 +397,7 @@ export async function runImagePhase(
     heroQualityValidator = async (buffer: Buffer, mimeType: string) => {
       const { result, tokenUsage } = await validateImageQuality(buffer, {
         model,
-        generateObject,
+        generateText,
         logger: log,
         signal,
       }, { forceEnabled: true });

@@ -18,6 +18,7 @@
  */
 
 import type { LanguageModel } from 'ai';
+import { Output } from 'ai';
 import type { z } from 'zod';
 
 import { createPrefixedLogger, type Logger } from '../../../utils/logger';
@@ -34,7 +35,7 @@ export { METADATA_CONFIG } from '../config';
 // ============================================================================
 
 export interface MetadataDeps {
-  readonly generateObject: typeof import('ai').generateObject;
+  readonly generateText: typeof import('ai').generateText;
   readonly model: LanguageModel;
   readonly logger?: Logger;
   /** Optional AbortSignal for cancellation support */
@@ -152,7 +153,7 @@ Return JSON with: title, excerpt, description, tags`;
  * Runs the Metadata Agent to generate SEO-optimized metadata.
  *
  * @param ctx - Metadata context with article content and game info
- * @param deps - Dependencies (generateObject, model)
+ * @param deps - Dependencies (generateText, model)
  * @returns Metadata output with title, excerpt, description, tags
  */
 export async function runMetadata(
@@ -171,7 +172,7 @@ export async function runMetadata(
   log.info(`  Category: ${ctx.categorySlug}`);
 
   const startTime = Date.now();
-  log.info(`  Calling generateObject (timeout: ${METADATA_CONFIG.TIMEOUT_MS}ms per attempt)...`);
+  log.info(`  Calling generateText (timeout: ${METADATA_CONFIG.TIMEOUT_MS}ms per attempt)...`);
 
   // Helper to create a fresh timeout signal for each attempt
   const createTimeoutSignal = (): AbortSignal => {
@@ -191,10 +192,12 @@ export async function runMetadata(
     const result = await withRetry(
       () => {
         const attemptSignal = createTimeoutSignal();
-        return deps.generateObject({
+        return deps.generateText({
           model: deps.model,
           temperature,
-          schema: ArticleMetadataSchema,
+          output: Output.object({
+            schema: ArticleMetadataSchema,
+          }),
           system: systemPrompt,
           prompt: userPrompt,
           abortSignal: attemptSignal,
@@ -202,11 +205,11 @@ export async function runMetadata(
       },
       { context: 'Metadata generation', signal: deps.signal }
     );
-    rawMetadata = result.object;
+    rawMetadata = result.output;
     generationResult = { usage: result.usage, providerMetadata: result.providerMetadata };
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
-    log.error(`  generateObject failed: ${errorMessage}`);
+    log.error(`  generateText failed: ${errorMessage}`);
     
     // Log constraint details for debugging
     log.error(`  Schema constraints:`);
@@ -221,7 +224,7 @@ export async function runMetadata(
   }
 
   const elapsed = Date.now() - startTime;
-  log.info(`  generateObject completed in ${elapsed}ms`);
+  log.info(`  generateText completed in ${elapsed}ms`);
   log.info(`  Title: "${rawMetadata.title}" (${rawMetadata.title.length} chars)`);
   log.info(`  Tags: ${rawMetadata.tags.join(', ')}`);
 

@@ -2,7 +2,7 @@
  * Image Curator Agent Tests
  *
  * Tests for the LLM-based image selection agent.
- * Uses mocked generateObject to test selection logic.
+ * Uses mocked generateText to test selection logic.
  *
  * Note: The curator now uses per-section LLM calls:
  * - One call for hero image selection
@@ -13,7 +13,7 @@ import { describe, it, expect, vi, beforeEach, afterEach, type Mock } from 'vite
 import { runImageCurator, type ImageCuratorContext, type ImageCuratorDeps } from '../../../src/ai/articles/agents/image-curator';
 import { createEmptyImagePool, addIGDBImages, addWebImages } from '../../../src/ai/articles/image-pool';
 import type { ArticlePlan } from '../../../src/ai/articles/article-plan';
-import type { LanguageModel, generateObject } from 'ai';
+import type { LanguageModel, generateText } from 'ai';
 
 // ============================================================================
 // Mock Types
@@ -36,7 +36,7 @@ interface MockSectionCandidate {
 
 /** Mock hero selection response */
 interface MockHeroSelectionResult {
-  object: {
+  output: {
     heroCandidates: MockHeroCandidate[];
   };
   usage: { inputTokens: number; outputTokens: number };
@@ -51,7 +51,7 @@ interface MockHeroSelectionResult {
 
 /** Mock section relevance response (per-section call) */
 interface MockSectionRelevanceResult {
-  object: {
+  output: {
     rankedCandidates: MockSectionCandidate[];
   };
   usage: { inputTokens: number; outputTokens: number };
@@ -64,8 +64,8 @@ interface MockSectionRelevanceResult {
   rawResponse: undefined;
 }
 
-/** Typed mock for generateObject that matches the expected interface */
-type MockGenerateObject = Mock<Parameters<typeof generateObject>, Promise<MockHeroSelectionResult | MockSectionRelevanceResult>>;
+/** Typed mock for generateText that matches the expected interface */
+type MockGenerateText = Mock<Parameters<typeof generateText>, Promise<MockHeroSelectionResult | MockSectionRelevanceResult>>;
 
 // ============================================================================
 // Mocks
@@ -74,8 +74,8 @@ type MockGenerateObject = Mock<Parameters<typeof generateObject>, Promise<MockHe
 // Mock model
 const mockModel = {} as LanguageModel;
 
-// Mock generateObject function with proper typing
-const mockGenerateObject: MockGenerateObject = vi.fn();
+// Mock generateText function with proper typing
+const mockGenerateText: MockGenerateText = vi.fn();
 
 // Helper to create a minimal plan
 function createMockPlan(sections: string[]): ArticlePlan {
@@ -130,15 +130,15 @@ function createMockContext(
 function createMockDeps(): ImageCuratorDeps {
   return {
     model: mockModel,
-    // The mock is typed to match generateObject's signature
-    generateObject: mockGenerateObject as typeof generateObject,
+    // The mock is typed to match generateText's signature
+    generateText: mockGenerateText as typeof generateText,
   };
 }
 
 // Helper to create mock hero selection result
 function createMockHeroResult(heroCandidates: MockHeroCandidate[]): MockHeroSelectionResult {
   return {
-    object: { heroCandidates },
+    output: { heroCandidates },
     usage: { inputTokens: 100, outputTokens: 50 },
     finishReason: 'stop',
     warnings: [],
@@ -153,7 +153,7 @@ function createMockHeroResult(heroCandidates: MockHeroCandidate[]): MockHeroSele
 // Helper to create mock section relevance result
 function createMockSectionResult(rankedCandidates: MockSectionCandidate[]): MockSectionRelevanceResult {
   return {
-    object: { rankedCandidates },
+    output: { rankedCandidates },
     usage: { inputTokens: 50, outputTokens: 25 },
     finishReason: 'stop',
     warnings: [],
@@ -183,8 +183,8 @@ describe('Image Curator Agent', () => {
 
       expect(result.heroCandidates).toHaveLength(0);
       expect(result.sectionSelections).toHaveLength(0);
-      // generateObject should not be called for empty pool
-      expect(mockGenerateObject).not.toHaveBeenCalled();
+      // generateText should not be called for empty pool
+      expect(mockGenerateText).not.toHaveBeenCalled();
     });
 
     it('should return hero candidates from LLM response', async () => {
@@ -196,11 +196,11 @@ describe('Image Curator Agent', () => {
       );
 
       // First call: hero selection
-      mockGenerateObject.mockResolvedValueOnce(createMockHeroResult([
+      mockGenerateText.mockResolvedValueOnce(createMockHeroResult([
         { imageIndex: 0, altText: 'Epic boss battle in Test Game', relevanceScore: 90 },
       ]));
       // Second call: section relevance for 'Boss Guide'
-      mockGenerateObject.mockResolvedValueOnce(createMockSectionResult([]));
+      mockGenerateText.mockResolvedValueOnce(createMockSectionResult([]));
 
       const result = await runImageCurator(context, createMockDeps());
 
@@ -217,11 +217,11 @@ describe('Image Curator Agent', () => {
       );
 
       // Hero call with invalid index
-      mockGenerateObject.mockResolvedValueOnce(createMockHeroResult([
+      mockGenerateText.mockResolvedValueOnce(createMockHeroResult([
         { imageIndex: 99, altText: 'Invalid hero', relevanceScore: 90 }, // Invalid index
       ]));
       // Section call with invalid index
-      mockGenerateObject.mockResolvedValueOnce(createMockSectionResult([
+      mockGenerateText.mockResolvedValueOnce(createMockSectionResult([
         { imageIndex: 99, altText: 'Invalid selection', relevanceScore: 90 }, // Invalid index
       ]));
 
@@ -241,9 +241,9 @@ describe('Image Curator Agent', () => {
       );
 
       // Hero call
-      mockGenerateObject.mockResolvedValueOnce(createMockHeroResult([]));
+      mockGenerateText.mockResolvedValueOnce(createMockHeroResult([]));
       // Section call
-      mockGenerateObject.mockResolvedValueOnce(createMockSectionResult([
+      mockGenerateText.mockResolvedValueOnce(createMockSectionResult([
         { imageIndex: 0, altText: 'Section image alt', relevanceScore: 85 },
       ]));
 
@@ -262,8 +262,8 @@ describe('Image Curator Agent', () => {
       );
 
       // Hero call with specific token usage
-      mockGenerateObject.mockResolvedValueOnce({
-        object: { heroCandidates: [] },
+      mockGenerateText.mockResolvedValueOnce({
+        output: { heroCandidates: [] },
         usage: { inputTokens: 200, outputTokens: 100 },
         finishReason: 'stop',
         warnings: [],
@@ -274,8 +274,8 @@ describe('Image Curator Agent', () => {
         rawResponse: undefined,
       });
       // Section call with specific token usage
-      mockGenerateObject.mockResolvedValueOnce({
-        object: { rankedCandidates: [] },
+      mockGenerateText.mockResolvedValueOnce({
+        output: { rankedCandidates: [] },
         usage: { inputTokens: 300, outputTokens: 100 },
         finishReason: 'stop',
         warnings: [],
@@ -301,11 +301,11 @@ describe('Image Curator Agent', () => {
       );
 
       // Hero call
-      mockGenerateObject.mockResolvedValueOnce(createMockHeroResult([
+      mockGenerateText.mockResolvedValueOnce(createMockHeroResult([
         { imageIndex: 0, altText: 'Screenshot hero', relevanceScore: 85 },
       ]));
       // Section call
-      mockGenerateObject.mockResolvedValueOnce(createMockSectionResult([]));
+      mockGenerateText.mockResolvedValueOnce(createMockSectionResult([]));
 
       const result = await runImageCurator(context, createMockDeps());
 
@@ -313,7 +313,7 @@ describe('Image Curator Agent', () => {
       expect(result.heroCandidates[0].image.igdbType).toBe('screenshot');
     });
 
-    it('should call generateObject with signal when provided', async () => {
+    it('should call generateText with signal when provided', async () => {
       const context = createMockContext(
         ['Section 1'],
         ['https://images.igdb.com/igdb/image/upload/t_screenshot_big/ss1.jpg'],
@@ -327,14 +327,14 @@ describe('Image Curator Agent', () => {
       };
 
       // Hero call
-      mockGenerateObject.mockResolvedValueOnce(createMockHeroResult([]));
+      mockGenerateText.mockResolvedValueOnce(createMockHeroResult([]));
       // Section call
-      mockGenerateObject.mockResolvedValueOnce(createMockSectionResult([]));
+      mockGenerateText.mockResolvedValueOnce(createMockSectionResult([]));
 
       await runImageCurator(context, deps);
 
-      // Verify signal was passed to generateObject (both calls)
-      expect(mockGenerateObject).toHaveBeenCalledWith(
+      // Verify signal was passed to generateText (both calls)
+      expect(mockGenerateText).toHaveBeenCalledWith(
         expect.objectContaining({
           abortSignal: controller.signal,
         })
@@ -359,16 +359,16 @@ describe('Image Curator Agent', () => {
       );
 
       // Hero call
-      mockGenerateObject.mockResolvedValueOnce(createMockHeroResult([]));
+      mockGenerateText.mockResolvedValueOnce(createMockHeroResult([]));
       // Section calls (one per section)
-      mockGenerateObject.mockResolvedValueOnce(createMockSectionResult([]));
-      mockGenerateObject.mockResolvedValueOnce(createMockSectionResult([]));
-      mockGenerateObject.mockResolvedValueOnce(createMockSectionResult([]));
+      mockGenerateText.mockResolvedValueOnce(createMockSectionResult([]));
+      mockGenerateText.mockResolvedValueOnce(createMockSectionResult([]));
+      mockGenerateText.mockResolvedValueOnce(createMockSectionResult([]));
 
       await runImageCurator(context, createMockDeps());
 
       // Should have 1 hero call + 3 section calls = 4 total
-      expect(mockGenerateObject).toHaveBeenCalledTimes(4);
+      expect(mockGenerateText).toHaveBeenCalledTimes(4);
     });
 
     it('should include sourceQuery and sourceDomain in hero prompt', async () => {
@@ -390,14 +390,14 @@ describe('Image Curator Agent', () => {
       };
 
       // Hero call
-      mockGenerateObject.mockResolvedValueOnce(createMockHeroResult([]));
+      mockGenerateText.mockResolvedValueOnce(createMockHeroResult([]));
       // Section call
-      mockGenerateObject.mockResolvedValueOnce(createMockSectionResult([]));
+      mockGenerateText.mockResolvedValueOnce(createMockSectionResult([]));
 
       await runImageCurator(context, createMockDeps());
 
       // Verify hero selection call includes context fields in prompt
-      const heroCall = mockGenerateObject.mock.calls[0];
+      const heroCall = mockGenerateText.mock.calls[0];
       const heroPrompt = heroCall[0].prompt as string;
       
       // Should include source domain

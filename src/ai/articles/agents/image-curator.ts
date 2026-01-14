@@ -11,7 +11,7 @@
  * 4. Return image assignments for the uploader
  */
 
-import { generateObject } from 'ai';
+import { generateText, Output } from 'ai';
 import { z } from 'zod';
 
 import type { LanguageModel } from 'ai';
@@ -146,7 +146,7 @@ export interface ImageCuratorContext {
  */
 export interface ImageCuratorDeps {
   readonly model: LanguageModel;
-  readonly generateObject: typeof generateObject;
+  readonly generateText: typeof generateText;
   readonly logger?: Logger;
   readonly signal?: AbortSignal;
 }
@@ -382,7 +382,7 @@ async function runHeroSelection(
   gameName: string,
   deps: ImageCuratorDeps
 ): Promise<{ heroCandidates: HeroCandidateOutput[]; tokenUsage: TokenUsage }> {
-  const { model, generateObject: genObject, logger: log, signal } = deps;
+  const { model, generateText: genText, logger: log, signal } = deps;
 
   if (candidates.length === 0) {
     return { heroCandidates: [], tokenUsage: { input: 0, output: 0 } };
@@ -390,9 +390,11 @@ async function runHeroSelection(
 
   log?.debug(`[ImageCurator] Running hero selection with ${candidates.length} candidates`);
 
-  const result = await genObject({
+  const result = await genText({
     model,
-    schema: HeroSelectionResponseSchema,
+    output: Output.object({
+      schema: HeroSelectionResponseSchema,
+    }),
     system: buildHeroSystemPrompt(),
     prompt: buildHeroUserPrompt(articleTitle, gameName, candidates),
     temperature: IMAGE_CURATOR_CONFIG.TEMPERATURE,
@@ -400,7 +402,7 @@ async function runHeroSelection(
   });
 
   const heroCandidates: HeroCandidateOutput[] = [];
-  for (const candidate of result.object.heroCandidates) {
+  for (const candidate of result.output.heroCandidates) {
     if (candidate.imageIndex < 0 || candidate.imageIndex >= candidates.length) {
       log?.warn(`[ImageCurator] Invalid hero candidate index: ${candidate.imageIndex}`);
       continue;
@@ -430,7 +432,7 @@ async function runSectionRelevanceScoring(
   gameName: string,
   deps: ImageCuratorDeps
 ): Promise<{ selection: SectionSelectionOutput | null; tokenUsage: TokenUsage }> {
-  const { model, generateObject: genObject, logger: log, signal } = deps;
+  const { model, generateText: genText, logger: log, signal } = deps;
 
   if (candidates.length === 0) {
     log?.debug(`[ImageCurator] Section "${sectionHeadline}": no candidates, skipping`);
@@ -439,9 +441,11 @@ async function runSectionRelevanceScoring(
 
   log?.debug(`[ImageCurator] Section "${sectionHeadline}": evaluating ${candidates.length} candidates`);
 
-  const result = await genObject({
+  const result = await genText({
     model,
-    schema: SectionRelevanceResponseSchema,
+    output: Output.object({
+      schema: SectionRelevanceResponseSchema,
+    }),
     system: buildSectionSystemPrompt(),
     prompt: buildSectionUserPrompt(gameName, sectionHeadline, sectionGoal, candidates),
     temperature: IMAGE_CURATOR_CONFIG.TEMPERATURE,
@@ -449,7 +453,7 @@ async function runSectionRelevanceScoring(
   });
 
   const sectionCandidates: SectionCandidateOutput[] = [];
-  for (const candidate of result.object.rankedCandidates) {
+  for (const candidate of result.output.rankedCandidates) {
     if (candidate.imageIndex < 0 || candidate.imageIndex >= candidates.length) {
       log?.warn(`[ImageCurator] Invalid section candidate index: ${candidate.imageIndex} for "${sectionHeadline}"`);
       continue;
@@ -568,7 +572,7 @@ async function runAllSectionRelevanceScoring(
  * - Enables concurrency for faster processing
  *
  * @param context - Context with article content, plan, and image pool
- * @param deps - Dependencies (model, generateObject, logger)
+ * @param deps - Dependencies (model, generateText, logger)
  * @returns Ranked candidates for hero and sections (need post-processing)
  */
 export async function runImageCurator(

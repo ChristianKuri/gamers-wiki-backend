@@ -13,7 +13,7 @@ import type { RawSourceInput, CleanerLLMOutput } from '../../../src/ai/articles/
 // Mock Setup
 // ============================================================================
 
-const createMockGenerateObject = () => vi.fn();
+const createMockGenerateText = () => vi.fn();
 const createMockModel = () => ({} as any);
 
 // ============================================================================
@@ -93,15 +93,15 @@ Stamina is the core resource in combat - every action from attacking to dodging 
   ...overrides,
 });
 
-const createMockCleanerDeps = (generateObjectResult?: any) => ({
-  generateObject:
-    generateObjectResult !== undefined
+const createMockCleanerDeps = (generateTextResult?: any) => ({
+  generateText:
+    generateTextResult !== undefined
       ? vi.fn().mockResolvedValue({ 
-          object: generateObjectResult,
+          output: generateTextResult,
           usage: { inputTokens: 100, outputTokens: 50 },
         })
       : vi.fn().mockResolvedValue({ 
-          object: createMockCleanerOutput(),
+          output: createMockCleanerOutput(),
           usage: { inputTokens: 100, outputTokens: 50 },
         }),
   model: createMockModel(),
@@ -222,7 +222,7 @@ describe('cleanSingleSource', () => {
     expect(result.tokenUsage).toBeDefined();
     expect(result.tokenUsage.input).toBe(100);
     expect(result.tokenUsage.output).toBe(50);
-    expect(deps.generateObject).toHaveBeenCalledTimes(1);
+    expect(deps.generateText).toHaveBeenCalledTimes(1);
   });
 
   it('returns null source for empty content', async () => {
@@ -233,7 +233,7 @@ describe('cleanSingleSource', () => {
 
     expect(result.source).toBeNull();
     expect(result.tokenUsage.input).toBe(0);
-    expect(deps.generateObject).not.toHaveBeenCalled();
+    expect(deps.generateText).not.toHaveBeenCalled();
   });
 
   it('returns null source for content too short', async () => {
@@ -244,7 +244,7 @@ describe('cleanSingleSource', () => {
 
     expect(result.source).toBeNull();
     expect(result.tokenUsage.input).toBe(0);
-    expect(deps.generateObject).not.toHaveBeenCalled();
+    expect(deps.generateText).not.toHaveBeenCalled();
   });
 
   it('returns null source when cleaned content is too short', async () => {
@@ -275,11 +275,11 @@ describe('cleanSingleSource', () => {
     expect(result.source?.junkRatio).toBeCloseTo(0.4, 2);
   });
 
-  it('handles generateObject errors gracefully with fallback content', async () => {
+  it('handles generateText errors gracefully with fallback content', async () => {
     const rawSource = createMockRawSource();
     const deps = {
       ...createMockCleanerDeps(),
-      generateObject: vi.fn().mockRejectedValue(new Error('API error')),
+      generateText: vi.fn().mockRejectedValue(new Error('API error')),
     };
 
     const result = await cleanSingleSource(rawSource, deps);
@@ -299,7 +299,7 @@ describe('cleanSingleSource', () => {
 
     await cleanSingleSource(rawSource, deps);
 
-    const call = deps.generateObject.mock.calls[0][0];
+    const call = deps.generateText.mock.calls[0][0];
     expect(call.prompt).toContain('Elden Ring');
   });
 
@@ -329,7 +329,7 @@ describe('cleanSourcesBatch', () => {
 
     expect(result.sources).toEqual([]);
     expect(result.tokenUsage.input).toBe(0);
-    expect(deps.generateObject).not.toHaveBeenCalled();
+    expect(deps.generateText).not.toHaveBeenCalled();
   });
 
   it('cleans multiple sources in batches', async () => {
@@ -399,10 +399,10 @@ describe('cleanSourcesBatch', () => {
     };
 
     // Abort after first batch starts
-    deps.generateObject.mockImplementation(async () => {
+    deps.generateText.mockImplementation(async () => {
       abortController.abort();
       return { 
-        object: createMockCleanerOutput(),
+        output: createMockCleanerOutput(),
         usage: { inputTokens: 100, outputTokens: 50 },
       };
     });

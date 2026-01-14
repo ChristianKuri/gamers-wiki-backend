@@ -1,12 +1,11 @@
-import { createOpenAI } from '@ai-sdk/openai';
-import { generateObject } from 'ai';
+import { createOpenRouter } from '@openrouter/ai-sdk-provider';
+import { generateText, Output } from 'ai';
 import { z } from 'zod';
 
 import { getModel } from '../../../ai/config/utils';
 import { slugify } from '../../../utils/slug';
 
-const openrouter = createOpenAI({
-  baseURL: 'https://openrouter.ai/api/v1',
+const openrouter = createOpenRouter({
   apiKey: process.env.OPENROUTER_API_KEY || '',
 });
 
@@ -37,9 +36,11 @@ const TranslationSchema = z.object({
  * This is used after the English post is published.
  */
 export async function translatePostEnToEs(input: EnglishPostForTranslation): Promise<SpanishPostDraft> {
-  const { object } = await generateObject({
+  const { output } = await generateText({
     model: openrouter(getModel('POST_TRANSLATION')),
-    schema: TranslationSchema,
+    output: Output.object({
+      schema: TranslationSchema,
+    }),
     system:
       'You are a professional Spanish localization writer for a gaming site. ' +
       'Translate and LOCALIZE (not literal word-for-word) while preserving meaning and structure.',
@@ -67,11 +68,11 @@ ${input.content}
   });
 
   return {
-    title: object.title,
-    slug: slugify(object.title),
-    excerpt: object.excerpt,
-    ...(object.description ? { description: object.description } : {}),
-    content: object.content,
+    title: output.title,
+    slug: slugify(output.title),
+    excerpt: output.excerpt,
+    ...(output.description ? { description: output.description } : {}),
+    content: output.content,
   };
 }
 

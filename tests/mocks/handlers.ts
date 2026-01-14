@@ -383,7 +383,7 @@ export const handlers = [
       });
     }
 
-    // Article generator planner (generateObject) expects raw JSON string
+    // Article generator planner (generateText) expects raw JSON string
     if (isArticlePlanPrompt(userText)) {
       return HttpResponse.json({
         id: 'mock-completion-id',

@@ -10,6 +10,7 @@
  */
 
 import type { LanguageModel } from 'ai';
+import { Output } from 'ai';
 import { z } from 'zod';
 
 import { createPrefixedLogger, type Logger } from '../../../utils/logger';
@@ -93,7 +94,7 @@ export interface ReviewerOutput {
  * Dependencies for the Reviewer agent.
  */
 export interface ReviewerDeps {
-  readonly generateObject: typeof import('ai').generateObject;
+  readonly generateText: typeof import('ai').generateText;
   readonly model: LanguageModel;
   readonly logger?: Logger;
   /** Optional AbortSignal for cancellation support */
@@ -313,7 +314,7 @@ export function getIssuesByCategory(
  * @param markdown - The complete article markdown
  * @param plan - The article plan from Editor
  * @param scoutOutput - Research from Scout agent (for fact-checking)
- * @param deps - Dependencies (generateObject, model)
+ * @param deps - Dependencies (generateText, model)
  * @returns Review output with approval status and issues
  */
 export async function runReviewer(
@@ -364,9 +365,11 @@ export async function runReviewer(
 
   const result = await withRetry(
     () =>
-      deps.generateObject({
+      deps.generateText({
         model: deps.model,
-        schema: ReviewerOutputSchema,
+        output: Output.object({
+          schema: ReviewerOutputSchema,
+        }),
         temperature,
         maxOutputTokens: REVIEWER_CONFIG.MAX_OUTPUT_TOKENS,
         system: getReviewerSystemPrompt(plan.categorySlug),
@@ -375,7 +378,7 @@ export async function runReviewer(
     { context: 'Reviewer analysis', signal: deps.signal }
   );
 
-  const { object } = result;
+  const { output: object } = result;
 
   // Use createTokenUsageFromResult to capture both tokens and actual cost from OpenRouter
   const tokenUsage = createTokenUsageFromResult(result);

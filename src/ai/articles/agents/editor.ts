@@ -6,6 +6,7 @@
  */
 
 import type { LanguageModel } from 'ai';
+import { Output } from 'ai';
 import type { z } from 'zod';
 
 import { createPrefixedLogger, type Logger } from '../../../utils/logger';
@@ -39,7 +40,7 @@ export { EDITOR_CONFIG } from '../config';
 // ============================================================================
 
 export interface EditorDeps {
-  readonly generateObject: typeof import('ai').generateObject;
+  readonly generateText: typeof import('ai').generateText;
   readonly model: LanguageModel;
   readonly logger?: Logger;
   /** Optional AbortSignal for cancellation support */
@@ -77,7 +78,7 @@ export interface EditorOutput {
  *
  * @param context - Game context for the article
  * @param scoutOutput - Research from Scout agent
- * @param deps - Dependencies (generateObject, model)
+ * @param deps - Dependencies (generateText, model)
  * @returns Editor output with article plan and token usage
  */
 
@@ -142,7 +143,7 @@ export async function runEditor(
   log.info(`  Category: ${effectiveCategorySlug || 'auto-detect'}`);
   
   const startTime = Date.now();
-  log.info(`  Calling generateObject (timeout: ${EDITOR_CONFIG.TIMEOUT_MS}ms per attempt)...`);
+  log.info(`  Calling generateText (timeout: ${EDITOR_CONFIG.TIMEOUT_MS}ms per attempt)...`);
 
   // Helper to create a fresh timeout signal for each attempt
   // This ensures each retry gets its own 30s window
@@ -163,10 +164,12 @@ export async function runEditor(
     const result = await withRetry(
       () => {
         const attemptSignal = createTimeoutSignal();
-        return deps.generateObject({
+        return deps.generateText({
           model: deps.model,
           temperature,
-          schema: ArticlePlanSchema,
+          output: Output.object({
+            schema: ArticlePlanSchema,
+          }),
           system: systemPrompt,
           prompt: userPrompt,
           abortSignal: attemptSignal,
@@ -174,12 +177,12 @@ export async function runEditor(
       },
       { context: 'Editor article plan generation', signal: deps.signal }
     );
-    rawPlan = result.object;
+    rawPlan = result.output;
     generationResult = { usage: result.usage, providerMetadata: result.providerMetadata };
   } catch (error) {
     // Log detailed error information for schema validation failures
     const errorMessage = error instanceof Error ? error.message : String(error);
-    log.error(`  generateObject failed: ${errorMessage}`);
+    log.error(`  generateText failed: ${errorMessage}`);
     
     // Check if the error contains partial response data
     if (error && typeof error === 'object') {
@@ -209,7 +212,7 @@ export async function runEditor(
   }
 
   const elapsed = Date.now() - startTime;
-  log.info(`  generateObject completed in ${elapsed}ms`);
+  log.info(`  generateText completed in ${elapsed}ms`);
   log.info(`  Raw plan received: ${rawPlan.sections?.length || 0} sections, ${rawPlan.requiredElements?.length || 0} required elements`);
 
   // Check for LLM output corruption (token repetition bug)

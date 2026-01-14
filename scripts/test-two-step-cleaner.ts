@@ -12,7 +12,7 @@ import { config } from 'dotenv';
 config();
 
 import { createOpenRouter } from '@openrouter/ai-sdk-provider';
-import { generateObject } from 'ai';
+import { generateText, Output } from 'ai';
 import * as fs from 'fs';
 import * as path from 'path';
 import { z } from 'zod';
@@ -389,9 +389,11 @@ async function main() {
         const result = await withRetry(
           async () => {
             const timeoutSignal = AbortSignal.timeout(TEST_CONFIG.timeoutMs);
-            return generateObject({
+            return generateText({
               model: openrouter(model),
-              schema: EnhancedSummarySchema,
+              output: Output.object({
+                schema: EnhancedSummarySchema,
+              }),
               temperature: CLEANER_CONFIG.TEMPERATURE,
               abortSignal: timeoutSignal,
               system: getEnhancedSummarySystemPrompt(),
@@ -409,7 +411,7 @@ async function main() {
 
         const duration = Date.now() - start;
         const tokenUsage = createTokenUsageFromResult(result);
-        const output = result.object;
+        const output = result.output;
 
         console.log(`   ✅ ${model}: ${(duration / 1000).toFixed(1)}s, $${tokenUsage.actualCostUsd?.toFixed(6) ?? '?'}`);
         

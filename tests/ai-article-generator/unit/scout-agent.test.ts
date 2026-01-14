@@ -52,13 +52,13 @@ GAPS:
   });
 };
 
-// Mock for generateObject (used by Scout Query Planner)
-const createMockGenerateObject = () => vi.fn().mockImplementation((opts: { schema: unknown }) => {
+// Mock for generateText (used by Scout Query Planner)
+const createMockGenerateText = () => vi.fn().mockImplementation((opts: { output?: { schema: unknown } }) => {
   // Check if this is a discovery check (has needsDiscovery field)
-  const schemaStr = JSON.stringify(opts.schema);
+  const schemaStr = JSON.stringify(opts.output?.schema || {});
   if (schemaStr.includes('needsDiscovery')) {
     return Promise.resolve({
-      object: {
+      output: {
         needsDiscovery: false,
         discoveryReason: 'none',
         discoveryQuery: undefined,
@@ -69,7 +69,7 @@ const createMockGenerateObject = () => vi.fn().mockImplementation((opts: { schem
   }
   // Query plan schema
   return Promise.resolve({
-    object: {
+    output: {
       draftTitle: 'Elden Ring Beginner Guide',
       queries: [
         { query: '"Elden Ring" beginner guide', engine: 'tavily', purpose: 'General overview', expectedFindings: ['Core mechanics', 'Starting tips'] },
@@ -115,7 +115,6 @@ const createMockGameContext = (overrides: Partial<GameArticleContext> = {}): Gam
 const createMockScoutDeps = (overrides: Partial<ScoutDeps> = {}): ScoutDeps => ({
   search: createMockSearch(),
   generateText: createMockGenerateTextWithBriefings(),
-  generateObject: createMockGenerateObject(),
   model: createMockModel(),
   logger: {
     info: vi.fn(),
@@ -378,7 +377,7 @@ describe('runScout', () => {
       const result = await runScout(createMockGameContext(), deps);
 
       expect(result.tokenUsage).toBeDefined();
-      // tokenUsage comes from query planning, may be 0 if generateObject wasn't called
+      // tokenUsage comes from query planning, may be 0 if generateText wasn't called
       expect(result.tokenUsage.input).toBeGreaterThanOrEqual(0);
       expect(result.tokenUsage.output).toBeGreaterThanOrEqual(0);
     });

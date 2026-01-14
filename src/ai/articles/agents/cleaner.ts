@@ -7,6 +7,7 @@
  */
 
 import type { LanguageModel } from 'ai';
+import { Output } from 'ai';
 import { z } from 'zod';
 
 import { createPrefixedLogger, type Logger } from '../../../utils/logger';
@@ -90,7 +91,7 @@ const CleanerOutputSchema = z.object({
 // ============================================================================
 
 export interface CleanerDeps {
-  readonly generateObject: typeof import('ai').generateObject;
+  readonly generateText: typeof import('ai').generateText;
   /** Language model for content cleaning (junk removal) */
   readonly model: LanguageModel;
   /** 
@@ -333,9 +334,11 @@ export async function cleanSingleSource(
           ? AbortSignal.any([deps.signal, timeoutSignal])
           : timeoutSignal;
 
-        return deps.generateObject({
+        return deps.generateText({
           model: deps.model,
-          schema: CleanerOutputSchema,
+          output: Output.object({
+            schema: CleanerOutputSchema,
+          }),
           temperature: CLEANER_CONFIG.TEMPERATURE,
           abortSignal: signal,
           system: getCleanerSystemPrompt(),
@@ -359,7 +362,7 @@ export async function cleanSingleSource(
     // Use createTokenUsageFromResult to capture both tokens and actual cost from OpenRouter
     const tokenUsage = createTokenUsageFromResult(result);
 
-    const output = result.object as CleanerLLMOutput;
+    const output = result.output as CleanerLLMOutput;
 
     // Validate cleaned content is substantial
     if (output.cleanedContent.length < CLEANER_CONFIG.MIN_CLEANED_CHARS) {
@@ -497,7 +500,7 @@ export async function cleanSourcesBatch(
         if (useTwoStep && deps.summarizerModel) {
           // Two-step cleaning: better quality, cheaper
           const twoStepDeps: TwoStepCleanerDeps = {
-            generateObject: deps.generateObject,
+            generateText: deps.generateText,
             cleanerModel: deps.model,
             summarizerModel: deps.summarizerModel,
             logger: deps.logger,
@@ -1057,9 +1060,11 @@ export async function extractSummariesFromCleanedContent(
           ? AbortSignal.any([deps.signal, timeoutSignal])
           : timeoutSignal;
 
-        return deps.generateObject({
+        return deps.generateText({
           model: deps.model,
-          schema: SummaryExtractionSchema,
+          output: Output.object({
+            schema: SummaryExtractionSchema,
+          }),
           temperature: CLEANER_CONFIG.TEMPERATURE,
           abortSignal: signal,
           system: getSummaryExtractionSystemPrompt(),
@@ -1074,7 +1079,7 @@ export async function extractSummariesFromCleanedContent(
     );
 
     const tokenUsage = createTokenUsageFromResult(result);
-    const output = result.object;
+    const output = result.output;
 
     return {
       summary: output.summary,
@@ -1099,7 +1104,7 @@ export async function extractSummariesFromCleanedContent(
  * Allows using different models for cleaning vs summarization.
  */
 export interface TwoStepCleanerDeps {
-  readonly generateObject: typeof import('ai').generateObject;
+  readonly generateText: typeof import('ai').generateText;
   /** Model for step 1: content cleaning */
   readonly cleanerModel: import('ai').LanguageModel;
   /** Model for step 2: summarization (can be same as cleanerModel) */
@@ -1166,9 +1171,11 @@ async function cleanContentOnly(
           ? AbortSignal.any([deps.signal, timeoutSignal])
           : timeoutSignal;
 
-        return deps.generateObject({
+        return deps.generateText({
           model: deps.cleanerModel,
-          schema: PureCleanerOutputSchema,
+          output: Output.object({
+            schema: PureCleanerOutputSchema,
+          }),
           temperature: CLEANER_CONFIG.TEMPERATURE,
           abortSignal: signal,
           system: getPureCleanerSystemPrompt(),
@@ -1183,7 +1190,7 @@ async function cleanContentOnly(
     );
 
     const tokenUsage = createTokenUsageFromResult(result);
-    const output = result.object;
+    const output = result.output;
 
     if (output.cleanedContent.length < CLEANER_CONFIG.MIN_CLEANED_CHARS) {
       log.debug(`Cleaned content too short (${output.cleanedContent.length} chars): ${source.url}`);
@@ -1229,9 +1236,11 @@ async function extractEnhancedSummaries(
           ? AbortSignal.any([deps.signal, timeoutSignal])
           : timeoutSignal;
 
-        return deps.generateObject({
+        return deps.generateText({
           model: deps.summarizerModel,
-          schema: EnhancedSummarySchema,
+          output: Output.object({
+            schema: EnhancedSummarySchema,
+          }),
           temperature: CLEANER_CONFIG.TEMPERATURE,
           abortSignal: signal,
           system: getEnhancedSummarySystemPrompt(),
@@ -1246,7 +1255,7 @@ async function extractEnhancedSummaries(
     );
 
     const tokenUsage = createTokenUsageFromResult(result);
-    const output = result.object;
+    const output = result.output;
 
     return {
       summary: output.summary,
@@ -1530,9 +1539,11 @@ export async function preFilterSingleSource(
           ? AbortSignal.any([deps.signal, timeoutSignal])
           : timeoutSignal;
 
-        return deps.generateObject({
+        return deps.generateText({
           model: deps.model,
-          schema: PreFilterOutputSchema,
+          output: Output.object({
+            schema: PreFilterOutputSchema,
+          }),
           temperature: 0, // Deterministic for consistency
           abortSignal: signal,
           system: getPreFilterSystemPrompt(),
@@ -1547,7 +1558,7 @@ export async function preFilterSingleSource(
     );
 
     const tokenUsage = createTokenUsageFromResult(result);
-    const output = result.object as PreFilterOutput;
+    const output = result.output as PreFilterOutput;
 
     return {
       url: source.url,

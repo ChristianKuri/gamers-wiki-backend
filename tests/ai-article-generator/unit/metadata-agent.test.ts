@@ -13,7 +13,7 @@ import type { SourceSummary } from '../../../src/ai/articles/types';
 // Mock Setup
 // ============================================================================
 
-const createMockGenerateObject = () => vi.fn();
+const createMockGenerateText = () => vi.fn();
 const createMockModel = () => ({} as any);
 
 // ============================================================================
@@ -67,15 +67,15 @@ const createMockMetadataOutput = (overrides: Record<string, any> = {}) => ({
 // ============================================================================
 
 describe('Metadata Agent', () => {
-  let mockGenerateObject: ReturnType<typeof createMockGenerateObject>;
+  let mockGenerateText: ReturnType<typeof createMockGenerateText>;
   let mockModel: ReturnType<typeof createMockModel>;
   let deps: MetadataDeps;
 
   beforeEach(() => {
-    mockGenerateObject = createMockGenerateObject();
+    mockGenerateText = createMockGenerateText();
     mockModel = createMockModel();
     deps = {
-      generateObject: mockGenerateObject,
+      generateText: mockGenerateText,
       model: mockModel,
     };
   });
@@ -109,8 +109,8 @@ describe('Metadata Agent', () => {
       });
       await runMetadata(ctx, deps);
 
-      expect(mockGenerateObject).toHaveBeenCalledTimes(1);
-      const callArgs = mockGenerateObject.mock.calls[0][0];
+      expect(mockGenerateText).toHaveBeenCalledTimes(1);
+      const callArgs = mockGenerateText.mock.calls[0][0];
       expect(callArgs.prompt).toContain('Custom Article');
       expect(callArgs.prompt).toContain('Some custom content');
     });

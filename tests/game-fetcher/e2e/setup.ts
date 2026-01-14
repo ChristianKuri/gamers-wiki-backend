@@ -9,9 +9,38 @@
  */
 
 import type { Knex } from 'knex';
+import { readFileSync } from 'node:fs';
 
 // Forbidden database name patterns - E2E tests will refuse to run against these
 const FORBIDDEN_DB_PATTERNS = ['dev', 'prod', 'production', 'staging', 'live'];
+
+/**
+ * Helper to read value from .env file (for tests that need secrets)
+ */
+function getFromDotEnvFile(name: string): string | undefined {
+  try {
+    const contents = readFileSync('.env', 'utf8');
+    for (const line of contents.split('\n')) {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith('#')) continue;
+      const idx = trimmed.indexOf('=');
+      if (idx <= 0) continue;
+      const key = trimmed.slice(0, idx).trim();
+      if (key !== name) continue;
+      let value = trimmed.slice(idx + 1).trim();
+      if (
+        (value.startsWith('"') && value.endsWith('"') && value.length >= 2) ||
+        (value.startsWith("'") && value.endsWith("'") && value.length >= 2)
+      ) {
+        value = value.slice(1, -1);
+      }
+      return value;
+    }
+  } catch {
+    // ignore
+  }
+  return undefined;
+}
 
 // Configuration - defaults to test database
 // Uses same env var names as Strapi's config/database.ts for consistency
@@ -193,6 +222,126 @@ export async function cleanDatabase(knex: Knex): Promise<void> {
   }
 }
 
+/**
+ * Clean a specific game by IGDB ID from the database
+ * 
+ * This function:
+ * 1. Finds all game entries (all locales) with the given IGDB ID
+ * 2. Deletes all relationship link tables for those games
+ * 3. Deletes the game entries themselves
+ * 
+ * NOTE: This does NOT delete related entities (platforms, companies, etc.)
+ * as they may be shared with other games. Only the game and its relationships are deleted.
+ */
+export async function cleanGameByIgdbId(knex: Knex, igdbId: number): Promise<void> {
+  // Double-check safety before deleting anything
+  validateDatabaseName(E2E_CONFIG.dbName);
+  
+  // Find all game entries (all locales) with this IGDB ID
+  const gameEntries = await knex('games')
+    .select('id', 'document_id')
+    .where('igdb_id', igdbId);
+  
+  if (gameEntries.length === 0) {
+    console.log(`[Cleanup] No game found with IGDB ID ${igdbId} - nothing to clean`);
+    return;
+  }
+  
+  const documentIds = [...new Set(gameEntries.map(g => g.document_id))];
+  const gameIds = gameEntries.map(g => g.id);
+  
+  console.log(`[Cleanup] Found ${gameEntries.length} game entry/entries with IGDB ID ${igdbId}`);
+  console.log(`[Cleanup] Document IDs: ${documentIds.join(', ')}`);
+  console.log(`[Cleanup] Game IDs: ${gameIds.join(', ')}`);
+  
+  // Delete all relationship link tables for these games
+  // Using document_id to catch all locales
+  const linkTables = [
+    'games_age_ratings_lnk',
+    'games_developers_lnk',
+    'games_franchises_lnk',
+    'games_collections_lnk',
+    'games_game_engines_lnk',
+    'games_game_modes_lnk',
+    'games_genres_lnk',
+    'games_keywords_lnk',
+    'games_languages_lnk',
+    'games_parent_game_lnk',
+    'games_platforms_lnk',
+    'games_player_perspectives_lnk',
+    'games_publishers_lnk',
+    'games_remakes_lnk',
+    'games_remasters_lnk',
+    'games_similar_games_lnk',
+    'games_themes_lnk',
+    'affiliate_links_game_lnk',
+  ];
+  
+  for (const table of linkTables) {
+    try {
+      // Try deleting by game_id first (most link tables use this)
+      const deleted = await knex(table)
+        .whereIn('game_id', gameIds)
+        .del();
+      if (deleted > 0) {
+        console.log(`[Cleanup] Deleted ${deleted} rows from ${table}`);
+      }
+    } catch (error) {
+      // Some tables might use different column names or not exist
+      // Silently ignore errors for missing tables or columns
+      const message = error instanceof Error ? error.message : String(error);
+      const isIgnorableError = 
+        message.includes('does not exist') || 
+        message.includes('column') || 
+        message.includes('unknown') ||
+        message.includes('relation') ||
+        message.includes('syntax');
+      
+      if (!isIgnorableError) {
+        console.warn(`[Cleanup] Warning deleting from ${table}: ${message}`);
+      }
+    }
+  }
+  
+  // Delete affiliate links associated with this game
+  try {
+    const affiliateLinks = await knex('affiliate_links')
+      .select('id')
+      .whereIn('game_id', gameIds);
+    
+    if (affiliateLinks.length > 0) {
+      const affiliateLinkIds = affiliateLinks.map(l => l.id);
+      // Delete link table entries first
+      await knex('affiliate_links_game_lnk')
+        .whereIn('affiliate_link_id', affiliateLinkIds)
+        .del();
+      // Then delete the affiliate links
+      await knex('affiliate_links')
+        .whereIn('id', affiliateLinkIds)
+        .del();
+      console.log(`[Cleanup] Deleted ${affiliateLinks.length} affiliate link(s)`);
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (!message.includes('does not exist')) {
+      console.warn(`[Cleanup] Warning deleting affiliate links: ${message}`);
+    }
+  }
+  
+  // Finally, delete the game entries themselves (all locales)
+  try {
+    const deletedGames = await knex('games')
+      .where('igdb_id', igdbId)
+      .del();
+    
+    console.log(`[Cleanup] Deleted ${deletedGames} game entry/entries with IGDB ID ${igdbId}`);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error(`[Cleanup] Error deleting game entries: ${message}`);
+    throw error; // Re-throw to ensure test failure if game deletion fails
+  }
+}
+
 // API Response Types
 interface ImportGameResponse {
   success: boolean;
@@ -266,6 +415,50 @@ export const api = {
       `${E2E_CONFIG.strapiUrl}/api/game-fetcher/search?q=${encodeURIComponent(query)}&limit=${limit}`
     );
     return response.json() as Promise<SearchGamesResponse>;
+  },
+
+  /**
+   * Resolve a game query to an IGDB ID using AI
+   * GET /api/game-fetcher/resolve?q=...&limit=...
+   * Requires x-ai-generation-secret header
+   */
+  async resolveGame(query: string, limit = 10, secret?: string): Promise<{
+    success: boolean;
+    query: string;
+    igdbId: number;
+    pick: { confidence: string; reason: string };
+    candidates: Array<{ igdbId: number; name: string }>;
+    normalizedQuery?: { normalizedNames: string[]; confidence: string; reason?: string };
+  }> {
+    // Try to get secret from parameter, env var, or .env file
+    const headerSecret = secret || process.env.AI_GENERATION_SECRET || getFromDotEnvFile('AI_GENERATION_SECRET');
+    if (!headerSecret) {
+      throw new Error('AI_GENERATION_SECRET environment variable is required for resolver endpoint');
+    }
+
+    const response = await fetch(
+      `${E2E_CONFIG.strapiUrl}/api/game-fetcher/resolve?q=${encodeURIComponent(query)}&limit=${limit}`,
+      {
+        method: 'GET',
+        headers: {
+          'x-ai-generation-secret': headerSecret,
+        },
+      }
+    );
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`Resolver failed: ${response.status} - ${errorText}`);
+    }
+
+    return response.json() as Promise<{
+      success: boolean;
+      query: string;
+      igdbId: number;
+      pick: { confidence: string; reason: string };
+      candidates: Array<{ igdbId: number; name: string }>;
+      normalizedQuery?: { normalizedNames: string[]; confidence: string; reason?: string };
+    }>;
   },
 };
 

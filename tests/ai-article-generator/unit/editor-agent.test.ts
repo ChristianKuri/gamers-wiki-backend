@@ -14,7 +14,7 @@ import { createEmptyResearchPool } from '../../../src/ai/articles/research-pool'
 // Mock Setup
 // ============================================================================
 
-const createMockGenerateObject = () => vi.fn();
+const createMockGenerateText = () => vi.fn();
 const createMockModel = () => ({} as any);
 
 // ============================================================================
@@ -99,7 +99,7 @@ const createMockArticlePlan = (overrides: Record<string, any> = {}) => ({
 });
 
 const createMockEditorDeps = (overrides: Partial<EditorDeps> = {}): EditorDeps => ({
-  generateObject: createMockGenerateObject(),
+  generateText: createMockGenerateText(),
   model: createMockModel(),
   logger: {
     info: vi.fn(),
@@ -122,12 +122,12 @@ describe('runEditor', () => {
   describe('basic functionality', () => {
     it('returns EditorOutput with plan and token usage', async () => {
       const mockPlan = createMockArticlePlan();
-      const mockGenerateObject = vi.fn().mockResolvedValue({
-        object: mockPlan,
+      const mockGenerateText = vi.fn().mockResolvedValue({
+        output: mockPlan,
         usage: { promptTokens: 1000, completionTokens: 500 },
       });
 
-      const deps = createMockEditorDeps({ generateObject: mockGenerateObject });
+      const deps = createMockEditorDeps({ generateText: mockGenerateText });
       const context = createMockGameContext();
       const scoutOutput = createMockScoutOutput();
 
@@ -138,24 +138,26 @@ describe('runEditor', () => {
       expect(result.plan.title).toBe('Elden Ring: Complete Beginner Guide');
     });
 
-    it('calls generateObject with correct parameters', async () => {
-      const mockGenerateObject = vi.fn().mockResolvedValue({
-        object: createMockArticlePlan(),
+    it('calls generateText with correct parameters', async () => {
+      const mockGenerateText = vi.fn().mockResolvedValue({
+        output: createMockArticlePlan(),
         usage: { promptTokens: 100, completionTokens: 50 },
       });
 
-      const deps = createMockEditorDeps({ generateObject: mockGenerateObject });
+      const deps = createMockEditorDeps({ generateText: mockGenerateText });
       const context = createMockGameContext();
       const scoutOutput = createMockScoutOutput();
 
       await runEditor(context, scoutOutput, deps);
 
-      expect(mockGenerateObject).toHaveBeenCalledTimes(1);
-      expect(mockGenerateObject).toHaveBeenCalledWith(
+      expect(mockGenerateText).toHaveBeenCalledTimes(1);
+      expect(mockGenerateText).toHaveBeenCalledWith(
         expect.objectContaining({
           model: deps.model,
           temperature: EDITOR_CONFIG.TEMPERATURE,
-          schema: expect.any(Object),
+          output: expect.objectContaining({
+            schema: expect.any(Object),
+          }),
           system: expect.any(String),
           prompt: expect.any(String),
         })
@@ -163,18 +165,18 @@ describe('runEditor', () => {
     });
 
     it('includes game context in prompt', async () => {
-      const mockGenerateObject = vi.fn().mockResolvedValue({
-        object: createMockArticlePlan(),
+      const mockGenerateText = vi.fn().mockResolvedValue({
+        output: createMockArticlePlan(),
         usage: { promptTokens: 100, completionTokens: 50 },
       });
 
-      const deps = createMockEditorDeps({ generateObject: mockGenerateObject });
+      const deps = createMockEditorDeps({ generateText: mockGenerateText });
       const context = createMockGameContext({ gameName: 'Dark Souls' });
       const scoutOutput = createMockScoutOutput();
 
       await runEditor(context, scoutOutput, deps);
 
-      const call = mockGenerateObject.mock.calls[0][0];
+      const call = mockGenerateText.mock.calls[0][0];
       expect(call.prompt).toContain('Dark Souls');
     });
   });
@@ -187,7 +189,7 @@ describe('runEditor', () => {
         usage: {},
       });
 
-      const deps = createMockEditorDeps({ generateObject: mockGenerateObject });
+      const deps = createMockEditorDeps({ generateText: mockGenerateText });
       const result = await runEditor(createMockGameContext(), createMockScoutOutput(), deps);
 
       expect(result.plan.categorySlug).toBe('guides');
@@ -203,7 +205,7 @@ describe('runEditor', () => {
           usage: {},
         });
 
-        const deps = createMockEditorDeps({ generateObject: mockGenerateObject });
+        const deps = createMockEditorDeps({ generateText: mockGenerateText });
         const result = await runEditor(createMockGameContext(), createMockScoutOutput(), deps);
 
         expect(result.plan.categorySlug).toBe(slug);
@@ -219,7 +221,7 @@ describe('runEditor', () => {
         usage: {},
       });
 
-      const deps = createMockEditorDeps({ generateObject: mockGenerateObject });
+      const deps = createMockEditorDeps({ generateText: mockGenerateText });
       const context = createMockGameContext({ gameName: 'Hollow Knight' });
 
       const result = await runEditor(context, createMockScoutOutput(), deps);
@@ -234,7 +236,7 @@ describe('runEditor', () => {
         usage: {},
       });
 
-      const deps = createMockEditorDeps({ generateObject: mockGenerateObject });
+      const deps = createMockEditorDeps({ generateText: mockGenerateText });
       const context = createMockGameContext({ gameSlug: 'hollow-knight' });
 
       const result = await runEditor(context, createMockScoutOutput(), deps);
@@ -249,7 +251,7 @@ describe('runEditor', () => {
         usage: {},
       });
 
-      const deps = createMockEditorDeps({ generateObject: mockGenerateObject });
+      const deps = createMockEditorDeps({ generateText: mockGenerateText });
       const context = createMockGameContext({ gameSlug: undefined });
 
       const result = await runEditor(context, createMockScoutOutput(), deps);
@@ -264,7 +266,7 @@ describe('runEditor', () => {
         usage: {},
       });
 
-      const deps = createMockEditorDeps({ generateObject: mockGenerateObject });
+      const deps = createMockEditorDeps({ generateText: mockGenerateText });
       const context = createMockGameContext({ gameSlug: null });
 
       const result = await runEditor(context, createMockScoutOutput(), deps);
@@ -283,7 +285,7 @@ describe('runEditor', () => {
         usage: {},
       });
 
-      const deps = createMockEditorDeps({ generateObject: mockGenerateObject });
+      const deps = createMockEditorDeps({ generateText: mockGenerateText });
       const result = await runEditor(createMockGameContext(), createMockScoutOutput(), deps);
 
       expect(result.plan.safety).toBeDefined();
@@ -300,7 +302,7 @@ describe('runEditor', () => {
         usage: {},
       });
 
-      const deps = createMockEditorDeps({ generateObject: mockGenerateObject });
+      const deps = createMockEditorDeps({ generateText: mockGenerateText });
       const result = await runEditor(createMockGameContext(), createMockScoutOutput(), deps);
 
       expect(result.plan.safety.noScoresUnlessReview).toBe(false);
@@ -309,12 +311,12 @@ describe('runEditor', () => {
 
   describe('token usage tracking', () => {
     it('tracks token usage from API response', async () => {
-      const mockGenerateObject = vi.fn().mockResolvedValue({
-        object: createMockArticlePlan(),
+      const mockGenerateText = vi.fn().mockResolvedValue({
+        output: createMockArticlePlan(),
         usage: { inputTokens: 1500, outputTokens: 750 },
       });
 
-      const deps = createMockEditorDeps({ generateObject: mockGenerateObject });
+      const deps = createMockEditorDeps({ generateText: mockGenerateText });
       const result = await runEditor(createMockGameContext(), createMockScoutOutput(), deps);
 
       expect(result.tokenUsage.input).toBe(1500);
@@ -322,12 +324,12 @@ describe('runEditor', () => {
     });
 
     it('handles missing usage data gracefully', async () => {
-      const mockGenerateObject = vi.fn().mockResolvedValue({
-        object: createMockArticlePlan(),
+      const mockGenerateText = vi.fn().mockResolvedValue({
+        output: createMockArticlePlan(),
         usage: undefined,
       });
 
-      const deps = createMockEditorDeps({ generateObject: mockGenerateObject });
+      const deps = createMockEditorDeps({ generateText: mockGenerateText });
       const result = await runEditor(createMockGameContext(), createMockScoutOutput(), deps);
 
       expect(result.tokenUsage.input).toBe(0);
@@ -335,12 +337,12 @@ describe('runEditor', () => {
     });
 
     it('handles partial usage data', async () => {
-      const mockGenerateObject = vi.fn().mockResolvedValue({
-        object: createMockArticlePlan(),
+      const mockGenerateText = vi.fn().mockResolvedValue({
+        output: createMockArticlePlan(),
         usage: { inputTokens: 100 }, // missing outputTokens
       });
 
-      const deps = createMockEditorDeps({ generateObject: mockGenerateObject });
+      const deps = createMockEditorDeps({ generateText: mockGenerateText });
       const result = await runEditor(createMockGameContext(), createMockScoutOutput(), deps);
 
       expect(result.tokenUsage.input).toBe(100);
@@ -350,33 +352,33 @@ describe('runEditor', () => {
 
   describe('temperature override', () => {
     it('uses default temperature from EDITOR_CONFIG', async () => {
-      const mockGenerateObject = vi.fn().mockResolvedValue({
-        object: createMockArticlePlan(),
+      const mockGenerateText = vi.fn().mockResolvedValue({
+        output: createMockArticlePlan(),
         usage: {},
       });
 
-      const deps = createMockEditorDeps({ generateObject: mockGenerateObject });
+      const deps = createMockEditorDeps({ generateText: mockGenerateText });
       await runEditor(createMockGameContext(), createMockScoutOutput(), deps);
 
-      const call = mockGenerateObject.mock.calls[0][0];
+      const call = mockGenerateText.mock.calls[0][0];
       expect(call.temperature).toBe(EDITOR_CONFIG.TEMPERATURE);
     });
 
     it('uses custom temperature when provided', async () => {
-      const mockGenerateObject = vi.fn().mockResolvedValue({
-        object: createMockArticlePlan(),
+      const mockGenerateText = vi.fn().mockResolvedValue({
+        output: createMockArticlePlan(),
         usage: {},
       });
 
       const customTemperature = 0.8;
       const deps = createMockEditorDeps({
-        generateObject: mockGenerateObject,
+        generateText: mockGenerateText,
         temperature: customTemperature,
       });
 
       await runEditor(createMockGameContext(), createMockScoutOutput(), deps);
 
-      const call = mockGenerateObject.mock.calls[0][0];
+      const call = mockGenerateText.mock.calls[0][0];
       expect(call.temperature).toBe(customTemperature);
     });
   });
@@ -384,13 +386,13 @@ describe('runEditor', () => {
   describe('cancellation support', () => {
     it('passes signal to retry wrapper', async () => {
       const controller = new AbortController();
-      const mockGenerateObject = vi.fn().mockResolvedValue({
-        object: createMockArticlePlan(),
+      const mockGenerateText = vi.fn().mockResolvedValue({
+        output: createMockArticlePlan(),
         usage: {},
       });
 
       const deps = createMockEditorDeps({
-        generateObject: mockGenerateObject,
+        generateText: mockGenerateText,
         signal: controller.signal,
       });
 
@@ -407,7 +409,7 @@ describe('runEditor', () => {
       const mockGenerateObject = vi.fn().mockRejectedValue(new Error('Rate limit'));
 
       const deps = createMockEditorDeps({
-        generateObject: mockGenerateObject,
+        generateText: mockGenerateText,
         signal: controller.signal,
       });
 
@@ -426,13 +428,13 @@ describe('runEditor', () => {
         debug: vi.fn(),
       };
 
-      const mockGenerateObject = vi.fn().mockResolvedValue({
-        object: createMockArticlePlan(),
+      const mockGenerateText = vi.fn().mockResolvedValue({
+        output: createMockArticlePlan(),
         usage: {},
       });
 
       const deps = createMockEditorDeps({
-        generateObject: mockGenerateObject,
+        generateText: mockGenerateText,
         logger: mockLogger,
       });
 
@@ -442,13 +444,13 @@ describe('runEditor', () => {
     });
 
     it('uses default logger when not provided', async () => {
-      const mockGenerateObject = vi.fn().mockResolvedValue({
-        object: createMockArticlePlan(),
+      const mockGenerateText = vi.fn().mockResolvedValue({
+        output: createMockArticlePlan(),
         usage: {},
       });
 
       const deps: EditorDeps = {
-        generateObject: mockGenerateObject,
+        generateText: mockGenerateText,
         model: createMockModel(),
       };
 
@@ -461,12 +463,12 @@ describe('runEditor', () => {
 
   describe('category hints handling', () => {
     it('includes category hints in prompt when provided', async () => {
-      const mockGenerateObject = vi.fn().mockResolvedValue({
-        object: createMockArticlePlan(),
+      const mockGenerateText = vi.fn().mockResolvedValue({
+        output: createMockArticlePlan(),
         usage: {},
       });
 
-      const deps = createMockEditorDeps({ generateObject: mockGenerateObject });
+      const deps = createMockEditorDeps({ generateText: mockGenerateText });
       const context = createMockGameContext({
         categoryHints: [
           { slug: 'guides', systemPrompt: 'Focus on beginner tips' },
@@ -475,7 +477,7 @@ describe('runEditor', () => {
 
       await runEditor(context, createMockScoutOutput(), deps);
 
-      const call = mockGenerateObject.mock.calls[0][0];
+      const call = mockGenerateText.mock.calls[0][0];
       expect(call.prompt).toContain('guides');
     });
   });
@@ -485,7 +487,7 @@ describe('runEditor', () => {
       const mockError = new Error('API error');
       const mockGenerateObject = vi.fn().mockRejectedValue(mockError);
 
-      const deps = createMockEditorDeps({ generateObject: mockGenerateObject });
+      const deps = createMockEditorDeps({ generateText: mockGenerateText });
 
       await expect(
         runEditor(createMockGameContext(), createMockScoutOutput(), deps)

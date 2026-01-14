@@ -18,7 +18,7 @@ export type ArticleCategorySlugInput = ArticleCategorySlug | 'review' | 'guide' 
 /**
  * Schema for category slugs that accepts canonical and alias forms.
  *
- * NOTE: See gotchas.md "Zod Transforms Don't Work with AI SDK's generateObject"
+ * NOTE: See gotchas.md "Zod Transforms Don't Work with AI SDK's generateText"
  * for why this doesn't use .transform(). Use normalizeArticleCategorySlug() after parsing.
  */
 export const ArticleCategorySlugSchema = z.enum([
@@ -130,13 +130,13 @@ export const DEFAULT_ARTICLE_SAFETY = {
 } as const;
 
 /**
- * Article plan schema for AI SDK's generateObject.
+ * Article plan schema for AI SDK's generateText.
  * 
  * NOTE: This schema focuses on content structure planning only.
  * Metadata (title, excerpt, description, tags) is generated separately by
  * the Metadata Agent after the article is written.
  *
- * NOTE: See gotchas.md "Zod Transforms Don't Work with AI SDK's generateObject"
+ * NOTE: See gotchas.md "Zod Transforms Don't Work with AI SDK's generateText"
  * - categorySlug accepts aliases; Editor normalizes after parsing
  * - safety is optional; Editor applies DEFAULT_ARTICLE_SAFETY if omitted
  * - gameName/gameSlug come from context, not AI output

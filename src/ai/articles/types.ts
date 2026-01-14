@@ -882,7 +882,7 @@ export function addTokenUsage(a: TokenUsage, b: TokenUsage): TokenUsage {
  * Extracts actual cost from OpenRouter provider metadata.
  * The @openrouter/ai-sdk-provider returns cost in providerMetadata.openrouter.usage.cost
  *
- * @param result - The result from generateText or generateObject
+ * @param result - The result from generateText
  * @returns The actual cost in USD, or undefined if not available
  */
 export function extractOpenRouterCost(result: {
@@ -898,7 +898,7 @@ export function extractOpenRouterCost(result: {
  * Creates a TokenUsage object from an AI SDK result.
  * Extracts both token counts and actual cost from OpenRouter.
  *
- * @param result - The result from generateText or generateObject
+ * @param result - The result from generateText
  * @returns TokenUsage with input, output, and actualCostUsd
  */
 export function createTokenUsageFromResult(result: {
@@ -1598,7 +1598,7 @@ export interface StoredDomainQuality {
  * Dependencies for the Cleaner agent.
  */
 export interface CleanerDeps {
-  readonly generateObject: typeof import('ai').generateObject;
+  readonly generateText: typeof import('ai').generateText;
   readonly model: import('ai').LanguageModel;
   readonly logger?: import('../../utils/logger').Logger;
   readonly signal?: AbortSignal;

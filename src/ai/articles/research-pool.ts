@@ -792,8 +792,8 @@ export function processSearchResults(
 export interface CleaningDeps {
   /** Strapi instance for cache operations */
   readonly strapi: Core.Strapi;
-  /** AI SDK generateObject function */
-  readonly generateObject: typeof import('ai').generateObject;
+  /** AI SDK generateText function */
+  readonly generateText: typeof import('ai').generateText;
   /** 
    * Language model for content cleaning (junk removal, content extraction).
    * Used in step 1 of two-step cleaning.
@@ -1046,7 +1046,7 @@ export async function processSearchResultsWithCleaning(
   const { cleanSourcesBatch } = await import('./agents/cleaner');
   const { checkSourceCache, storeCleanedSources } = await import('./source-cache');
 
-  const { strapi, generateObject, model, prefilterModel, logger, signal, gameName, gameDocumentId, minRelevanceOverride, minQualityOverride, articleTopic, duplicateTracker, phase = 'scout' } = cleaningDeps;
+  const { strapi, generateText, model, prefilterModel, logger, signal, gameName, gameDocumentId, minRelevanceOverride, minQualityOverride, articleTopic, duplicateTracker, phase = 'scout' } = cleaningDeps;
 
   // Use overrides if provided, otherwise fall back to config defaults
   const minRelevance = minRelevanceOverride ?? CLEANER_CONFIG.MIN_RELEVANCE_FOR_RESULTS;
@@ -1326,7 +1326,7 @@ export async function processSearchResultsWithCleaning(
       // Use dedicated prefilter model if provided, otherwise fall back to cleaner model
       const preFilterModelToUse = prefilterModel ?? model;
       const llmPreFilterResult = await preFilterSourcesBatch(programmaticPreFilter.toClean, {
-        generateObject,
+        generateText,
         model: preFilterModelToUse,
         logger,
         signal,
@@ -1383,7 +1383,7 @@ export async function processSearchResultsWithCleaning(
 
     // Step 4: Full cleaning of remaining sources (two-step if summarizerModel provided)
     const cleanResult = await cleanSourcesBatch(sourcesAfterPreFilter, {
-      generateObject,
+      generateText,
       model,
       summarizerModel: cleaningDeps.summarizerModel,
       logger,

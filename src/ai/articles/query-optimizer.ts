@@ -12,7 +12,7 @@
  * - Phase 1: Query Planning - Generate strategic queries with expected findings
  */
 
-import { generateObject, type LanguageModel } from 'ai';
+import { generateText, Output, type LanguageModel } from 'ai';
 import { z } from 'zod';
 
 import { type Logger } from '../../utils/logger';
@@ -64,7 +64,7 @@ export interface ScoutQueryPlannerResult {
  * Dependencies for the Scout Query Planner.
  */
 export interface ScoutQueryPlannerDeps {
-  readonly generateObject: typeof generateObject;
+  readonly generateText: typeof generateText;
   readonly model: LanguageModel;
   readonly logger?: Logger;
   readonly signal?: AbortSignal;
@@ -366,23 +366,25 @@ export async function checkDiscovery(
   context: GameArticleContext,
   deps: ScoutQueryPlannerDeps
 ): Promise<DiscoveryCheckResult> {
-  const { generateObject: generate, model, logger, signal } = deps;
+  const { generateText: generate, model, logger, signal } = deps;
 
   logger?.info?.(`Evaluating if discovery research is needed for "${context.gameName}"...`);
 
   const result = await generate({
     model,
-    schema: discoveryCheckSchema,
+    output: Output.object({
+      schema: discoveryCheckSchema,
+    }),
     system: buildDiscoverySystemPrompt(),
     prompt: buildDiscoveryUserPrompt(context),
     abortSignal: signal,
   });
 
   const discoveryCheck: DiscoveryCheck = {
-    needsDiscovery: result.object.needsDiscovery,
-    discoveryReason: result.object.discoveryReason as DiscoveryReason,
-    discoveryQuery: result.object.discoveryQuery,
-    discoveryEngine: (result.object.discoveryEngine ?? 'tavily') as SearchSource,
+    needsDiscovery: result.output.needsDiscovery,
+    discoveryReason: result.output.discoveryReason as DiscoveryReason,
+    discoveryQuery: result.output.discoveryQuery,
+    discoveryEngine: (result.output.discoveryEngine ?? 'tavily') as SearchSource,
   };
 
   if (discoveryCheck.needsDiscovery) {
@@ -406,21 +408,23 @@ export async function planQueries(
   deps: ScoutQueryPlannerDeps,
   discoveryResult?: string
 ): Promise<QueryPlanResult> {
-  const { generateObject: generate, model, logger, signal } = deps;
+  const { generateText: generate, model, logger, signal } = deps;
 
   logger?.info?.(`Planning ${SCOUT_CONFIG.MAX_QUERIES} strategic search queries...`);
 
   const result = await generate({
     model,
-    schema: queryPlanSchema,
+    output: Output.object({
+      schema: queryPlanSchema,
+    }),
     system: buildQueryPlanSystemPrompt(),
     prompt: buildQueryPlanUserPrompt(context, discoveryResult),
     abortSignal: signal,
   });
 
   const rawQueryPlan: QueryPlan = {
-    draftTitle: result.object.draftTitle,
-    queries: result.object.queries.map((q): PlannedQuery => ({
+    draftTitle: result.output.draftTitle,
+    queries: result.output.queries.map((q): PlannedQuery => ({
       query: q.query,
       engine: q.engine as SearchSource,
       purpose: q.purpose,

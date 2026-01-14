@@ -7,7 +7,7 @@ import { config } from 'dotenv';
 config();
 
 import { createOpenRouter } from '@openrouter/ai-sdk-provider';
-import { generateObject } from 'ai';
+import { generateText } from 'ai';
 import { cleanSingleSource } from '../src/ai/articles/agents/cleaner';
 import { getModel } from '../src/ai/config/utils';
 import { CLEANER_CONFIG } from '../src/ai/articles/config';
@@ -92,7 +92,7 @@ async function testCleaner() {
         searchSource: 'tavily',
       },
       {
-        generateObject,
+        generateText,
         model,
         gameName: 'Elden Ring',
       }

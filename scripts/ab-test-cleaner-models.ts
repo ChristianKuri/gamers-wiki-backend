@@ -23,7 +23,7 @@ config();
 import * as fs from 'fs';
 import * as path from 'path';
 import { createOpenRouter } from '@openrouter/ai-sdk-provider';
-import { generateObject } from 'ai';
+import { generateText } from 'ai';
 
 import { tavilySearch, isTavilyConfigured } from '../src/ai/tools/tavily';
 import { CLEANER_CONFIG } from '../src/ai/articles/config';
@@ -183,7 +183,7 @@ async function cleanWithModel(
     };
 
     const deps: CleanerDeps = {
-      generateObject,
+      generateText,
       model: llmModel,
       gameName: TEST_CONFIG.gameName,
     };

@@ -22,7 +22,7 @@ export interface RetryOptions {
   readonly initialDelayMs?: number;
   /** Maximum delay in ms between retries (default: 10000) */
   readonly maxDelayMs?: number;
-  /** Context for logging (e.g., "Scout search" or "Editor generateObject") */
+  /** Context for logging (e.g., "Scout search" or "Editor generateText") */
   readonly context?: string;
   /** Custom function to determine if an error is retryable (default: isRetryableError) */
   readonly shouldRetry?: (error: unknown) => boolean;
