@@ -166,7 +166,10 @@ export default ({ strapi }: { strapi: Core.Strapi }) => ({
         if (code === 'UNAUTHORIZED') {
           return ctx.unauthorized(message);
         }
-        if (code === 'BAD_REQUEST' || code === 'GAME_NOT_FOUND' || code === 'IMPORT_FAILED' || code === 'CATEGORY_NOT_FOUND') {
+        if (code === 'GAME_NOT_FOUND') {
+          return ctx.notFound(message);
+        }
+        if (code === 'BAD_REQUEST' || code === 'IMPORT_FAILED' || code === 'CATEGORY_NOT_FOUND') {
           return ctx.badRequest(message);
         }
         return ctx.internalServerError(message);
