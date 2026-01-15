@@ -1,5 +1,5 @@
-import type { DocumentQueryOptions } from '../../../types/strapi';
-import type { ArticleGenerationPhase } from '../../../ai/articles/types';
+import type { DocumentQueryOptions } from '../../types/strapi';
+import type { ArticleGenerationPhase } from '../../ai/articles/types';
 
 /**
  * SSE Event Types for article generation progress streaming.
