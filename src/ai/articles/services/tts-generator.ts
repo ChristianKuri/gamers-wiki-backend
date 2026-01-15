@@ -106,7 +106,7 @@ function estimateAudioDuration(text: string): number {
  * @param startSearchIndex - Index to start searching from (for sequential sections)
  * @returns Word index where section starts, or -1 if not found
  */
-function findSectionStartWordIndex(
+export function findSectionStartWordIndex(
   sectionText: string,
   words: readonly string[],
   startSearchIndex: number = 0
@@ -122,7 +122,7 @@ function findSectionStartWordIndex(
   if (sectionWords.length === 0) return -1;
 
   // Search for matching sequence in words array
-  for (let i = startSearchIndex; i < words.length - sectionWords.length; i++) {
+  for (let i = startSearchIndex; i <= words.length - sectionWords.length; i++) {
     let matchCount = 0;
     for (let j = 0; j < sectionWords.length; j++) {
       const word = words[i + j].toLowerCase().replace(/[^\w]/g, '');
