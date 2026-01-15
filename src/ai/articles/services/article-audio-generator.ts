@@ -16,6 +16,7 @@ import { generateAudioFromMarkdown } from './tts-generator';
 import { uploadAudioToStrapi } from './audio-uploader';
 import type { AudioUploadResult, TTSConfig, TimestampType } from './tts-types';
 import { TTS_CONFIG } from '../config';
+import type { DocumentService, PostDocument } from '../../../types/strapi';
 
 // ============================================================================
 // Types
@@ -179,11 +180,7 @@ export async function generateAndUploadArticleAudio(
  * Post document with populated games relation.
  * Used for type safety when accessing post properties.
  */
-interface PostWithGames {
-  readonly documentId: string;
-  readonly title?: string | null;
-  readonly content?: string | null;
-  readonly slug?: string | null;
+interface PostWithGames extends PostDocument {
   games?: ReadonlyArray<{
     readonly slug?: string | null;
   }> | null;
@@ -218,12 +215,12 @@ export async function generateAudioForExistingArticle(
 ): Promise<GenerateArticleAudioResult | null> {
   try {
     // Fetch the post
-    const postService = strapi.documents('api::post.post');
+    const postService = strapi.documents('api::post.post') as DocumentService<PostWithGames>;
     const post = await postService.findOne({
       documentId: postDocumentId,
       locale,
       populate: ['games'],
-    }) as PostWithGames | null;
+    });
 
     if (!post) {
       strapi.log.error(`[ArticleAudioGen] Post not found: ${postDocumentId}`);

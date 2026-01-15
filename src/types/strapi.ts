@@ -233,6 +233,19 @@ export interface SourceContentDocument extends StrapiDocument {
 }
 
 /**
+ * Post document
+ */
+export interface PostDocument extends StrapiDocument {
+  title: string;
+  slug: string;
+  content: string | null;
+  description: string | null;
+  excerpt: string | null;
+  audioFile?: unknown;
+  chapterFile?: unknown;
+}
+
+/**
  * Domain quality document (aggregate domain scores)
  */
 export interface DomainQualityDocument extends StrapiDocument {
@@ -293,6 +306,14 @@ export interface DocumentPublishOptions {
 }
 
 /**
+ * Document action result (for delete/publish operations)
+ */
+export interface DocumentActionResult<T> {
+  documentId: string;
+  entries: T[];
+}
+
+/**
  * Generic document service interface
  */
 export interface DocumentService<T extends StrapiDocument> {
@@ -300,7 +321,7 @@ export interface DocumentService<T extends StrapiDocument> {
   findOne(options: { documentId: string } & DocumentQueryOptions): Promise<T | null>;
   create(options: DocumentCreateOptions<T>): Promise<T>;
   update(options: { documentId: string } & DocumentCreateOptions<T>): Promise<T>;
-  delete(options: { documentId: string; locale?: string }): Promise<T>;
-  publish(options: DocumentPublishOptions): Promise<T>;
+  delete(options: { documentId: string; locale?: string }): Promise<DocumentActionResult<T>>;
+  publish(options: DocumentPublishOptions): Promise<DocumentActionResult<T>>;
 }
 
