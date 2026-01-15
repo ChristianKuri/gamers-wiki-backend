@@ -2102,6 +2102,12 @@ export interface ApiPostPost extends Struct.CollectionTypeSchema {
       Schema.Attribute.Required;
     category: Schema.Attribute.Relation<'manyToOne', 'api::category.category'> &
       Schema.Attribute.Required;
+    chapterFile: Schema.Attribute.Media<'files'> &
+      Schema.Attribute.SetPluginOptions<{
+        i18n: {
+          localized: false;
+        };
+      }>;
     content: Schema.Attribute.RichText &
       Schema.Attribute.SetPluginOptions<{
         i18n: {
