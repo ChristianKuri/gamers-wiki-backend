@@ -1089,6 +1089,11 @@ export interface GameArticleDraft {
   readonly description: string;
   readonly tags: readonly string[];
   readonly markdown: string;
+  /**
+   * Markdown content before images were added.
+   * Use this for audio generation to avoid reading image URLs.
+   */
+  readonly markdownWithoutImages: string;
   readonly sources: readonly string[];
   readonly plan: ArticlePlan;
   readonly models: {

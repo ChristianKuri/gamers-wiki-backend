@@ -72,6 +72,28 @@
         }
       }
     },
+    "audioFile": {
+      "type": "media",
+      "multiple": false,
+      "required": false,
+      "allowedTypes": ["audios"],
+      "pluginOptions": {
+        "i18n": {
+          "localized": false
+        }
+      }
+    },
+    "chapterFile": {
+      "type": "media",
+      "multiple": false,
+      "required": false,
+      "allowedTypes": ["files"],
+      "pluginOptions": {
+        "i18n": {
+          "localized": false
+        }
+      }
+    },
     "category": {
       "type": "relation",
       "relation": "manyToOne",
