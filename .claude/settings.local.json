@@ -3,7 +3,14 @@
     "allow": [
       "Bash(npx tsc:*)",
       "mcp__github__pull_request_read",
-      "mcp__github__list_commits"
+      "mcp__github__list_commits",
+      "Bash(curl:*)",
+      "Bash(cat:*)",
+      "Bash(jq:*)",
+      "Bash(xargs ls:*)",
+      "Bash(head:*)",
+      "mcp__github__get_file_contents",
+      "Bash(npm install:*)"
     ]
   }
 }
