@@ -67,10 +67,11 @@ export default ({ strapi }: { strapi: Core.Strapi }) => ({
     // Check for SSE mode: path ends with -sse, query param, or body param
     const path = ctx.request?.url || ctx.url || '';
     const sseMode = 
-      path.includes('/generate-sse') ||
+      path.endsWith('/generate-sse') ||
       ctx.query?.sse === 'true' || 
       ctx.query?.sse === true || 
-      ctx.request?.body?.sse === true;
+      ctx.request?.body?.sse === true ||
+      ctx.request?.body?.sse === 'true';
 
     const parsed = bodySchema.safeParse(ctx.request?.body ?? {});
     if (!parsed.success) {
