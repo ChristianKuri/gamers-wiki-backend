@@ -10,6 +10,7 @@ import { importOrGetGameByIgdbId, GameImportError } from '../../game-fetcher/ser
 import { resolveIGDBGameIdFromQuery } from '../../game-fetcher/services/game-resolver';
 import { fetchIGDBImagesForGame } from '../../game-fetcher/services/igdb-images';
 import { isAuthenticated } from '../utils/admin-auth';
+import { generateAndUploadArticleAudio } from '../../../ai/articles/services/article-audio-generator';
 
 /**
  * Cost breakdown by phase stored in the database.
@@ -442,6 +443,19 @@ export default ({ strapi }: { strapi: Core.Strapi }) => ({
     const plan = extractStoredPlan(draft);
     const sources = extractStoredSources(draft.sources);
 
+    // ===== AUDIO GENERATION =====
+    // Generate audio from article markdown content (BEFORE images to avoid reading URLs)
+    const audioResult = await generateAndUploadArticleAudio({
+      markdown: draft.markdownWithoutImages,
+      articleTitle: draft.title,
+      gameSlug: game.slug,
+      articleSlug: slugify(draft.title),
+      strapi,
+    });
+
+    const audioFileId = audioResult?.id;
+    const chapterFileId = audioResult?.chapterFileId;
+
     // Create a draft post (Strapi draftAndPublish: true)
     // Note: Strapi's UID auto-generation doesn't trigger via Document Service API,
     // so we must generate the slug ourselves.
@@ -470,6 +484,14 @@ export default ({ strapi }: { strapi: Core.Strapi }) => ({
         // Media relations use the numeric ID directly
         ...(draft.imageMetadata?.heroImage?.id && {
           featuredImage: draft.imageMetadata.heroImage.id,
+        }),
+        // Set audio file if audio generation succeeded
+        ...(audioFileId && {
+          audioFile: audioFileId,
+        }),
+        // Set chapter file if chapters were generated
+        ...(chapterFileId && {
+          chapterFile: chapterFileId,
         }),
       } as any,
     } as any);

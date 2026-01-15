@@ -976,6 +976,53 @@ export const IMAGE_DIMENSION_CONFIG = {
 } as const;
 
 // ============================================================================
+// TTS (Text-to-Speech) Configuration
+// ============================================================================
+
+export const TTS_CONFIG = {
+  /**
+   * Whether TTS generation is enabled.
+   * Set TTS_ENABLED=false in .env to disable audio generation globally.
+   * Useful for debugging or emergency shutoff if API is down.
+   */
+  ENABLED: process.env.TTS_ENABLED !== 'false',
+  /**
+   * Inworld TTS API endpoint.
+   */
+  API_URL: 'https://api.inworld.ai/tts/v1/voice',
+  /**
+   * Default voice ID for Inworld AI TTS.
+   * Dennis is a natural-sounding male voice suitable for gaming content.
+   */
+  DEFAULT_VOICE_ID: 'Dennis',
+  /**
+   * Default model ID for Inworld AI TTS.
+   * inworld-tts-1-max is the highest quality model.
+   */
+  DEFAULT_MODEL_ID: 'inworld-tts-1-max',
+  /**
+   * Default timestamp type for audio generation.
+   * WORD: Word-level timing for accurate chapter markers (recommended)
+   * CHARACTER: Character-level timing for karaoke/lipsync features
+   * TIMESTAMP_TYPE_UNSPECIFIED: No timestamps (faster generation, no chapters)
+   */
+  DEFAULT_TIMESTAMP_TYPE: 'WORD' as const,
+  /**
+   * Maximum characters per TTS chunk.
+   * Inworld API limit is 2000, use 1900 for safety buffer.
+   */
+  MAX_CHUNK_SIZE: 1900,
+  /**
+   * Maximum retry attempts per chunk.
+   */
+  MAX_RETRIES: 3,
+  /**
+   * Initial retry delay in milliseconds.
+   */
+  RETRY_DELAY_MS: 1000,
+} as const;
+
+// ============================================================================
 // Cleaner Agent Configuration
 // ============================================================================
 
@@ -1308,6 +1355,7 @@ export const CONFIG = {
   specialist: SPECIALIST_CONFIG,
   reviewer: REVIEWER_CONFIG,
   fixer: FIXER_CONFIG,
+  tts: TTS_CONFIG,
   cleaner: CLEANER_CONFIG,
   retry: RETRY_CONFIG,
   generator: GENERATOR_CONFIG,
@@ -1546,6 +1594,22 @@ function validateConfiguration(): void {
   validatePositive(IMAGE_DOWNLOADER_CONFIG.TIMEOUT_MS, 'IMAGE_DOWNLOADER_CONFIG.TIMEOUT_MS');
   validatePositive(IMAGE_DOWNLOADER_CONFIG.MAX_SIZE_BYTES, 'IMAGE_DOWNLOADER_CONFIG.MAX_SIZE_BYTES');
   validatePositive(IMAGE_DOWNLOADER_CONFIG.MAX_RETRIES, 'IMAGE_DOWNLOADER_CONFIG.MAX_RETRIES');
+
+  // TTS Config
+  validatePositive(TTS_CONFIG.MAX_CHUNK_SIZE, 'TTS_CONFIG.MAX_CHUNK_SIZE');
+  validatePositive(TTS_CONFIG.MAX_RETRIES, 'TTS_CONFIG.MAX_RETRIES');
+  validatePositive(TTS_CONFIG.RETRY_DELAY_MS, 'TTS_CONFIG.RETRY_DELAY_MS');
+  if (TTS_CONFIG.MAX_CHUNK_SIZE > 2000) {
+    throw new ConfigValidationError(
+      `TTS_CONFIG.MAX_CHUNK_SIZE (${TTS_CONFIG.MAX_CHUNK_SIZE}) cannot exceed Inworld API limit of 2000 characters`
+    );
+  }
+  // Validate INWORLD_API_KEY is set when TTS is enabled
+  if (TTS_CONFIG.ENABLED && !process.env.INWORLD_API_KEY) {
+    throw new ConfigValidationError(
+      'TTS_CONFIG.ENABLED is true but INWORLD_API_KEY is not set in environment'
+    );
+  }
 }
 
 // Run validation at module load time

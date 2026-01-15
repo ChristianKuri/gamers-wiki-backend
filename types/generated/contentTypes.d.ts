@@ -2092,10 +2092,22 @@ export interface ApiPostPost extends Struct.CollectionTypeSchema {
           localized: false;
         };
       }>;
+    audioFile: Schema.Attribute.Media<'audios'> &
+      Schema.Attribute.SetPluginOptions<{
+        i18n: {
+          localized: false;
+        };
+      }>;
     author: Schema.Attribute.Relation<'manyToOne', 'api::author.author'> &
       Schema.Attribute.Required;
     category: Schema.Attribute.Relation<'manyToOne', 'api::category.category'> &
       Schema.Attribute.Required;
+    chapterFile: Schema.Attribute.Media<'files'> &
+      Schema.Attribute.SetPluginOptions<{
+        i18n: {
+          localized: false;
+        };
+      }>;
     content: Schema.Attribute.RichText &
       Schema.Attribute.SetPluginOptions<{
         i18n: {

@@ -220,6 +220,47 @@ export async function getOrCreateArticleFolder(
 }
 
 /**
+ * Ensures a folder structure exists by path.
+ * Creates all parent folders if they don't exist.
+ *
+ * @param deps - Service dependencies
+ * @param folderPath - Full folder path (e.g., "/audio/game-slug/article-slug")
+ * @returns Folder ID
+ */
+export async function ensureFolderExists(
+  deps: FolderServiceDeps,
+  folderPath: string
+): Promise<number> {
+  const { logger } = deps;
+
+  // Remove leading/trailing slashes and split into segments
+  const segments = folderPath.split('/').filter(segment => segment.length > 0);
+
+  if (segments.length === 0) {
+    throw new Error(`Invalid folder path: ${folderPath}`);
+  }
+
+  let currentParentId: number | null = null;
+  let parentPath = '/';
+
+  // Create each segment of the path
+  for (const segment of segments) {
+    const currentPath = parentPath === '/' ? `/${segment}` : `${parentPath}/${segment}`;
+    const folder = await getOrCreateFolder(deps, segment, currentParentId, parentPath);
+    currentParentId = folder.id;
+    parentPath = currentPath;
+  }
+
+  if (currentParentId === null) {
+    throw new Error(`Failed to create folder: ${folderPath}`);
+  }
+
+  logger?.debug(`[FolderService] Ensured folder exists: ${folderPath} (id: ${currentParentId})`);
+
+  return currentParentId;
+}
+
+/**
  * Links a file to a folder and updates its folder_path.
  *
  * @param deps - Service dependencies

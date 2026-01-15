@@ -1447,6 +1447,8 @@ export async function generateGameArticleDraft(
 
   // ===== PHASE 7: IMAGE PHASE (OPTIONAL) =====
   // Runs after validation to work with final article content
+  // Save markdown WITHOUT images for audio generation (clean content only)
+  const markdownWithoutImages = currentMarkdown;
   let finalMarkdown = currentMarkdown;
   let imagePhaseResult: ImagePhaseResult | undefined;
   let imagePhaseTokenUsage: TokenUsage = createEmptyTokenUsage();
@@ -1531,6 +1533,7 @@ export async function generateGameArticleDraft(
     description: articleMetadata.description,
     tags: articleMetadata.tags,
     markdown: finalMarkdown,
+    markdownWithoutImages, // Clean content for audio generation
     sources,
     plan,
   };
