@@ -985,7 +985,7 @@ export const TTS_CONFIG = {
    * Set TTS_ENABLED=false in .env to disable audio generation globally.
    * Useful for debugging or emergency shutoff if API is down.
    */
-  ENABLED: true,
+  ENABLED: process.env.TTS_ENABLED !== 'false',
   /**
    * Inworld TTS API endpoint.
    */
