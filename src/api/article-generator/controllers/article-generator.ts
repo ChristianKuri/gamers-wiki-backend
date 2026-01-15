@@ -161,6 +161,7 @@ export default ({ strapi }: { strapi: Core.Strapi }) => ({
         if (heartbeatInterval) {
           clearInterval(heartbeatInterval);
         }
+        return ctx;
       } else {
         // Non-SSE: use Koa ctx
         if (code === 'UNAUTHORIZED') {
