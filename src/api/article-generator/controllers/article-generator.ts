@@ -109,6 +109,9 @@ export default ({ strapi }: { strapi: Core.Strapi }) => ({
       // Track if response is still writable
       res.on('close', () => {
         isOpen = false;
+        if (heartbeatInterval) {
+          clearInterval(heartbeatInterval);
+        }
       });
 
       // Set up heartbeat to keep connection alive and force buffer flushing
