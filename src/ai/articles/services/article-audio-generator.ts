@@ -147,6 +147,7 @@ export async function generateAndUploadArticleAudio(
       buffer: audioResult.buffer,
       filename: `${articleSlug}-audio`,
       gameSlug,
+      articleSlug,
       articleTitle,
       voice: ttsConfig?.voice || TTS_CONFIG.DEFAULT_VOICE_ID,
       model: ttsConfig?.model || TTS_CONFIG.DEFAULT_MODEL_ID,

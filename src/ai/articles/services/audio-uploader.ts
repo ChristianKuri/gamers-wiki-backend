@@ -58,6 +58,8 @@ export interface AudioUploadInput {
   readonly filename: string;
   /** Game slug for folder organization */
   readonly gameSlug: string;
+  /** Article slug for folder organization */
+  readonly articleSlug: string;
   /** Article title for metadata */
   readonly articleTitle: string;
   /** Voice ID used for generation */
@@ -187,7 +189,7 @@ function generateWebVTTChapters(chapters: readonly AudioChapter[]): string {
 export async function uploadAudioToStrapi(
   input: AudioUploadInput
 ): Promise<AudioUploadResult> {
-  const { buffer, filename, gameSlug, articleTitle, voice, model, strapi } = input;
+  const { buffer, filename, gameSlug, articleSlug, articleTitle, voice, model, strapi } = input;
 
   const sanitizedFilename = sanitizeFilename(filename);
   const fullFilename = `${sanitizedFilename}.${AUDIO_EXTENSION}`;
@@ -195,7 +197,6 @@ export async function uploadAudioToStrapi(
   strapi.log.info(`[AudioUploader] Uploading: ${fullFilename} (${buffer.length} bytes)`);
 
   // Create folder structure: /audio/{gameSlug}/{articleSlug}/
-  const articleSlug = sanitizeFilename(articleTitle);
   const folderPath = `/audio/${gameSlug}/${articleSlug}`;
 
   let folderId: number | undefined;
