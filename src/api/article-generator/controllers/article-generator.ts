@@ -64,8 +64,8 @@ export default ({ strapi }: { strapi: Core.Strapi }) => ({
       return ctx.badRequest('AI is not configured. Set OPENROUTER_API_KEY environment variable.');
     }
 
-    // Check for SSE mode: path ends with -sse, query param, or body param
-    const path = ctx.request?.url || ctx.url || '';
+    // Check for SSE mode: path ends with -sse, query param (?sse=true), or body param (sse: true)
+    const path = ctx.request?.path || ctx.path || '';
     const sseMode = 
       path.endsWith('/generate-sse') ||
       ctx.query?.sse === 'true' || 
