@@ -2,6 +2,8 @@
  * Article Generator API Routes
  *
  * These are available at /api/article-generator/*
+ * 
+ * Both routes use the same handler - SSE mode is enabled via `?sse=true` query param or `sse: true` in body.
  */
 export default {
   routes: [
@@ -17,7 +19,7 @@ export default {
     {
       method: 'POST',
       path: '/article-generator/generate-sse',
-      handler: 'article-generator-sse.generateSSE',
+      handler: 'article-generator.generate',
       config: {
         auth: false,
         policies: [],
