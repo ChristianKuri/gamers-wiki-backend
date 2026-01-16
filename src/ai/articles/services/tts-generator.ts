@@ -24,7 +24,7 @@ import type {
   MP3ChunkData,
 } from './tts-types';
 import { TTS_CONFIG } from '../config';
-import { concatenateMP3Buffers } from './mp3-utils';
+import { concatenateMP3Buffers } from './mp3-builder';
 
 // ============================================================================
 // Chapter Generation
