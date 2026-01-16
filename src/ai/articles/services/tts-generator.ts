@@ -11,8 +11,20 @@
  * - Chapter marker generation for H2 sections
  */
 
-import type { TTSConfig, AudioGenerationResult, InworldTTSRequest, InworldTTSResponse, AudioChapter, TimestampType, WordAlignment, CharacterAlignment } from './tts-types';
+import type {
+  TTSConfig,
+  AudioGenerationResult,
+  InworldTTSRequest,
+  InworldTTSResponse,
+  AudioChapter,
+  TimestampType,
+  WordAlignment,
+  CharacterAlignment,
+  SectionAwareChunk,
+  MP3ChunkData,
+} from './tts-types';
 import { TTS_CONFIG } from '../config';
+import { concatenateMP3Buffers } from './mp3-utils';
 
 // ============================================================================
 // Chapter Generation
@@ -304,6 +316,203 @@ function splitBySentences(text: string): string[] {
 }
 
 // ============================================================================
+// Section-Aware Chunking
+// ============================================================================
+
+/**
+ * Splits a single section into chunks when it exceeds MAX_CHUNK_SIZE.
+ * Tries to split by paragraphs first, then by sentences if needed.
+ *
+ * @param sectionText - Plain text content of the section
+ * @param sectionIndex - Index of the H2 section
+ * @param sectionHeading - H2 heading text
+ * @returns Array of section-aware chunks
+ */
+function splitSectionIntoChunks(
+  sectionText: string,
+  sectionIndex: number,
+  sectionHeading: string
+): SectionAwareChunk[] {
+  const chunks: SectionAwareChunk[] = [];
+  const paragraphs = sectionText.split(/\n\s*\n/).filter((p) => p.trim());
+
+  let currentChunk = '';
+  let isFirst = true;
+
+  for (const paragraph of paragraphs) {
+    const trimmed = paragraph.trim();
+    if (!trimmed) continue;
+
+    // Include heading in first chunk of section
+    const prefix = isFirst ? `${sectionHeading}. ` : '';
+    const textToAdd = prefix + trimmed;
+
+    if (currentChunk.length + textToAdd.length + 2 > TTS_CONFIG.MAX_CHUNK_SIZE) {
+      // Save current chunk
+      if (currentChunk.trim()) {
+        chunks.push({
+          text: currentChunk.trim(),
+          sectionIndex,
+          sectionHeading,
+          isFirstChunkOfSection: chunks.length === 0,
+          source: 'paragraph',
+        });
+        isFirst = false;
+      }
+
+      // Handle oversized paragraph
+      if (textToAdd.length > TTS_CONFIG.MAX_CHUNK_SIZE) {
+        const sentenceChunks = splitBySentencesWithMeta(
+          trimmed,
+          sectionIndex,
+          sectionHeading,
+          chunks.length === 0
+        );
+        chunks.push(...sentenceChunks);
+        currentChunk = '';
+        isFirst = false;
+      } else {
+        currentChunk = textToAdd;
+      }
+    } else {
+      currentChunk = currentChunk ? `${currentChunk}\n\n${textToAdd}` : textToAdd;
+    }
+  }
+
+  // Save final chunk
+  if (currentChunk.trim()) {
+    chunks.push({
+      text: currentChunk.trim(),
+      sectionIndex,
+      sectionHeading,
+      isFirstChunkOfSection: chunks.length === 0,
+      source: 'paragraph',
+    });
+  }
+
+  return chunks;
+}
+
+/**
+ * Splits text by sentences with section metadata.
+ * Used when a paragraph exceeds MAX_CHUNK_SIZE.
+ *
+ * @param text - Text to split
+ * @param sectionIndex - Section index
+ * @param sectionHeading - Section heading
+ * @param isFirstOfSection - Whether this starts the section
+ * @returns Array of section-aware chunks
+ */
+function splitBySentencesWithMeta(
+  text: string,
+  sectionIndex: number,
+  sectionHeading: string,
+  isFirstOfSection: boolean
+): SectionAwareChunk[] {
+  const chunks: SectionAwareChunk[] = [];
+  const sentences = text.match(/[^.!?]+[.!?]+\s*/g) || [text];
+
+  let currentChunk = '';
+  let isFirst = isFirstOfSection;
+
+  for (const sentence of sentences) {
+    // Include heading in first chunk
+    const prefix = isFirst && currentChunk === '' ? `${sectionHeading}. ` : '';
+    const textToAdd = prefix + sentence;
+
+    if (currentChunk.length + textToAdd.length > TTS_CONFIG.MAX_CHUNK_SIZE) {
+      if (currentChunk.trim()) {
+        chunks.push({
+          text: currentChunk.trim(),
+          sectionIndex,
+          sectionHeading,
+          isFirstChunkOfSection: isFirst && chunks.length === 0,
+          source: 'sentence',
+        });
+        isFirst = false;
+      }
+      currentChunk = sentence;
+    } else {
+      currentChunk += textToAdd;
+    }
+  }
+
+  if (currentChunk.trim()) {
+    chunks.push({
+      text: currentChunk.trim(),
+      sectionIndex,
+      sectionHeading,
+      isFirstChunkOfSection: isFirst && chunks.length === 0,
+      source: 'sentence',
+    });
+  }
+
+  return chunks;
+}
+
+/**
+ * Splits text into chunks aligned with H2 sections where possible.
+ *
+ * Strategy:
+ * 1. If a section fits within MAX_CHUNK_SIZE, keep it as one chunk
+ * 2. If a section is too large, sub-chunk by paragraphs
+ * 3. If a paragraph is too large, sub-chunk by sentences
+ *
+ * This improves chapter marker accuracy since chunks align with sections.
+ *
+ * @param plainText - Plain text content (markdown converted)
+ * @param sections - Parsed H2 sections from original markdown
+ * @returns Array of section-aware chunks
+ */
+export function splitTextIntoSectionAwareChunks(
+  plainText: string,
+  sections: readonly MarkdownSection[]
+): SectionAwareChunk[] {
+  const chunks: SectionAwareChunk[] = [];
+
+  // If no sections, fall back to paragraph-based chunking
+  if (sections.length === 0) {
+    const textChunks = splitTextIntoChunks(plainText);
+    return textChunks.map((text, i) => ({
+      text,
+      sectionIndex: -1,
+      sectionHeading: '',
+      isFirstChunkOfSection: i === 0,
+      source: 'paragraph' as const,
+    }));
+  }
+
+  // Process each section
+  for (let sectionIndex = 0; sectionIndex < sections.length; sectionIndex++) {
+    const section = sections[sectionIndex];
+    const sectionPlainText = convertMarkdownToPlainText(section.content);
+
+    if (!sectionPlainText.trim()) continue;
+
+    // Prepend section heading to content for TTS
+    const headingText = section.heading;
+    const fullSectionText = `${headingText}. ${sectionPlainText}`;
+
+    if (fullSectionText.length <= TTS_CONFIG.MAX_CHUNK_SIZE) {
+      // Section fits in one chunk - ideal case
+      chunks.push({
+        text: fullSectionText,
+        sectionIndex,
+        sectionHeading: headingText,
+        isFirstChunkOfSection: true,
+        source: 'section',
+      });
+    } else {
+      // Section needs to be split
+      const sectionChunks = splitSectionIntoChunks(sectionPlainText, sectionIndex, headingText);
+      chunks.push(...sectionChunks);
+    }
+  }
+
+  return chunks;
+}
+
+// ============================================================================
 // Inworld API Integration
 // ============================================================================
 
@@ -443,19 +652,28 @@ export async function generateAudioFromMarkdown(
       throw new Error('No text content after markdown conversion');
     }
 
-    // Split into chunks if needed
-    const chunks = splitTextIntoChunks(plainText);
+    // Split into section-aware chunks for better chapter alignment
+    const sectionChunks = splitTextIntoSectionAwareChunks(plainText, sections);
+
+    config.strapi?.log.info(
+      `[TTS] Split into ${sectionChunks.length} chunks (${sectionChunks.filter((c) => c.source === 'section').length} full sections)`
+    );
 
     // Generate audio for each chunk
-    const audioChunks: Buffer[] = [];
+    const mp3ChunkData: MP3ChunkData[] = [];
     const allWords: string[] = [];
     const allWordStartTimes: number[] = [];
     const allWordEndTimes: number[] = [];
     let cumulativeTime = 0;
 
-    for (const chunk of chunks) {
-      const result = await generateAudioChunk(chunk, voiceId, modelId, apiKey, timestampType);
-      audioChunks.push(result.buffer);
+    for (const chunkMeta of sectionChunks) {
+      const result = await generateAudioChunk(chunkMeta.text, voiceId, modelId, apiKey, timestampType);
+
+      mp3ChunkData.push({
+        buffer: result.buffer,
+        timestampInfo: result.timestampInfo,
+        chunkMeta,
+      });
 
       // Collect word alignment data if available
       if (result.timestampInfo?.wordAlignment) {
@@ -463,8 +681,8 @@ export async function generateAudioFromMarkdown(
 
         // Adjust timestamps to be cumulative across chunks
         allWords.push(...words);
-        allWordStartTimes.push(...wordStartTimeSeconds.map(t => t + cumulativeTime));
-        allWordEndTimes.push(...wordEndTimeSeconds.map(t => t + cumulativeTime));
+        allWordStartTimes.push(...wordStartTimeSeconds.map((t) => t + cumulativeTime));
+        allWordEndTimes.push(...wordEndTimeSeconds.map((t) => t + cumulativeTime));
 
         // Update cumulative time to the end of this chunk
         if (wordEndTimeSeconds.length > 0) {
@@ -473,9 +691,14 @@ export async function generateAudioFromMarkdown(
       }
     }
 
-    // Merge all chunks by concatenating buffers
-    // MP3 frames can be safely concatenated without re-encoding
-    const finalBuffer = Buffer.concat(audioChunks);
+    // Properly concatenate MP3 buffers with accurate Xing header for web seeking
+    const mp3Buffers = mp3ChunkData.map((d) => d.buffer);
+    const concatenated = concatenateMP3Buffers(mp3Buffers);
+    const finalBuffer = concatenated.buffer;
+
+    config.strapi?.log.info(
+      `[TTS] MP3 concatenation complete: ${concatenated.frameCount} frames, ${concatenated.duration.toFixed(1)}s duration`
+    );
 
     const durationMs = Date.now() - startTime;
 
@@ -541,24 +764,43 @@ export async function generateAudioFromMarkdown(
 
         totalAudioDuration = allWordEndTimes[allWordEndTimes.length - 1];
       } else {
-        // Fallback to estimation if no word alignment data
-        config.strapi?.log.info(`[TTS] Generating ${sections.length} chapter markers using estimation (no word timestamps)...`);
+        // Fallback: Use actual chunk durations from MP3 concatenation
+        // This is more accurate than text-based estimation
+        config.strapi?.log.info(
+          `[TTS] Generating ${sections.length} chapter markers using chunk durations (no word timestamps)...`
+        );
 
+        // Build a map of section index to cumulative start time
+        const sectionStartTimes = new Map<number, number>();
         let currentTime = 0;
 
-        for (const section of sections) {
-          const sectionPlainText = convertMarkdownToPlainText(section.content);
-          const sectionDuration = estimateAudioDuration(sectionPlainText);
+        for (let i = 0; i < mp3ChunkData.length; i++) {
+          const chunkMeta = mp3ChunkData[i].chunkMeta;
+          const chunkDuration = concatenated.chunkDurations[i] || 0;
+
+          // Record start time for first chunk of each section
+          if (chunkMeta.isFirstChunkOfSection && chunkMeta.sectionIndex >= 0) {
+            sectionStartTimes.set(chunkMeta.sectionIndex, currentTime);
+          }
+
+          currentTime += chunkDuration;
+        }
+
+        // Generate chapters from section start times
+        for (let i = 0; i < sections.length; i++) {
+          const section = sections[i];
+          const startTime = sectionStartTimes.get(i) ?? 0;
+          const endTime = i < sections.length - 1 ? (sectionStartTimes.get(i + 1) ?? currentTime) : currentTime;
 
           chapters.push({
             title: section.heading,
-            startTime: currentTime,
-            endTime: currentTime + sectionDuration,
+            startTime,
+            endTime,
           });
 
-          config.strapi?.log.info(`[TTS] Chapter: "${section.heading}" (${currentTime.toFixed(1)}s - ${(currentTime + sectionDuration).toFixed(1)}s) [estimated]`);
-
-          currentTime += sectionDuration;
+          config.strapi?.log.info(
+            `[TTS] Chapter: "${section.heading}" (${startTime.toFixed(1)}s - ${endTime.toFixed(1)}s) [from chunk durations]`
+          );
         }
 
         totalAudioDuration = currentTime;
@@ -576,12 +818,15 @@ export async function generateAudioFromMarkdown(
         }
       : undefined;
 
+    // Use concatenated duration as fallback if word alignment duration not available
+    const finalAudioDuration = totalAudioDuration ?? concatenated.duration;
+
     return {
       buffer: finalBuffer,
       durationMs,
-      chunkCount: chunks.length,
+      chunkCount: sectionChunks.length,
       chapters,
-      audioDurationSeconds: totalAudioDuration,
+      audioDurationSeconds: finalAudioDuration,
       timestampType,
       wordAlignment,
     };
