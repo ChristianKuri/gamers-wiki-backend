@@ -343,8 +343,8 @@ function splitSectionIntoChunks(
     const trimmed = paragraph.trim();
     if (!trimmed) continue;
 
-    // Include heading in first chunk of section
-    const prefix = isFirst ? `${sectionHeading}. ` : '';
+    // Include heading in first chunk of section (only when starting a new chunk)
+    const prefix = isFirst && currentChunk === '' ? `${sectionHeading}. ` : '';
     const textToAdd = prefix + trimmed;
 
     if (currentChunk.length + textToAdd.length + 2 > TTS_CONFIG.MAX_CHUNK_SIZE) {
@@ -777,7 +777,11 @@ export async function generateAudioFromMarkdown(
           }
         }
 
-        totalAudioDuration = allWordEndTimes[allWordEndTimes.length - 1];
+        // Use the last chapter's end time as total duration, or fall back to word alignment
+        // This ensures estimated chapters are included in the total duration
+        totalAudioDuration = chapters.length > 0 && chapters[chapters.length - 1]?.endTime
+          ? chapters[chapters.length - 1].endTime
+          : allWordEndTimes[allWordEndTimes.length - 1];
       } else {
         // Fallback: Use actual chunk durations from MP3 concatenation
         // This is more accurate than text-based estimation
@@ -820,6 +824,17 @@ export async function generateAudioFromMarkdown(
 
         totalAudioDuration = currentTime;
       }
+
+      // Always use concatenated duration as source of truth (most accurate)
+      // Update last chapter's endTime to match actual audio duration
+      const actualDuration = concatenated.duration;
+      if (chapters.length > 0) {
+        chapters[chapters.length - 1] = {
+          ...chapters[chapters.length - 1],
+          endTime: actualDuration,
+        };
+      }
+      totalAudioDuration = actualDuration;
 
       config.strapi?.log.info(`[TTS] Total audio duration: ${totalAudioDuration.toFixed(1)} seconds (${(totalAudioDuration / 60).toFixed(1)} minutes)`);
     }

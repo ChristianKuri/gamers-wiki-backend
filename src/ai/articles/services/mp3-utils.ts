@@ -218,27 +218,35 @@ export function parseFrameHeader(header: Buffer): MP3FrameInfo {
   // Parse MPEG version (bits 19-20, in byte 1 bits 3-4)
   const versionBits = (header[1] >> 3) & 0x03;
   let mpegVersion: 1 | 2 | 2.5;
-  if (versionBits === 3) {
-    mpegVersion = 1;
-  } else if (versionBits === 2) {
-    mpegVersion = 2;
-  } else if (versionBits === 0) {
-    mpegVersion = 2.5;
-  } else {
-    return INVALID_FRAME_INFO; // Reserved
+  switch (versionBits) {
+    case 3:
+      mpegVersion = 1;
+      break;
+    case 2:
+      mpegVersion = 2;
+      break;
+    case 0:
+      mpegVersion = 2.5;
+      break;
+    default:
+      return INVALID_FRAME_INFO; // Reserved
   }
 
   // Parse layer (bits 17-18, in byte 1 bits 1-2)
   const layerBits = (header[1] >> 1) & 0x03;
   let layer: 1 | 2 | 3;
-  if (layerBits === 3) {
-    layer = 1;
-  } else if (layerBits === 2) {
-    layer = 2;
-  } else if (layerBits === 1) {
-    layer = 3;
-  } else {
-    return INVALID_FRAME_INFO; // Reserved
+  switch (layerBits) {
+    case 3:
+      layer = 1;
+      break;
+    case 2:
+      layer = 2;
+      break;
+    case 1:
+      layer = 3;
+      break;
+    default:
+      return INVALID_FRAME_INFO; // Reserved
   }
 
   // Parse bitrate (bits 12-15, in byte 2 bits 4-7)
