@@ -709,7 +709,7 @@ export function getImagesBySourceQuality(pool: ImagePool): readonly CollectedIma
  *
  * Considers ALL image sources (IGDB, source, web) and scores by:
  * - Article title relevance (description/query matching title keywords)
- * - Source quality (IGDB images get a bonus)
+ * - Source quality (base quality score)
  * - Image type (artwork gets a slight preference)
  *
  * @param pool - Image pool to select from
@@ -734,7 +734,7 @@ export function getBestHeroImage(
     .split(/\s+/)
     .filter((w) => w.length > 3);
 
-  // Score ALL images by title relevance (not just IGDB)
+  // Score ALL images by title relevance
   const scored = pool.images.map((img) => {
     let score = img.sourceQuality;
 
@@ -753,9 +753,6 @@ export function getBestHeroImage(
         if (queryLower.includes(keyword)) score += 15;
       }
     }
-
-    // Small boost for IGDB images (known quality)
-    if (img.source === 'igdb') score += 10;
 
     // Small boost for artwork type
     if (img.igdbType === 'artwork') score += 5;
