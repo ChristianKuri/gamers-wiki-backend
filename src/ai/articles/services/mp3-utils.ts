@@ -654,6 +654,23 @@ export function concatenateMP3Buffers(mp3Buffers: readonly Buffer[]): Concatenat
   // Use first chunk's frame info for Xing header format
   const firstFrameInfo = extractedChunks[0].firstFrameInfo;
 
+  // Validate that all chunks have a compatible format
+  for (let i = 1; i < extractedChunks.length; i++) {
+    const currentFrameInfo = extractedChunks[i].firstFrameInfo;
+    if (
+      currentFrameInfo.mpegVersion !== firstFrameInfo.mpegVersion ||
+      currentFrameInfo.sampleRate !== firstFrameInfo.sampleRate ||
+      currentFrameInfo.channelMode !== firstFrameInfo.channelMode
+    ) {
+      // Log the differing info for easier debugging
+      const firstInfoStr = `v${firstFrameInfo.mpegVersion} ${firstFrameInfo.sampleRate}Hz`;
+      const currentInfoStr = `v${currentFrameInfo.mpegVersion} ${currentFrameInfo.sampleRate}Hz`;
+      throw new Error(
+        `MP3 chunks have incompatible audio formats. Cannot concatenate. Chunk 0: ${firstInfoStr}, Chunk ${i}: ${currentInfoStr}`
+      );
+    }
+  }
+
   // Concatenate all audio data
   const audioData = Buffer.concat(extractedChunks.map((e) => e.audioData));
 
