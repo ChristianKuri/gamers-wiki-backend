@@ -79,6 +79,20 @@ export interface MP3FrameInfo {
   readonly valid: boolean;
 }
 
+/** Reusable invalid frame info object to avoid repeated allocations */
+const INVALID_FRAME_INFO: MP3FrameInfo = {
+  mpegVersion: 1,
+  layer: 3,
+  bitrate: 0,
+  sampleRate: 0,
+  padding: false,
+  channelMode: 0,
+  frameSize: 0,
+  samplesPerFrame: 0,
+  duration: 0,
+  valid: false,
+} as const;
+
 /**
  * Result of extracting MP3 frames from a buffer.
  */
@@ -193,25 +207,12 @@ export function getID3v1Size(buffer: Buffer): number {
  * @returns Parsed frame information
  */
 export function parseFrameHeader(header: Buffer): MP3FrameInfo {
-  const invalid: MP3FrameInfo = {
-    mpegVersion: 1,
-    layer: 3,
-    bitrate: 0,
-    sampleRate: 0,
-    padding: false,
-    channelMode: 0,
-    frameSize: 0,
-    samplesPerFrame: 0,
-    duration: 0,
-    valid: false,
-  };
-
-  if (header.length < 4) return invalid;
+  if (header.length < 4) return INVALID_FRAME_INFO;
 
   // Check sync word: first 11 bits must all be 1
   // Byte 0 must be 0xFF, and top 3 bits of byte 1 must be 0xE0
   if (header[0] !== 0xff || (header[1] & 0xe0) !== 0xe0) {
-    return invalid;
+    return INVALID_FRAME_INFO;
   }
 
   // Parse MPEG version (bits 19-20, in byte 1 bits 3-4)
@@ -224,7 +225,7 @@ export function parseFrameHeader(header: Buffer): MP3FrameInfo {
   } else if (versionBits === 0) {
     mpegVersion = 2.5;
   } else {
-    return invalid; // Reserved
+    return INVALID_FRAME_INFO; // Reserved
   }
 
   // Parse layer (bits 17-18, in byte 1 bits 1-2)
@@ -237,7 +238,7 @@ export function parseFrameHeader(header: Buffer): MP3FrameInfo {
   } else if (layerBits === 1) {
     layer = 3;
   } else {
-    return invalid; // Reserved
+    return INVALID_FRAME_INFO; // Reserved
   }
 
   // Parse bitrate (bits 12-15, in byte 2 bits 4-7)
@@ -247,7 +248,7 @@ export function parseFrameHeader(header: Buffer): MP3FrameInfo {
   if (bitrate === 0) {
     // 0 means free format or invalid
     if (bitrateIndex === 0 || bitrateIndex === 15) {
-      return invalid;
+      return INVALID_FRAME_INFO;
     }
   }
 
@@ -260,7 +261,7 @@ export function parseFrameHeader(header: Buffer): MP3FrameInfo {
         ? SAMPLE_RATE_TABLE_V2
         : SAMPLE_RATE_TABLE_V25;
   const sampleRate = sampleRateTable[sampleRateIndex];
-  if (sampleRate === 0) return invalid;
+  if (sampleRate === 0) return INVALID_FRAME_INFO;
 
   // Parse padding (bit 9, in byte 2 bit 1)
   const padding = ((header[2] >> 1) & 0x01) === 1;
@@ -611,27 +612,7 @@ export function concatenateMP3Buffers(mp3Buffers: readonly Buffer[]): Concatenat
     throw new Error('No MP3 buffers provided for concatenation');
   }
 
-  // Single buffer - still process to ensure clean output
-  if (mp3Buffers.length === 1) {
-    const extracted = extractAudioFrames(mp3Buffers[0]);
-    const xingHeader = generateXingHeader(
-      extracted.frameCount,
-      extracted.audioData.length,
-      extracted.firstFrameInfo,
-      extracted.framePositions
-    );
-
-    return {
-      buffer: Buffer.concat([xingHeader, extracted.audioData]),
-      duration: extracted.duration,
-      frameCount: extracted.frameCount,
-      chunkByteOffsets: [xingHeader.length],
-      chunkFrameOffsets: [0],
-      chunkDurations: [extracted.duration],
-    };
-  }
-
-  // Multiple buffers - extract and concatenate
+  // Extract and concatenate all buffers (handles single and multiple buffers uniformly)
   const extractedChunks: ExtractedMP3Data[] = [];
   let totalFrames = 0;
   let totalDuration = 0;

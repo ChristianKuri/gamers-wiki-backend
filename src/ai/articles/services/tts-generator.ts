@@ -431,7 +431,22 @@ function splitBySentencesWithMeta(
         });
         isFirst = false;
       }
-      currentChunk = sentence;
+
+      // Handle oversized sentences by truncating if necessary
+      if (textToAdd.length > TTS_CONFIG.MAX_CHUNK_SIZE) {
+        chunks.push({
+          text: textToAdd.substring(0, TTS_CONFIG.MAX_CHUNK_SIZE).trim(),
+          sectionIndex,
+          sectionHeading,
+          isFirstChunkOfSection: isFirst && chunks.length === 0,
+          source: 'sentence',
+        });
+        isFirst = false;
+        currentChunk = '';
+      } else {
+        // Use textToAdd to preserve the heading prefix
+        currentChunk = textToAdd;
+      }
     } else {
       currentChunk += textToAdd;
     }
