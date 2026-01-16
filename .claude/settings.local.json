@@ -12,7 +12,8 @@
       "mcp__github__get_file_contents",
       "Bash(npm install:*)",
       "Bash(git status:*)",
-      "Bash(grep:*)"
+      "Bash(grep:*)",
+      "Bash(npm run build:*)"
     ]
   }
 }

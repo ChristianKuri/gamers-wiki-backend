@@ -500,15 +500,7 @@ export function generateXingHeader(
   frameInfo: MP3FrameInfo,
   framePositions: readonly number[]
 ): Buffer {
-  // Create a frame that matches the source audio format
-  // We need to create a valid frame header that matches the source
   const { mpegVersion, sampleRate, channelMode } = frameInfo;
-
-  // For the Xing frame, we use a low bitrate to minimize size
-  // MPEG1 Layer3: 32kbps gives smallest frame
-  // MPEG2/2.5 Layer3: 8kbps gives smallest frame
-  const bitrateIndex = mpegVersion === 1 ? 1 : 1; // 32kbps for V1, 8kbps for V2/2.5
-  const bitrate = mpegVersion === 1 ? 32 : 8;
 
   // Find sample rate index
   const sampleRateTable: readonly number[] =
@@ -521,6 +513,14 @@ export function generateXingHeader(
   if (sampleRateIndex < 0 || sampleRateIndex > 2) {
     throw new Error(`Invalid sample rate: ${sampleRate}`);
   }
+
+  // Use 128kbps for the Xing frame - provides adequate frame size for all sample rates
+  // (16kHz-48kHz) and maximum compatibility. The Xing frame contains only metadata
+  // (no audio), so this bitrate doesn't affect audio quality.
+  // MPEG1 Layer 3: index 9 = 128kbps
+  // MPEG2/2.5 Layer 3: index 12 = 128kbps
+  const bitrateIndex = mpegVersion === 1 ? 9 : 12;
+  const bitrate = 128;
 
   // Calculate frame size for Xing frame
   const coefficient = mpegVersion === 1 ? 144 : 72;
@@ -554,22 +554,18 @@ export function generateXingHeader(
   const byte3 = channelMode << 6;
   xingFrame[3] = byte3;
 
-  // Calculate Xing header offset
+  // Calculate Xing header offset (depends on MPEG version and channel mode)
+  // This is where the Xing data starts after the side info
   let xingOffset: number;
   if (mpegVersion === 1) {
-    xingOffset = channelMode === 3 ? 21 : 36;
+    xingOffset = channelMode === 3 ? 21 : 36; // mono vs stereo
   } else {
     xingOffset = channelMode === 3 ? 13 : 21;
   }
   xingOffset += 4; // Add frame header size
 
-  // Ensure we have enough space
-  if (xingOffset + 116 > frameSize) {
-    // Need more space, recalculate with higher bitrate
-    throw new Error(
-      `Frame size ${frameSize} too small for Xing header at offset ${xingOffset}`
-    );
-  }
+  // Note: No size check needed - 128kbps guarantees adequate frame size
+  // for all supported sample rates (minimum 384 bytes at 48kHz, need 156 bytes max)
 
   // Write "Xing" magic
   XING_MAGIC.copy(xingFrame, xingOffset);
