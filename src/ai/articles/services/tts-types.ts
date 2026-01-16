@@ -112,6 +112,49 @@ export interface TimestampInfo {
   readonly characterAlignment?: CharacterAlignment;
 }
 
+// ============================================================================
+// Section-Aware Chunking Types
+// ============================================================================
+
+/**
+ * Chunk source type indicating how the chunk was created.
+ */
+export type ChunkSource = 'section' | 'paragraph' | 'sentence';
+
+/**
+ * Section-aware chunk metadata for TTS generation.
+ * Tracks which H2 section a chunk belongs to for better chapter alignment.
+ */
+export interface SectionAwareChunk {
+  /** The text content of this chunk */
+  readonly text: string;
+  /** Index of the H2 section this chunk belongs to (-1 if no sections) */
+  readonly sectionIndex: number;
+  /** H2 section heading text (empty string if no sections) */
+  readonly sectionHeading: string;
+  /** Whether this is the first chunk of the section */
+  readonly isFirstChunkOfSection: boolean;
+  /** How this chunk was created (section fit entirely, split by paragraph, or sentence) */
+  readonly source: ChunkSource;
+}
+
+/**
+ * MP3 chunk data with metadata from TTS API.
+ * Combines the raw audio buffer with timing and section information.
+ */
+export interface MP3ChunkData {
+  /** Raw MP3 buffer from API */
+  readonly buffer: Buffer;
+  /** Timestamp info from API (word/character alignment) */
+  readonly timestampInfo?: TimestampInfo;
+  /** Section-aware chunk metadata */
+  readonly chunkMeta: SectionAwareChunk;
+}
+
+// ============================================================================
+// Internal Types
+// ============================================================================
+
 /**
  * Internal: Inworld API request body for a single chunk.
  */
