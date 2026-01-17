@@ -44,7 +44,7 @@ const RETRYABLE_ERROR_PATTERNS = [
   /429/,
   // Network issues
   /network/i,
-  /timeout/i,
+  /fetch.*fail/i,  // Network fetch failures (TypeError: fetch failed)
   /ETIMEDOUT/,
   /ECONNRESET/,
   /ECONNREFUSED/,
@@ -74,6 +74,12 @@ const RETRYABLE_ERROR_PATTERNS = [
  */
 export function isRetryableError(error: unknown): boolean {
   if (!error) return false;
+
+  // Explicitly exclude timeout errors - they indicate timeout was too short, not a transient failure
+  // Retrying timeouts wastes money (request likely succeeded, just took too long)
+  if (error instanceof DOMException && error.name === 'TimeoutError') {
+    return false;
+  }
 
   const message = error instanceof Error ? error.message : String(error);
 

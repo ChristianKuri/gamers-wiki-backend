@@ -435,10 +435,11 @@ export const EDITOR_CONFIG = {
   OVERVIEW_LINES_IN_PROMPT: 10,
   /**
    * Timeout for Editor generateText calls in milliseconds.
-   * If the LLM takes longer than this, abort and retry.
-   * 30 seconds should be plenty for plan generation.
+   * Increased from 30s to 60s to handle large prompts (100k+ chars).
+   * Large prompts with many sources need more processing time.
+   * Timeouts here indicate prompt is too large or API is slow - not transient failures.
    */
-  TIMEOUT_MS: 30000,
+  TIMEOUT_MS: 60000,
 } as const;
 
 // ============================================================================
@@ -1046,17 +1047,29 @@ export const CLEANER_CONFIG = {
   BATCH_SIZE: 100,
   /**
    * Timeout for cleaning a single URL (ms).
-   * 180 seconds (3 min) to handle large content with two-step cleaning.
-   * Two-step does 2 LLM calls: clean (large input) + summarize (large output).
+   * Increased from 180s to 360s (6 min) to handle very large content.
+   * Two-step cleaning does 2 LLM calls, and large content (20k+ chars) needs more time.
+   * Timeouts here indicate content is too large or API is slow - not transient failures.
    */
-  TIMEOUT_MS: 180000,
+  TIMEOUT_MS: 360000,
   /**
    * Maximum retry attempts for cleaner LLM calls.
-   * Set to 0 (no retries) because cleaner failures are usually due to
-   * large/complex content that will fail again on retry. Retrying just
-   * wastes time (3+ min per retry with 180s timeout).
+   *
+   * Retryable failure modes (worth retrying):
+   * - Network errors: "TypeError: fetch failed", ECONNRESET, ECONNREFUSED
+   * - Rate limiting: 429 Too Many Requests
+   * - Server errors: 5xx responses, "service unavailable", "overloaded"
+   * - Schema validation: LLM output didn't match expected schema (non-deterministic)
+   *
+   * Non-retryable failure modes (handled by isRetryableError):
+   * - Timeout errors: Indicate TIMEOUT_MS is too short, not a transient failure.
+   *   Retrying wastes tokens since the request likely succeeded server-side.
+   * - Abort signals: User/system cancelled the operation intentionally.
+   *
+   * Set to 2 to allow recovery from transient network/API issues while
+   * avoiding wasted retries on content that consistently fails.
    */
-  MAX_RETRIES: 0,
+  MAX_RETRIES: 2,
   /**
    * Minimum content length (chars) to attempt cleaning.
    * Content below this is likely a scrape failure (JS-heavy site, paywall, etc.)
@@ -1184,9 +1197,11 @@ export const CLEANER_CONFIG = {
   PREFILTER_SNIPPET_LENGTH: 2000,
   /**
    * Timeout for pre-filter LLM call (ms).
-   * Short timeout since it's a simple relevance check.
+   * Increased from 20s to 40s to handle API latency/queueing.
+   * Most requests were timing out on attempt 1 and succeeding on attempt 2,
+   * indicating timeout was too short. Doubling ensures requests complete.
    */
-  PREFILTER_TIMEOUT_MS: 10000,
+  PREFILTER_TIMEOUT_MS: 40000,
   /**
    * Minimum relevanceToGaming score (0-100) to pass pre-filter.
    * Content below this is definitely not about video games.

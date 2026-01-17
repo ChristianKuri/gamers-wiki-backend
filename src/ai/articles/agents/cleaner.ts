@@ -495,7 +495,8 @@ export async function cleanSourcesBatch(
     log.debug(`Processing batch ${batchNum}/${totalBatches} (${batch.length} sources)...`);
 
     // Clean batch in parallel - use two-step if summarizerModel provided
-    const results = await Promise.all(
+    // Use Promise.allSettled to prevent one failure from crashing the entire batch
+    const settledResults = await Promise.allSettled(
       batch.map((source) => {
         if (useTwoStep && deps.summarizerModel) {
           // Two-step cleaning: better quality, cheaper
@@ -517,6 +518,28 @@ export async function cleanSourcesBatch(
         }
       })
     );
+
+    // Extract results from settled promises, handling both fulfilled and rejected
+    let batchFailures = 0;
+    const results = settledResults.map((settled, index) => {
+      if (settled.status === 'fulfilled') {
+        return settled.value;
+      } else {
+        // Log the error but return a safe fallback
+        batchFailures++;
+        const source = batch[index];
+        const errorMsg = settled.reason instanceof Error ? settled.reason.message : String(settled.reason);
+        log.warn(`Cleaning failed for ${source.url}: ${errorMsg}`);
+        return {
+          source: null,
+          tokenUsage: createEmptyTokenUsage(),
+        };
+      }
+    });
+
+    if (batchFailures > 0) {
+      log.warn(`Batch ${batchNum}/${totalBatches}: ${batchFailures}/${batch.length} sources failed (Promise.allSettled fallback)`);
+    }
 
     // Collect successful results and aggregate token usage
     for (const result of results) {
@@ -1611,9 +1634,40 @@ export async function preFilterSourcesBatch(
   log.info(`Pre-filtering ${sources.length} sources for relevance...`);
 
   // Run all pre-filters in parallel (they're cheap)
-  const results = await Promise.all(
+  // Use Promise.allSettled to prevent one hanging request from blocking the entire batch
+  const settledResults = await Promise.allSettled(
     sources.map((source) => preFilterSingleSource(source, deps))
   );
+
+  // Extract results from settled promises, handling both fulfilled and rejected
+  let prefilterFailures = 0;
+  const results = settledResults.map((settled, index) => {
+    if (settled.status === 'fulfilled') {
+      return settled.value;
+    } else {
+      // If pre-filter promise rejects (shouldn't happen due to try-catch, but handle it)
+      prefilterFailures++;
+      const source = sources[index];
+      const errorMsg = settled.reason instanceof Error ? settled.reason.message : String(settled.reason);
+      log.warn(`Pre-filter promise rejected unexpectedly for ${source.url}: ${errorMsg}`);
+      // Return fallback result (assume relevant to avoid filtering out potentially good content)
+      const domain = extractDomain(source.url);
+      return {
+        url: source.url,
+        domain,
+        title: source.title,
+        relevanceToGaming: 50,
+        relevanceToArticle: 50,
+        reason: `Pre-filter promise rejected: ${errorMsg.slice(0, 50)}`,
+        contentType: 'unknown',
+        tokenUsage: createEmptyTokenUsage(),
+      };
+    }
+  });
+
+  if (prefilterFailures > 0) {
+    log.warn(`Pre-filter: ${prefilterFailures}/${sources.length} sources failed (Promise.allSettled fallback, assigned relevance=50)`);
+  }
 
   // Use thresholds from deps or defaults
   const minGaming = deps.minGamingRelevance ?? CLEANER_CONFIG.PREFILTER_MIN_GAMING_RELEVANCE;
