@@ -66,7 +66,7 @@ export const AI_DEFAULT_MODELS = {
   ARTICLE_SCOUT: 'google/gemini-3-flash-preview',
   ARTICLE_SCOUT_BRIEFING: 'google/gemini-3-flash-preview',
   ARTICLE_EDITOR: 'google/gemini-3-flash-preview',
-  ARTICLE_SPECIALIST: 'x-ai/grok-4.1-fast',
+  ARTICLE_SPECIALIST: 'deepseek/deepseek-v3.2', //  x-ai/grok-4.1-fast | deepseek/deepseek-v3.2 | moonshotai/kimi-k2-thinking
   ARTICLE_METADATA: 'google/gemini-3-flash-preview',
   ARTICLE_REVIEWER: 'google/gemini-3-flash-preview',
   ARTICLE_FIXER: 'google/gemini-3-flash-preview',

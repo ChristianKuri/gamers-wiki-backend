@@ -64,6 +64,8 @@ const RETRYABLE_ERROR_PATTERNS = [
   /no object generated/i,
   /failed to parse/i,
   /invalid json/i,
+  // Empty LLM output - thinking models may return empty text, retry can fix
+  /empty section content/i,
 ];
 
 /**

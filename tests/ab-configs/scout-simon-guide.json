@@ -1,0 +1,88 @@
+{
+  "testName": "scout-simon-guide",
+  "models": [
+    "x-ai/grok-4.1-fast",
+    "google/gemini-3-flash-preview",
+    "google/gemini-2.5-flash-lite-preview-09-2025",
+    "moonshotai/kimi-k2-thinking",
+    "deepseek/deepseek-v3.2",
+    "openai/gpt-5.2",
+    "anthropic/claude-opus-4.5",
+    "xiaomi/mimo-v2-flash"
+  ],
+  "input": [
+    {
+      "role": "system",
+      "content": "You are the Scout agent planning strategic research for a game article.\n\nSEARCH BUDGET: Up to 4 searches (flexible distribution between engines)\n\nSEARCH ENGINES:\n📍 TAVILY (up to 10 results each): Keyword-based web search\n   ⚠️ CRITICAL FORMATTING RULES:\n   1. ALWAYS start with the FULL game name in quotes: \"Game Name\"\n   2. Put the quoted game name FIRST, then search terms\n   3. Without quotes, you get irrelevant results!\n   \n   ✅ CORRECT: \"Clair Obscur: Expedition 33\" Simon boss guide strategies\n   ✅ CORRECT: \"Elden Ring\" Margit weakness fire damage guide\n   ❌ WRONG: Simon boss fight guide Clair Obscur (wrong order, no quotes)\n   ❌ WRONG: Clair Obscur Simon guide (no quotes = unrelated results)\n\n📍 EXA (up to 5 results each): Semantic/neural search\n   ⚠️ CRITICAL: ALWAYS include the FULL game name in every query!\n   - Natural language questions work best\n   - Game name at the END of the question\n   \n   ✅ CORRECT: How to beat Simon the Divergent Star in Clair Obscur: Expedition 33?\n   ✅ CORRECT: What are the best parry strategies in Elden Ring?\n   ❌ WRONG: How to beat Simon the Divergent Star? (missing game name!)\n   ❌ WRONG: Simon parry timings strategy (missing game name = Smash Bros results!)\n\nPLANNING STRATEGY:\n1. Create a draft title that focuses your research\n2. Allocate queries strategically between Tavily and Exa\n3. Include at least 1 general \"[Game] guide/overview\" query for broad coverage\n4. Each query must have clear expected findings - these guide briefing synthesis\n5. Queries should COMPLEMENT each other, covering different aspects\n6. Think about what the Editor needs to create a detailed article plan\n\nEXPECTED FINDINGS:\nFor each query, list 1-5 specific things you expect to learn.\nThese will be used to synthesize focused briefings.\nBe specific: \"Boss weakness to fire damage\" not just \"Boss strategies\""
+    },
+    {
+      "role": "user",
+      "content": [
+        {
+          "type": "input_text",
+          "text": "=== GAME CONTEXT ===\nGame: Clair Obscur: Expedition 33\nDescription: **Clair Obscur: Expedition 33** is a turn-based role-playing game where a single brushstroke dictates the fate of an entire generation. From developer Sandfall Interactive, the game presents a desperate fantasy premise: each year, a being known as the Paintress awakens to inscribe a cursed number on a monolith, erasing every person of that age from existence. Your party, the final Expedition 33, embarks on a race against the calendar to destroy her before she can paint the number thirty-three and consign your team to oblivion.\n\nCombat is built upon a dynamic **turn-based system infused with real-time mechanics**, requiring both strategic planning and sharp reflexes. Players lead a party of distinct characters through challenging encounters where timing is crucial; executing commands within a small action window can unleash more powerful effects, while defending against enemy attacks demands precise, last-second inputs. This hybrid approach creates a tense, engaging rhythm that elevates traditional RPG battles. Progression is deepened through a robust **class and skill system**, allowing for extensive customization of your expedition's tactics and abilities to confront the unique threats ahead.\n\nThe world you explore is a breathtaking fusion of high fantasy and **Belle Époque France**, creating a setting of ornate architecture, elegant fashion, and mysterious wonders that feels entirely distinct. This artful aesthetic extends to your adversaries, who are as visually striking as they are deadly, requiring studied strategies to overcome. The ever-present **countdown mechanic**—the inexorable march toward the Paintress's next awakening—permeates the entire journey, lending narrative urgency to every exploration decision and side quest.\n\nSet to launch on modern platforms in 2025, *Clair Obscur: Expedition 33* is poised to captivate RPG enthusiasts looking for a rich narrative wrapped in a fresh, mechanically inventive package. It appeals directly to players who appreciate the strategic depth of classic **turn-based combat** but crave a more active and visually spectacular execution. Sandfall Interactive's debut promises a memorable adventure where the stakes are viscerally defined, and every battle is a fight against the ultimate deadline.\nGenres: Role-playing (RPG), Adventure\nPlatforms: Xbox Series X|S, PC (Microsoft Windows), PlayStation 5\nDeveloper: Sandfall Interactive\nRelease: 2025-04-24\n\n=== DISCOVERY FINDINGS ===\n- All Secret Bosses In Clair Obscur: Expedition 33 (& How ...: # All Secret Bosses In Clair Obscur: Expedition 33 (& How To Beat Them)\n\nBy Nicholas Becher\n\nThere are three main \"secret\" bosses in Clair Obscur: Expedition 33, each of which is found in Act 3 after progressing through the majority of the main story and unlocking Esquie's full range of exploration abilities. These three bosses all reveal unique details about some of the main characters' backstories, and they all have trophies/achievements associated with them. These are the hardest enemies in t\n- How To Beat Simon In Clair Obscur: Expedition 33: # How To Beat Simon In Clair Obscur: Expedition 33\n\nBy Matt Arnold\n\nIt's a bit of an understatement to say that there are some tough boss fights in [**Clair Obscur: Expedition 33**](http://www.thegamer.com/tag/clair-obscur-expedition-33/), but none are as unforgiving as the hidden battle against Simon. Even with a max-level party, Simon demands perfection if you want to have any hope of beating him. Even after learning all his patterns so that you can safely parry most of his strikes, he's still\n- How to Beat Simon | Clair Obscur: Expedition 33: # How to Beat Simon\n\nThis is a boss guide on how to beat Simon in Clair Obscur: Expedition 33. See how to beat Simon, his attack patterns, how to dodge, counter and how to rematch him in this guide!\n\n| Simon Guides |\n| --- |\n| **Normal** |\n| [Divergent Star](/games/Clair-Obscur-Expedition-33/archives/570981) |\n\nList of Contents\n\n* [How to Beat](#hl_1)\n* [Attack Patterns](#hl_2)\n* [Rematch](#hl_3)\n* [Stats and Overview](#hl_4)\n* [Location](#hl_5)\n* [Related Guides](#hl_6)\n\n## How to Beat Simon\n\n#\n\n=== ARTICLE INTENT ===\nWrite a comprehensive guide on how to defeat Simon, the secret superboss. Cover how to unlock the fight, recommended party setup, essential Pictos and Luminas, and phase-by-phase combat strategies including parry timings and high-damage burst tactics.\n\n=== YOUR TASK ===\n1. Create a draft title for the article\n2. Plan 1-4 strategic queries with engine selection\n3. For each query, specify expected findings\n\nRemember:\n- At least 1 general coverage query\n- Mix Tavily (factual) and Exa (conceptual) strategically\n- Expected findings guide what to extract from results"
+        }
+      ]
+    }
+  ],
+  "text": {
+    "format": {
+      "type": "json_schema",
+      "name": "response",
+      "schema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "draftTitle": {
+            "type": "string",
+            "minLength": 10,
+            "maxLength": 100,
+            "description": "Working title for the article (10-100 characters)"
+          },
+          "queries": {
+            "minItems": 1,
+            "maxItems": 4,
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "query": {
+                  "type": "string",
+                  "minLength": 5,
+                  "description": "The search query string"
+                },
+                "engine": {
+                  "type": "string",
+                  "enum": ["tavily", "exa"],
+                  "description": "Which search engine to use"
+                },
+                "purpose": {
+                  "type": "string",
+                  "minLength": 10,
+                  "description": "Why this query is needed for the article"
+                },
+                "expectedFindings": {
+                  "minItems": 1,
+                  "maxItems": 5,
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 5
+                  },
+                  "description": "What information this query should provide (1-5 items)"
+                }
+              },
+              "required": ["query", "engine", "purpose", "expectedFindings"],
+              "additionalProperties": false
+            },
+            "description": "Strategic queries to execute (1-4 queries)"
+          }
+        },
+        "required": ["draftTitle", "queries"],
+        "additionalProperties": false
+      }
+    }
+  },
+  "temperature": 0.7,
+  "maxTokens": 4096
+}

@@ -741,8 +741,8 @@ async function writeSection(
   log.debug(`Writing section ${sectionIndex + 1}/${plan.sections.length}: ${section.headline}`);
 
   const result = await withRetry(
-    () =>
-      deps.generateText({
+    async () => {
+      const genResult = await deps.generateText({
         model: deps.model,
         temperature,
         maxOutputTokens: SPECIALIST_CONFIG.MAX_OUTPUT_TOKENS_PER_SECTION,
@@ -752,7 +752,21 @@ async function writeSection(
           plan,
           context.gameName
         ),
-      }),
+      });
+
+      // Validate non-empty output - thinking models may return empty text
+      const trimmedText = genResult.text.trim();
+      if (!trimmedText) {
+        log.warn(
+          `Section "${section.headline}" received empty content from LLM - will retry`
+        );
+        throw new Error(
+          `Empty section content returned for "${section.headline}" - model may have used all tokens for reasoning`
+        );
+      }
+
+      return genResult;
+    },
     { context: `Specialist section "${section.headline}"`, signal: deps.signal }
   );
 

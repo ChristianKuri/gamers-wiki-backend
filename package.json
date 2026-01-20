@@ -31,6 +31,7 @@
     "test:all": "vitest run && bash scripts/run-e2e.sh",
     "test:ai:game-descriptions": "npx tsx scripts/test-ai-game-descriptions.ts",
     "test:ai:game-resolver": "npx tsx scripts/test-ai-game-resolver.ts",
+    "test:ab": "npx tsx scripts/model-ab-test.ts",
     "devtools": "npx @ai-sdk/devtools"
   },
   "dependencies": {

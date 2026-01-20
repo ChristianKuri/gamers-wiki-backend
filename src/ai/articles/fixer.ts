@@ -410,12 +410,17 @@ INSTRUCTIONS:
     const originalLength = sectionContent.length;
     const rewrittenLength = object.rewrittenSection.length;
     const lengthDiff = rewrittenLength - originalLength;
+    const absoluteDiff = Math.abs(lengthDiff);
 
     // Allow reasonable content changes (more lenient for paragraph rewrites)
+    // Use floors to handle edge cases:
+    // - Minimum floor of 3000 chars for max length so short sections can grow significantly
+    // - Small changes (< 200 chars difference) are always allowed to avoid rejecting minor edits
     const minLength = originalLength * 0.5; // Can shrink by up to 50%
-    const maxLength = originalLength * 2.5; // Can grow by up to 150%
+    const maxLength = Math.max(originalLength * 2.5, 3000); // Can grow by up to 150%, but always allow at least 3000 chars
+    const smallChangeThreshold = 200; // Always allow changes within this range
 
-    if (rewrittenLength < minLength) {
+    if (rewrittenLength < minLength && absoluteDiff > smallChangeThreshold) {
       log.warn(`Rewrite rejected: Too much content removed (${rewrittenLength} < ${minLength} chars)`);
       return {
         markdown,
@@ -426,7 +431,7 @@ INSTRUCTIONS:
       };
     }
 
-    if (rewrittenLength > maxLength) {
+    if (rewrittenLength > maxLength && absoluteDiff > smallChangeThreshold) {
       log.warn(`Rewrite rejected: Too much content added (${rewrittenLength} > ${maxLength} chars)`);
       return {
         markdown,
