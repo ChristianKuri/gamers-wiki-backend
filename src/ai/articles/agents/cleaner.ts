@@ -1432,11 +1432,11 @@ const PreFilterOutputSchema = z.object({
     .describe('Is this content relevant to the SPECIFIC article we are writing? 0 = unrelated to article topic, 100 = directly useful for this article'),
   reason: z
     .string()
-    .max(150)
-    .describe('Brief reason for the scores (max 150 chars)'),
+    .max(500)
+    .describe('Brief reason for the scores (max 500 chars)'),
   contentType: z
     .string()
-    .max(50)
+    .max(100)
     .describe('Type of content detected (e.g., "game guide", "wiki", "news", "adult content", "programming tutorial")'),
 });
 
@@ -1506,7 +1506,7 @@ Be STRICT. When in doubt, score lower. We'd rather skip questionable content.`;
  * Get pre-filter user prompt.
  */
 function getPreFilterUserPrompt(
-  domain: string,
+  url: string,
   title: string,
   snippet: string,
   gameName?: string,
@@ -1522,18 +1522,23 @@ function getPreFilterUserPrompt(
 
 ${articleContext}
 
-DOMAIN: ${domain}
+URL: ${url}
 PAGE TITLE: ${title}
 CONTENT SNIPPET:
 ${snippet}
+
+IMPORTANT SCORING GUIDANCE:
+- The URL PATH is a strong signal! If the URL contains the game name, the content is very likely about that game even if the snippet doesn't mention it explicitly.
+- Check if the content mentions keywords from the article topic (game name, character names, boss names, item names, etc.)
+- Try to make your best guess based on the URL path, title, and the content snippet.
 
 NOTE: If snippet starts with navigation/breadcrumbs, look past them for actual article content.
 
 Provide:
 1. relevanceToGaming (0-100): Is this about video games?
 2. relevanceToArticle (0-100): Is this useful for our specific article?
-3. reason: Brief explanation
-4. contentType: What type of content is this?`;
+3. reason: Brief explanation (max 500 chars)
+4. contentType: What type of content is this? (max 100 chars)`;
 }
 
 /**
@@ -1550,7 +1555,7 @@ export interface PreFilterDeps extends CleanerDeps {
 
 /**
  * Pre-filter a single source using a cheap LLM call.
- * Uses only domain, title, and first 500 chars of content.
+ * Uses URL, domain, title, and first PREFILTER_SNIPPET_LENGTH chars of content.
  * Returns two relevance scores for nuanced filtering.
  * 
  * @param source - Raw source to check
@@ -1584,7 +1589,7 @@ export async function preFilterSingleSource(
           temperature: 0, // Deterministic for consistency
           abortSignal: signal,
           system: getPreFilterSystemPrompt(),
-          prompt: getPreFilterUserPrompt(domain, source.title, snippet, deps.gameName, deps.articleTopic),
+          prompt: getPreFilterUserPrompt(source.url, source.title, snippet, deps.gameName, deps.articleTopic),
         });
       },
       {

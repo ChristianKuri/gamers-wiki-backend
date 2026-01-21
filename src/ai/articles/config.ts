@@ -1186,12 +1186,13 @@ export const CLEANER_CONFIG = {
   TWO_STEP_ENABLED: true,
   /**
    * Character length of content snippet for pre-filter.
-   * INCREASED from 500 to 2000: Many pages have navigation/breadcrumbs at the
+   * INCREASED from 500 to 3000: Many pages have navigation/breadcrumbs at the
    * start, so 500 chars often only captures "Home > Games > Guide > ..." junk.
-   * 1500 chars gets past navigation to actual article content.
+   * 3000 chars gets past navigation to actual article content and captures
+   * enough context to identify game-specific keywords (character names, etc.).
    * Cost impact: minimal (pre-filter uses cheap gemini-2.5-flash-lite).
    */
-  PREFILTER_SNIPPET_LENGTH: 2000,
+  PREFILTER_SNIPPET_LENGTH: 3000,
   /**
    * Timeout for pre-filter LLM call (ms).
    * Increased from 20s to 40s to handle API latency/queueing.
