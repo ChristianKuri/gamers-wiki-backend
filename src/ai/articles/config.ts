@@ -1265,12 +1265,6 @@ export const CLEANER_CONFIG = {
    */
   PREFILTER_ENABLED: true,
   /**
-   * Enable two-step cleaning (clean first, then summarize separately).
-   * Benefits: Better quality summaries, cleaner model sees less data.
-   * Trade-off: Two LLM calls per source instead of one.
-   */
-  TWO_STEP_ENABLED: true,
-  /**
    * Character length of content snippet for pre-filter.
    * INCREASED from 500 to 3000: Many pages have navigation/breadcrumbs at the
    * start, so 500 chars often only captures "Home > Games > Guide > ..." junk.

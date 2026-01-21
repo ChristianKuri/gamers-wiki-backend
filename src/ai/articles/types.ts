@@ -1622,16 +1622,6 @@ export interface CleanSourcesOptions {
 }
 
 /**
- * Result of cleaning a single source.
- */
-export interface CleanSingleSourceResult {
-  /** Cleaned source or null if cleaning failed */
-  readonly source: CleanedSource | null;
-  /** Token usage for this cleaning operation */
-  readonly tokenUsage: TokenUsage;
-}
-
-/**
  * Result of cleaning multiple sources.
  */
 export interface CleanSourcesResult {
@@ -1647,25 +1637,4 @@ export interface CleanSourcesResult {
   readonly tokenUsage: TokenUsage;
 }
 
-/**
- * Cleaner agent output schema for LLM.
- */
-export interface CleanerLLMOutput {
-  readonly cleanedContent: string;
-  /** Short 1-2 sentence summary for quick reference */
-  readonly summary: string;
-  /** Detailed summary with specific facts, numbers, and names (paragraph form) */
-  readonly detailedSummary: string;
-  /** Key facts extracted as bullet points (3-7 items) */
-  readonly keyFacts: readonly string[];
-  /** Specific data points: stats, dates, names, numbers (3-10 items) */
-  readonly dataPoints: readonly string[];
-  /** Content quality score (0-100): depth, structure, authority */
-  readonly qualityScore: number;
-  /** Gaming relevance score (0-100): Is this about video games? */
-  readonly relevanceScore: number;
-  readonly qualityNotes: string;
-  /** AI-determined content type (free-form, e.g., "wiki article", "strategy guide", "forum discussion") */
-  readonly contentType: string;
-}
 

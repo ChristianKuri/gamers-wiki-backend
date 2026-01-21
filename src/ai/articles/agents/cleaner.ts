@@ -19,8 +19,6 @@ import {
   createEmptyTokenUsage,
   createTokenUsageFromResult,
   type CleanedSource,
-  type CleanerLLMOutput,
-  type CleanSingleSourceResult,
   type RawSourceInput,
   type TokenUsage,
 } from '../types';
@@ -372,63 +370,6 @@ function deduplicateMarkdownSections(content: string): DuplicateSectionResult {
 }
 
 // ============================================================================
-// Zod Schema for LLM Output
-// ============================================================================
-
-/**
- * Schema for cleaner LLM output (single-step cleaning).
- * Validates structured response from the model.
- * 
- * For two-step cleaning, use PureCleanerOutputSchema + EnhancedSummarySchema instead.
- */
-const CleanerOutputSchema = z.object({
-  cleanedContent: z
-    .string()
-    .min(1)
-    .describe('The cleaned content with all junk removed. Keep ALL substantive content.'),
-  summary: z
-    .string()
-    .min(1)
-    .max(1000)
-    .describe('A concise 1-2 sentence summary of what this content is about. Will be used for quick reference.'),
-  detailedSummary: z
-    .string()
-    .min(1)
-    .max(10000)
-    .describe('A detailed summary (3-5 paragraphs) preserving specific facts, numbers, names, locations, and actionable information. Include concrete details that would be useful for writing an article.'),
-  keyFacts: z
-    .array(z.string())
-    .min(1)
-    .max(10)
-    .describe('3-7 key facts as bullet points. Each fact should be specific and contain concrete information (names, numbers, locations, strategies).'),
-  dataPoints: z
-    .array(z.string())
-    .min(0)
-    .max(15)
-    .describe('Specific data points extracted: statistics, dates, version numbers, character names, item names, damage values, percentages, etc. Empty array if no specific data found.'),
-  qualityScore: z.coerce
-    .number()
-    .int()
-    .min(0)
-    .max(100)
-    .describe('Content quality score 0-100 based on depth, structure, authority, and junk ratio'),
-  relevanceScore: z.coerce
-    .number()
-    .int()
-    .min(0)
-    .max(100)
-    .describe('Gaming relevance score 0-100. Is this content about video games/gaming? Python docs, cooking recipes, etc. = 0. Game wikis, guides, reviews = 100.'),
-  qualityNotes: z
-    .string()
-    .describe('Brief explanation of quality and relevance scores (1-2 sentences)'),
-  contentType: z
-    .string()
-    .min(1)
-    .max(100)
-    .describe('Type of content (e.g., "wiki article", "strategy guide", "forum discussion", "news article", "official documentation", "gameplay tips", etc.)'),
-});
-
-// ============================================================================
 // Types
 // ============================================================================
 
@@ -437,10 +378,9 @@ export interface CleanerDeps {
   /** Language model for content cleaning (junk removal) */
   readonly model: LanguageModel;
   /** 
-   * Optional separate model for summarization (two-step cleaning).
-   * When provided, uses two-step cleaning: clean first, then summarize.
-   * This produces better summaries and costs less than single-step.
-   * If not provided, falls back to single-step cleaning using `model`.
+   * Optional separate model for summarization (step 2 of two-step cleaning).
+   * If not provided, uses `model` for both cleaning and summarization.
+   * Using a separate (often cheaper/faster) model for summarization can reduce costs.
    */
   readonly summarizerModel?: LanguageModel;
   readonly logger?: Logger;
@@ -460,416 +400,20 @@ export interface CleanSourcesBatchResult {
 }
 
 // ============================================================================
-// Prompts
-// ============================================================================
-
-/**
- * System prompt for the cleaner agent (single-step cleaning).
- * Used when two-step cleaning is not enabled.
- */
-function getCleanerSystemPrompt(): string {
-  return `You are a content cleaning specialist for a VIDEO GAME website. Your job is to:
-1. Extract valuable content from web pages while removing junk
-2. Create detailed summaries with specific facts for article writing
-3. Rate content QUALITY (structure, depth, authority)
-4. Rate content RELEVANCE TO VIDEO GAMES (PC, console, mobile games)
-
-REMOVE (do not include in cleanedContent):
-- Navigation menus, headers, footers
-- Cookie consent banners
-- Advertisement blocks
-- Social media share buttons
-- "Related articles" sections
-- Comments sections
-- Newsletter signup forms
-- Login/signup prompts
-- Breadcrumb trails
-- Site-wide announcements
-- Legal disclaimers at page bottom
-- Author bio sections (unless essential)
-- "Share this" widgets
-
-KEEP (preserve in cleanedContent):
-- Main article/guide content
-- Code snippets and examples
-- Tables with data
-- Lists of items/steps
-- Quoted text that's part of the article
-- Images: preserve as markdown ![descriptive alt text](original_url)
-  - Keep the EXACT original image URL - do not modify or create URLs
-  - Write a descriptive alt text based on context (what the image shows)
-- Headings and subheadings
-- ALL substantive information
-
-CRITICAL RULES:
-1. DO NOT SUMMARIZE the cleanedContent - Keep ALL valuable content, just remove junk
-2. Preserve the original structure (headings, lists, paragraphs)
-3. Keep the content in markdown format
-4. If the content is mostly junk, return what little value exists
-5. Be generous - when in doubt, keep the content
-
-SUMMARY (short):
-Write a concise 1-2 sentence summary of what this content covers.
-
-DETAILED SUMMARY (rich):
-Write a detailed 3-5 paragraph summary that preserves SPECIFIC information:
-- Names of characters, items, locations, bosses, abilities
-- Numbers: damage values, percentages, stats, costs, distances
-- Step-by-step procedures or strategies
-- Conditions, requirements, prerequisites
-- Tips and warnings
-This will be used by writers who may not read the full content, so include all actionable details.
-
-KEY FACTS:
-Extract 3-7 key facts as bullet points. Each fact should be SPECIFIC and CONCRETE:
-✓ "The Moonlight Greatsword deals 180 base damage and scales with INT"
-✓ "Boss has 3 phases, second phase starts at 50% HP"
-✓ "Quest requires completing the Ranni questline first"
-✗ "This guide covers various strategies" (too vague)
-✗ "The game has interesting mechanics" (not actionable)
-
-DATA POINTS:
-Extract specific data: statistics, dates, version numbers, character names, item names, damage values, percentages, coordinates, etc.
-Examples: "Update 1.09", "35% damage reduction", "Malenia", "Sword of Night and Flame", "2024-03-15 release"
-Return empty array if no specific data found.
-
-QUALITY SCORING (0-100) - Content quality regardless of topic:
-- Content depth (0-40 pts): Detailed, comprehensive information?
-- Structure (0-30 pts): Well-organized, clear headings, logical flow?
-- Authority signals (0-30 pts): Wiki, official source, reputable site?
-
-RELEVANCE SCORING (0-100) - Is this about VIDEO GAMES specifically?
-
-VIDEO GAMES = PC games, console games (PlayStation, Xbox, Nintendo), mobile games
-NOT VIDEO GAMES = board games, card games, tabletop RPGs, gambling, sports
-
-RELEVANCE SCORE (0-100) - Is this about VIDEO GAMES?
-│ 90-100 │ Video game content: guides, wikis, news, reviews, builds, walkthroughs
-│ 70-89  │ Patch notes, announcements
-│ 50-69  │ Gaming-adjacent: hardware, esports, streaming, game dev content
-│ 20-49  │ Tangential: general tech/entertainment mentioning games
-│ 0-19   │ NOT video games: board games, tabletop RPGs, D&D, cooking, coding
-
-CRITICAL: Board games, card games, tabletop games are NOT video games!
-- boardgamegeek.com content = relevance 0-10 (NOT video games)
-- D&D/tabletop RPG content = relevance 0-10 (NOT video games)
-- Magic: The Gathering (paper) = relevance 0-10 (NOT video games)
-- Poker/gambling = relevance 0 (NOT video games)
-
-IMPORTANT: A page can have HIGH QUALITY but LOW RELEVANCE.
-Example: Python documentation is high quality (90+) but 0 relevance to video games.
-Example: Board game guide is high quality but 0-10 relevance (not a video game).
-Example: A rambling Reddit post might be low quality (30) but high relevance (90) if it's about a video game.
-
-CONTENT TYPE:
-Describe what type of content this is. Be specific and descriptive. Examples:
-- "wiki article" for encyclopedia-style content
-- "strategy guide" for how-to content
-- "build guide" for character/equipment builds
-- "walkthrough" for step-by-step game progression
-- "forum discussion" for community discussions
-- "Reddit post" for Reddit content
-- "news article" for game news
-- "patch notes" for update information
-- "official documentation" for publisher/developer content
-- Or any other descriptive type that fits`;
-}
-
-/**
- * User prompt for cleaning a specific source.
- */
-function getCleanerUserPrompt(source: RawSourceInput, gameName?: string): string {
-  const gameContext = gameName ? `\nContext: This content is being evaluated for an article about the VIDEO GAME "${gameName}".` : '';
-
-  return `Clean the following web content and rate its quality AND relevance to VIDEO GAMES.
-${gameContext}
-
-═══════════════════════════════════════════════════════════════════
-SOURCE
-═══════════════════════════════════════════════════════════════════
-URL: ${source.url}
-Title: ${source.title}
-Raw Length: ${source.content.length.toLocaleString()} chars
-
-═══════════════════════════════════════════════════════════════════
-RAW CONTENT
-═══════════════════════════════════════════════════════════════════
-${source.content.slice(0, CLEANER_CONFIG.MAX_INPUT_CHARS)}
-
-═══════════════════════════════════════════════════════════════════
-REQUIRED OUTPUTS
-═══════════════════════════════════════════════════════════════════
-
-1. cleanedContent: Remove web junk, keep ALL article content (~90-100% of text)
-
-2. summary (1-2 sentences): What is this content about?
-
-3. detailedSummary (3-5 paragraphs): Preserve ALL specifics!
-   • Every proper noun (characters, bosses, items, locations)
-   • Every number (damage, HP, costs, percentages)
-   • Every strategy, tip, or procedure
-   Writers use this WITHOUT reading the original.
-
-4. keyFacts (3-7 items): Specific, actionable facts
-   ✓ "Boss X has 5,000 HP and is weak to Fire"
-   ✗ "There's a tough boss" (too vague)
-
-5. dataPoints: Every name and number mentioned
-
-6. qualityScore (0-100): Content quality
-   90+: Comprehensive wiki | 70-89: Good guide | 50-69: Basic | <50: Poor
-
-7. relevanceScore (0-100): VIDEO GAME relevance
-   90+: All video game content (guides, wikis, news, reviews, patch notes)
-   60-89: Gaming-adjacent (hardware, esports) | <60: Not gaming
-   CRITICAL: Board games, tabletop, D&D = NOT video games (0-19)
-
-8. qualityNotes: Brief explanation of both scores
-
-9. contentType: Specific type (wiki, guide, walkthrough, news, etc.)
-
-CRITICAL FOR SUMMARIES:
-- Include SPECIFIC details: character names, item names, damage numbers, percentages
-- Preserve step-by-step procedures and strategies
-- Include prerequisites, conditions, and warnings
-- Be concrete, not vague - writers will use this without reading the full content`;
-}
-
-// ============================================================================
-// Single Source Cleaning
-// ============================================================================
-
-/**
- * Clean a single source using the LLM.
- *
- * If the model produces degenerate output (stuck in a loop), it will retry
- * with progressively higher temperature to break the pattern.
- *
- * @param source - Raw source input
- * @param deps - Cleaner dependencies
- * @returns Cleaned source result with token usage
- */
-export async function cleanSingleSource(
-  source: RawSourceInput,
-  deps: CleanerDeps
-): Promise<CleanSingleSourceResult> {
-  const log = deps.logger ?? createPrefixedLogger('[Cleaner]');
-
-  // Skip empty content
-  if (!source.content || source.content.trim().length === 0) {
-    log.debug(`Skipping empty content: ${source.url}`);
-    return { source: null, tokenUsage: createEmptyTokenUsage() };
-  }
-
-  // Skip content that's too short to be useful
-  if (source.content.length < CLEANER_CONFIG.MIN_CLEANED_CHARS) {
-    log.debug(`Skipping short content (${source.content.length} chars): ${source.url}`);
-    return { source: null, tokenUsage: createEmptyTokenUsage() };
-  }
-
-  const domain = extractDomain(source.url);
-  const originalLength = source.content.length;
-  
-  // Mutable temperature - increases on degenerate output retries
-  let temperature: number = CLEANER_CONFIG.TEMPERATURE;
-  let totalTokenUsage = createEmptyTokenUsage();
-
-  try {
-    const startTime = Date.now();
-    const result = await withRetry(
-      async () => {
-        const timeoutSignal = AbortSignal.timeout(CLEANER_CONFIG.STEP1_TIMEOUT_MS);
-        const signal = deps.signal
-          ? AbortSignal.any([deps.signal, timeoutSignal])
-          : timeoutSignal;
-
-        const genResult = await deps.generateText({
-          model: deps.model,
-          output: Output.object({
-            schema: CleanerOutputSchema,
-          }),
-          temperature,
-          abortSignal: signal,
-          system: getCleanerSystemPrompt(),
-          prompt: getCleanerUserPrompt(source, deps.gameName),
-        });
-        
-        // Accumulate token usage across retries
-        totalTokenUsage = addTokenUsage(totalTokenUsage, createTokenUsageFromResult(genResult));
-        
-        const output = genResult.output as CleanerLLMOutput;
-
-        // Validate cleaned content is substantial
-        if (output.cleanedContent.length < CLEANER_CONFIG.MIN_CLEANED_CHARS) {
-          // Not degenerate, just too short - return with flag
-          return { output, tooShort: true };
-        }
-
-        // Validate output isn't degenerate (model stuck in loop)
-        const degenerateCheck = detectDegenerateOutput(output.cleanedContent, originalLength);
-        if (degenerateCheck.isDegenerate) {
-          // Throw DegenerateOutputError to trigger retry with higher temperature
-          throw new DegenerateOutputError(degenerateCheck.reason!, {
-            pattern: degenerateCheck.pattern,
-            repeatCount: degenerateCheck.repeatCount,
-            inputLength: originalLength,
-            outputLength: output.cleanedContent.length,
-          });
-        }
-
-        return { output, tooShort: false };
-      },
-      {
-        // Full URL + content length for debugging timeouts
-        context: `Cleaner [${originalLength} chars]: ${source.url}`,
-        signal: deps.signal,
-        maxRetries: CLEANER_CONFIG.MAX_RETRIES + CLEANER_CONFIG.MAX_DEGENERATE_RETRIES,
-        // Include DegenerateOutputError as retryable
-        shouldRetry: (error) => isDegenerateOutputError(error) || isRetryableError(error),
-        // Bump temperature on degenerate output retries
-        onRetry: (attempt, error) => {
-          if (isDegenerateOutputError(error)) {
-            const newTemp = Math.min(
-              temperature + CLEANER_CONFIG.DEGENERATE_RETRY_TEMP_INCREMENT,
-              1.0 // Cap at 1.0 to avoid too much randomness
-            );
-            log.info(
-              `Degenerate output detected, bumping temperature ${temperature.toFixed(2)} → ${newTemp.toFixed(2)} for retry ${attempt}`
-            );
-            temperature = newTemp;
-          }
-        },
-      }
-    );
-    
-    const elapsed = Date.now() - startTime;
-    if (elapsed > 30000) {
-      // Log slow cleans for monitoring (>30s is notable with 90s timeout)
-      log.info(`[Cleaner] Slow clean: ${domain} took ${(elapsed / 1000).toFixed(1)}s for ${originalLength} chars`);
-    }
-
-    const output = result.output;
-
-    // If content was too short (not degenerate), return null
-    if (result.tooShort) {
-      log.debug(
-        `Cleaned content too short (${output.cleanedContent.length} chars): ${source.url}`
-      );
-      return { source: null, tokenUsage: totalTokenUsage };
-    }
-
-    // Post-process: deduplicate markdown sections (wiki pages often have duplicate content)
-    const dedupeResult = deduplicateMarkdownSections(output.cleanedContent);
-    if (dedupeResult.duplicateCount > 0) {
-      const reduction = ((1 - dedupeResult.dedupedLength / dedupeResult.originalLength) * 100).toFixed(1);
-      log.info(
-        `[Cleaner] Deduplication: removed ${dedupeResult.duplicateCount} duplicate section(s) ` +
-        `(${dedupeResult.originalLength.toLocaleString()}c → ${dedupeResult.dedupedLength.toLocaleString()}c, -${reduction}%) | ${source.url}`
-      );
-    }
-    const dedupedContent = dedupeResult.dedupedContent;
-
-    // Calculate junk ratio (based on deduped content)
-    const cleanedLength = dedupedContent.length;
-    const junkRatio = 1 - cleanedLength / originalLength;
-    
-    // Extract images with validation and context (pass source URL for relative URL resolution)
-    const imageResult = extractImagesFromSource(source.content, dedupedContent, source.url);
-    if (imageResult.discardedCount > 0) {
-      // Log at warn level if high hallucination rate (>50% of images discarded)
-      const hallucinationRate = imageResult.parsedCount > 0
-        ? imageResult.discardedCount / imageResult.parsedCount
-        : 0;
-      if (hallucinationRate > 0.5) {
-        log.warn(`[Cleaner] High image hallucination rate for ${domain}: ${imageResult.discardedCount}/${imageResult.parsedCount} (${(hallucinationRate * 100).toFixed(0)}%) discarded`);
-      } else {
-        log.debug(`[Cleaner] Discarded ${imageResult.discardedCount} hallucinated image URL(s) for ${domain}`);
-      }
-    }
-    
-    // Log completion with raw→cleaned ratio
-    const preservedPct = ((cleanedLength / originalLength) * 100).toFixed(0);
-    const costStr = totalTokenUsage.actualCostUsd ? ` ($${totalTokenUsage.actualCostUsd.toFixed(4)})` : '';
-    const imageStr = imageResult.images.length > 0 ? `, ${imageResult.images.length} images` : '';
-    log.info(`Single-step clean complete: ${domain} - ${originalLength.toLocaleString()}→${cleanedLength.toLocaleString()}c (${preservedPct}%), Q:${output.qualityScore}, R:${output.relevanceScore}${imageStr}${costStr}`);
-
-    return {
-      source: {
-        url: source.url,
-        domain,
-        title: source.title,
-        summary: output.summary,
-        detailedSummary: output.detailedSummary,
-        keyFacts: output.keyFacts,
-        dataPoints: output.dataPoints,
-        cleanedContent: dedupedContent,
-        originalContentLength: originalLength,
-        qualityScore: output.qualityScore,
-        relevanceScore: output.relevanceScore,
-        qualityNotes: output.qualityNotes,
-        contentType: output.contentType,
-        junkRatio: Math.max(0, Math.min(1, junkRatio)),
-        searchSource: source.searchSource,
-        images: imageResult.images.length > 0 ? imageResult.images : null,
-      },
-      tokenUsage: totalTokenUsage,
-    };
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    // Log differently based on error type
-    if (isDegenerateOutputError(err)) {
-      log.warn(`Failed to clean source after degenerate retries ${source.url}: ${message}`);
-    } else if (err instanceof NoObjectGeneratedError) {
-      log.warn(`Failed to clean source ${source.url}: ${message}`);
-      logParseErrorDiagnostics(err, `cleanSingleSource: ${source.url}`, log);
-    } else {
-      log.warn(`Failed to clean source ${source.url}: ${message}`);
-    }
-
-    // Fallback: return raw content with low quality score so it can still be used
-    // This prevents losing potentially valuable content due to LLM timeouts
-    const domain = extractDomain(source.url);
-    log.info(`[Cleaner] Falling back to raw content for ${source.url}`);
-
-    return {
-      source: {
-        url: source.url,
-        domain,
-        title: source.title,
-        summary: `[Cleaning failed: ${message}] ${source.title}`,
-        detailedSummary: null, // Not available for fallback
-        keyFacts: null, // Not available for fallback
-        dataPoints: null, // Not available for fallback
-        cleanedContent: source.content.slice(0, CLEANER_CONFIG.MAX_INPUT_CHARS),
-        originalContentLength: source.content.length,
-        qualityScore: 25, // Low score since uncleaned
-        relevanceScore: 50, // Neutral - we don't know without cleaning
-        qualityNotes: `Cleaning failed after retries: ${message}. Using raw content as fallback.`,
-        contentType: 'raw fallback',
-        junkRatio: 0, // Unknown junk ratio
-        searchSource: source.searchSource,
-        images: null, // Not available for fallback
-      },
-      tokenUsage: createEmptyTokenUsage(),
-    };
-  }
-}
-
-// ============================================================================
 // Batch Cleaning
 // ============================================================================
 
 /**
- * Clean multiple sources in parallel batches.
+ * Clean multiple sources in parallel batches using two-step cleaning.
  * 
- * When `summarizerModel` is provided in deps, uses two-step cleaning:
+ * Two-step cleaning process:
  * 1. Clean content (remove junk, preserve full content)
  * 2. Summarize cleaned content (extract summaries, key facts, data points)
  * 
- * This approach is cheaper and produces better quality summaries than single-step.
+ * If `summarizerModel` is not provided, uses `model` for both steps.
  *
  * @param sources - Raw sources to clean
- * @param deps - Cleaner dependencies (include summarizerModel for two-step)
+ * @param deps - Cleaner dependencies
  * @returns Cleaned sources with aggregated token usage
  */
 export async function cleanSourcesBatch(
@@ -877,15 +421,12 @@ export async function cleanSourcesBatch(
   deps: CleanerDeps
 ): Promise<CleanSourcesBatchResult> {
   const log = deps.logger ?? createPrefixedLogger('[Cleaner]');
-  // Use two-step if enabled in config AND summarizerModel is provided
-  const useTwoStep = CLEANER_CONFIG.TWO_STEP_ENABLED && Boolean(deps.summarizerModel);
 
   if (sources.length === 0) {
     return { sources: [], tokenUsage: createEmptyTokenUsage() };
   }
 
-  const mode = useTwoStep ? 'two-step' : 'single-step';
-  log.info(`Cleaning ${sources.length} sources in batches of ${CLEANER_CONFIG.BATCH_SIZE} (${mode})...`);
+  log.info(`Cleaning ${sources.length} sources in batches of ${CLEANER_CONFIG.BATCH_SIZE} (two-step)...`);
 
   const cleanedSources: CleanedSource[] = [];
   let totalTokenUsage = createEmptyTokenUsage();
@@ -899,28 +440,23 @@ export async function cleanSourcesBatch(
 
     log.debug(`Processing batch ${batchNum}/${totalBatches} (${batch.length} sources)...`);
 
-    // Clean batch in parallel - use two-step if summarizerModel provided
+    // Clean batch in parallel using two-step cleaning
     // Use Promise.allSettled to prevent one failure from crashing the entire batch
     const settledResults = await Promise.allSettled(
       batch.map((source) => {
-        if (useTwoStep && deps.summarizerModel) {
-          // Two-step cleaning: better quality, cheaper
-          const twoStepDeps: TwoStepCleanerDeps = {
-            generateText: deps.generateText,
-            cleanerModel: deps.model,
-            summarizerModel: deps.summarizerModel,
-            logger: deps.logger,
-            signal: deps.signal,
-            gameName: deps.gameName,
-          };
-          return cleanSourceTwoStep(source, twoStepDeps).then((r) => ({
-            source: r.source,
-            tokenUsage: r.totalTokenUsage,
-          }));
-        } else {
-          // Single-step cleaning (legacy)
-          return cleanSingleSource(source, deps);
-        }
+        // Use summarizerModel if provided, otherwise use model for both steps
+        const twoStepDeps: TwoStepCleanerDeps = {
+          generateText: deps.generateText,
+          cleanerModel: deps.model,
+          summarizerModel: deps.summarizerModel ?? deps.model,
+          logger: deps.logger,
+          signal: deps.signal,
+          gameName: deps.gameName,
+        };
+        return cleanSourceTwoStep(source, twoStepDeps).then((r) => ({
+          source: r.source,
+          tokenUsage: r.totalTokenUsage,
+        }));
       })
     );
 
@@ -2423,7 +1959,6 @@ export async function preFilterSourcesBatch(
 // ============================================================================
 
 export { 
-  CleanerOutputSchema, 
   PreFilterOutputSchema,
   PureCleanerOutputSchema,
   EnhancedSummarySchema,
