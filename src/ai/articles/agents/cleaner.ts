@@ -763,7 +763,7 @@ const EnhancedSummarySchema = z.object({
     .string()
     .min(50)
     .max(500)
-    .describe('Quick-reference overview: 2-4 sentences (100-400 chars) covering content type, main topic, and scope.'),
+    .describe('Quick-reference overview: 2-4 sentences (100-500 chars) covering content type, main topic, and scope.'),
   detailedSummary: z
     .string()
     .min(300)
@@ -772,13 +772,13 @@ const EnhancedSummarySchema = z.object({
   keyFacts: z
     .array(z.string())
     .min(3)
-    .max(15)
-    .describe('5-15 standalone facts writers can directly use. Each MUST contain specifics: "Margit has 4,174 HP and is weak to Bleed" NOT "There are tough bosses."'),
+    .max(20)
+    .describe('5-20 standalone facts writers can directly use. Each MUST contain specifics: "Margit has 4,174 HP and is weak to Bleed" NOT "There are tough bosses."'),
   dataPoints: z
     .array(z.string())
     .min(0)
-    .max(50)
-    .describe('Raw data extraction - every name and number. Names: characters, bosses, items, locations, abilities. Numbers: stats, costs, percentages, levels, versions.'),
+    .max(150)
+    .describe('Raw data extraction - EVERY name and number. Extract ALL items from tables/lists. Names: characters, bosses, items, locations, abilities. Numbers: stats, costs, percentages, levels, versions.'),
   procedures: z
     .array(z.string())
     .min(0)
@@ -787,7 +787,7 @@ const EnhancedSummarySchema = z.object({
   requirements: z
     .array(z.string())
     .min(0)
-    .max(15)
+    .max(25)
     .describe('Prerequisites and conditions IF mentioned: "Requires 2x Stonesword Key", "Level 30+ recommended", "Must defeat Margit first"'),
 });
 
@@ -798,10 +798,10 @@ function getEnhancedSummarySystemPrompt(): string {
   return `You are an expert video game content summarizer. Writers will use your summaries WITHOUT reading the original - you must capture EVERYTHING important.
 
 ═══════════════════════════════════════════════════════════════════
-OUTPUT 1: SUMMARY (Required: 2-4 sentences, 100-400 characters)
+OUTPUT 1: SUMMARY (Required: 2-4 sentences, 100-500 characters)
 ═══════════════════════════════════════════════════════════════════
 A quick-reference overview covering:
-• Content type (guide, wiki, walkthrough, news, build guide, news article, patch notes, etc.)
+• Content type (guide, wiki, walkthrough, news, build guide, patch notes, etc.)
 • Main topic/subject
 • Scope (what parts of the game it covers)
 
@@ -835,7 +835,7 @@ PARAGRAPHS 8-10 - Additional Context:
 CRITICAL: If the original mentions "450 damage" or "Renna at Church of Elleh" - include it. Missing specifics = writers can't use them.
 
 ═══════════════════════════════════════════════════════════════════
-OUTPUT 3: KEY FACTS (Required: 5-15 bullet points)
+OUTPUT 3: KEY FACTS (Required: 5-20 bullet points)
 ═══════════════════════════════════════════════════════════════════
 Standalone facts a writer can directly use. Each MUST contain specifics:
 
@@ -852,7 +852,7 @@ BAD (vague, not actionable):
 ✗ "Players should explore thoroughly"
 
 ═══════════════════════════════════════════════════════════════════
-OUTPUT 4: DATA POINTS (Required: 0-30 items)
+OUTPUT 4: DATA POINTS (Required: 0-150 items)
 ═══════════════════════════════════════════════════════════════════
 Raw data extraction - every specific piece of information:
 
@@ -881,7 +881,7 @@ Examples:
 • "Unlock Bloody Slash: Defeat Godrick Knight at Fort Haight, loot the Ash of War"
 
 ═══════════════════════════════════════════════════════════════════
-OUTPUT 6: REQUIREMENTS (Optional: 0-10 items)
+OUTPUT 6: REQUIREMENTS (Optional: 0-20 items)
 ═══════════════════════════════════════════════════════════════════
 Prerequisites, conditions, and dependencies. Include ONLY if content mentions them:
 
@@ -889,7 +889,8 @@ Examples:
 • "Requires: Meeting Melina first (automatic at third Site of Grace)"
 • "Requires: 2x Stonesword Key to unlock Fringefolk Hero's Grave"
 • "Prerequisite: Must defeat Margit to enter Stormveil Castle"
-• "Level requirement: 30+ recommended for Raya Lucaria"`;
+• "Level requirement: 30+ recommended for Raya Lucaria
+• "Stat requirement: 24 Strength to wield effectively"`;
 }
 
 /**
@@ -918,7 +919,7 @@ ${truncatedContent}
 REQUIRED OUTPUTS (extract everything)
 ═══════════════════════════════════════════════════════════════════
 
-1. summary (100-400 chars)
+1. summary (100-500 chars)
    Quick overview: What is this content? What does it cover?
 
 2. detailedSummary (500+ words, 5-10 paragraphs)
@@ -928,24 +929,24 @@ REQUIRED OUTPUTS (extract everything)
    • Every strategy, tip, or procedure mentioned
    Writers cannot use information you don't include!
 
-3. keyFacts (5-15 bullet points)
+3. keyFacts (5-20 bullet points)
    Standalone facts with SPECIFIC details:
    ✓ "Boss X has 5,000 HP and is weak to Fire"
    ✗ "There's a tough boss here" (too vague)
 
-4. dataPoints (up to 30 items)
-   Raw data extraction - every name and number:
+4. dataPoints (up to 150 items)
+   Raw data extraction - EVERY name and number:
    Names: characters, bosses, items, locations, abilities
    Numbers: stats, costs, percentages, levels, durations
 
 5. procedures (0-20 items, if applicable)
    Step-by-step instructions found in the content
 
-6. requirements (0-10 items, if applicable)
+6. requirements (0-20 items, if applicable)
    Prerequisites, level requirements, unlock conditions
 
 ═══════════════════════════════════════════════════════════════════
-REMEMBER: ITS A CRITICAL FEALURE TO MISS DETAILS. BE EXHAUSTIVE.
+REMEMBER: ITS A CRITICAL FAILURE TO MISS DETAILS. BE EXHAUSTIVE.
 ═══════════════════════════════════════════════════════════════════`;
 }
 

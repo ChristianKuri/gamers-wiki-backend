@@ -506,14 +506,6 @@ export const SPECIALIST_CONFIG = {
   /** Results per research context */
   RESULTS_PER_RESEARCH_CONTEXT: 5,
   /**
-   * Maximum output tokens per section.
-   * INCREASED from 1500 to 8000 for thinking models (kimi-k2-thinking, o1, etc.)
-   * which use part of their output budget for internal reasoning.
-   * With only 1500 tokens, thinking models often exhaust the budget on reasoning
-   * and return empty content.
-   */
-  MAX_OUTPUT_TOKENS_PER_SECTION: 8000,
-  /**
    * Search depth for section research (Tavily).
    * OPTIMIZED: 'basic' based on A/B testing (Dec 2024).
    * - basic = 1 credit, advanced = 2 credits
