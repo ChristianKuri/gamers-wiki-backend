@@ -1,6 +1,7 @@
 import type { Core } from '@strapi/strapi';
 import { runSeeders } from './bootstrap/seeders';
 import { TRANSIENT_NETWORK_ERROR_PATTERN } from './ai/articles/retry';
+import { logger } from './utils/logger';
 
 /**
  * Global unhandled rejection handler.
@@ -17,18 +18,18 @@ process.on('unhandledRejection', (reason, _promise) => {
     : '';
 
   // Log but don't crash - these are usually transient network errors
-  console.error(`[UnhandledRejection] Promise rejected: ${message}${cause}`);
+  logger.error(`[UnhandledRejection] Promise rejected: ${message}${cause}`);
 
   // If it's a known transient error, just log and continue
   const isTransient = TRANSIENT_NETWORK_ERROR_PATTERN.test(message + cause);
   if (isTransient) {
-    console.warn('[UnhandledRejection] Transient error detected, continuing...');
+    logger.warn('[UnhandledRejection] Transient error detected, continuing...');
     return;
   }
 
   // For unknown errors, log the full stack but still don't crash
   if (reason instanceof Error && reason.stack) {
-    console.error('[UnhandledRejection] Stack trace:', reason.stack);
+    logger.error(`[UnhandledRejection] Stack trace: ${reason.stack}`);
   }
 });
 
