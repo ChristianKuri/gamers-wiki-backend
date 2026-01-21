@@ -28,6 +28,27 @@ export interface RetryOptions {
   readonly shouldRetry?: (error: unknown) => boolean;
   /** Optional AbortSignal to cancel the operation */
   readonly signal?: AbortSignal;
+  /**
+   * Optional callback invoked before each retry attempt.
+   * Use this to adjust parameters (e.g., temperature) between retries.
+   * 
+   * @param attempt - The retry attempt number (1 = first retry, 2 = second retry, etc.)
+   * @param error - The error that caused the retry
+   * 
+   * @example
+   * let temperature = 0.1;
+   * withRetry(
+   *   () => generateText({ model, prompt, temperature }),
+   *   {
+   *     onRetry: (attempt, error) => {
+   *       if (error instanceof DegenerateOutputError) {
+   *         temperature += 0.15; // Bump temperature to break the loop
+   *       }
+   *     }
+   *   }
+   * );
+   */
+  readonly onRetry?: (attempt: number, error: unknown) => void;
 }
 
 // ============================================================================
@@ -42,9 +63,10 @@ export interface RetryOptions {
  * - TypeError: terminated (aborted fetch)
  * - SocketError: other side closed
  * - ECONNRESET, ETIMEDOUT, ECONNABORTED
+ * - TimeoutError: The operation was aborted due to timeout (orphaned AbortSignal.timeout)
  */
 export const TRANSIENT_NETWORK_ERROR_PATTERN =
-  /terminated|socket|ECONNRESET|ETIMEDOUT|ECONNABORTED|other side closed|UND_ERR/i;
+  /terminated|socket|ECONNRESET|ETIMEDOUT|ECONNABORTED|other side closed|UND_ERR|aborted.*timeout/i;
 
 /**
  * Known transient error patterns that should trigger a retry.
@@ -186,6 +208,7 @@ export async function withRetry<T>(
     context = 'operation',
     shouldRetry = isRetryableError,
     signal,
+    onRetry,
   } = options;
 
   const log = createPrefixedLogger('[Retry]');
@@ -226,6 +249,13 @@ export async function withRetry<T>(
         `${context} failed (attempt ${attempt + 1}/${maxRetries + 1}), ` +
           `retrying in ${delay}ms: ${error instanceof Error ? error.message : String(error)}`
       );
+      
+      // Call onRetry callback before waiting (allows adjusting parameters like temperature)
+      // Note: attempt+1 because this is the retry number (1 = first retry)
+      if (onRetry) {
+        onRetry(attempt + 1, error);
+      }
+      
       await sleep(delay);
     }
   }

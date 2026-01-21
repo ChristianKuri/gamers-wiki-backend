@@ -1224,6 +1224,18 @@ export async function processSearchResultsWithCleaning(
   const excludedCacheCount = cacheResults.filter((r) => r.hit).length - (cacheEnabled ? hits.length : 0);
   const bypassedCacheCount = !cacheEnabled ? cacheResults.filter((r) => r.hit).length : 0;
   
+  // Log detailed information about excluded domains if any
+  const excludedDomainSources = filteredSources.filter(s => s.reason === 'excluded_domain');
+  if (excludedDomainSources.length > 0) {
+    logger?.info?.(`[Cleaner] Skipping ${excludedDomainSources.length} cached source(s) from excluded domains:`);
+    for (const s of excludedDomainSources) {
+      logger?.info?.(`  - [${s.domain}] ${s.url}`);
+    }
+    // Log active exclusion list for validation
+    const excludedList = [...excludedDomainsSet].sort().join(', ');
+    logger?.info?.(`[Cleaner] Active excluded domains: ${excludedList}`);
+  }
+  
   if (hits.length > 0 || misses.length > 0 || excludedCacheCount > 0 || bypassedCacheCount > 0) {
     let logMsg = `Source cache: ${hits.length} hits, ${misses.length} misses for "${query.slice(0, 40)}..."`;
     if (bypassedCacheCount > 0) {

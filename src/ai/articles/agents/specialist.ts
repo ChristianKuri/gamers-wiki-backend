@@ -745,7 +745,6 @@ async function writeSection(
       const genResult = await deps.generateText({
         model: deps.model,
         temperature,
-        maxOutputTokens: SPECIALIST_CONFIG.MAX_OUTPUT_TOKENS_PER_SECTION,
         system: getSpecialistSystemPrompt(localeInstruction, categoryToneGuide, plan.categorySlug),
         prompt: getSpecialistSectionUserPrompt(
           sectionContext,

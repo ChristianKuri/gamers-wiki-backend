@@ -71,7 +71,7 @@ export const AI_DEFAULT_MODELS = {
   ARTICLE_REVIEWER: 'google/gemini-3-flash-preview',
   ARTICLE_FIXER: 'google/gemini-3-flash-preview',
   ARTICLE_CLEANER: 'google/gemini-2.5-flash-lite',
-  ARTICLE_SUMMARIZER: 'google/gemini-3-flash-preview',
+  ARTICLE_SUMMARIZER: 'google/gemini-2.5-flash-lite',
   ARTICLE_PREFILTER: 'google/gemini-2.5-flash-lite',
   ARTICLE_IMAGE_CURATOR: 'google/gemini-3-flash-preview',
   ARTICLE_IMAGE_QUALITY_CHECKER: 'google/gemini-2.5-flash-lite', // we need to use a model that can accept images as input.

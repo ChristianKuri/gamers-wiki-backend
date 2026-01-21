@@ -48,7 +48,7 @@ describeE2E(`Article Generator E2E - ${TEST_CONFIG.gameName}`, () => {
 
   beforeAll(async () => {
     await setupArticleGeneratorTest(state, TEST_CONFIG);
-  }, 1080000);
+  }, 3700000); // 1 hour + buffer - must exceed HTTP timeout (1 hour)
 
   afterAll(async () => {
     await teardownArticleGeneratorTest(state, TEST_CONFIG);
