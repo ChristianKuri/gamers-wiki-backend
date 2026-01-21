@@ -677,9 +677,10 @@ CRITICAL RULES (Follow EXACTLY)
 1. NEVER SUMMARIZE: Your output should contain 90-100% of the original article text, KEEP FULL CONTENT.
 2. NEVER CONDENSE: If source has 10 paragraphs, output has ~10 paragraphs
 3. NEVER PARAPHRASE: Keep the original wording, don't rewrite
-4. PRESERVE STRUCTURE: Headings, lists, tables stay in their format
-5. OUTPUT FORMAT: Clean markdown (no HTML tags)
-6. WHEN IN DOUBT: Include the content - false positives are better than losing info
+4. NEVER ADD CONTENT: Do NOT elaborate, explain, or add information that wasn't in the original.
+5. PRESERVE STRUCTURE: Headings, lists, tables stay in their format
+6. OUTPUT FORMAT: Clean markdown (no HTML tags)
+7. WHEN IN DOUBT: Include the content - false positives are better than losing info
 
 ═══════════════════════════════════════════════════════════════════
 SCORING GUIDELINES
@@ -726,7 +727,7 @@ YOUR TASK
 ═══════════════════════════════════════════════════════════════════
 
 cleanedContent: Extract the FULL article. Remove navigation, ads, comments, etc.
-IMPORTANT: Do NOT summarize or condense. Output should be ~90-100% of article length.
+IMPORTANT: Do NOT summarize or condense. Output should be ~90-100% of the actual article length.
 
 QUALITY SCORING (0-100):
 - Content depth (0-40): Detailed, comprehensive?
@@ -1386,6 +1387,13 @@ export async function cleanSourceTwoStep(
       : '';
     const preservedPct = ((cleanResult.cleanedContent.length / originalLength) * 100).toFixed(0);
     const imageStr = imageResult.images.length > 0 ? `, ${imageResult.images.length} images` : '';
+    
+    // Warn if content EXPANDED (suspicious - LLM may be hallucinating/adding content)
+    const expansionThreshold = 110; // 10% tolerance for formatting changes
+    if (cleanResult.cleanedContent.length > originalLength * (expansionThreshold / 100)) {
+      log.warn(`[Cleaner] SUSPICIOUS EXPANSION: ${source.url} - content grew from ${originalLength.toLocaleString()} to ${cleanResult.cleanedContent.length.toLocaleString()} chars (${preservedPct}%). LLM may be adding content that wasn't in the original.`);
+    }
+    
     log.info(`Two-step clean complete: ${source.url} - ${originalLength.toLocaleString()}→${cleanResult.cleanedContent.length.toLocaleString()}c (${preservedPct}%), Q:${cleanResult.qualityScore}, R:${cleanResult.relevanceScore}${imageStr}${costStr}`);
 
     return {
