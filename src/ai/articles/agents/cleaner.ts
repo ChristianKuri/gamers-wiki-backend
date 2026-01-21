@@ -64,13 +64,13 @@ const CleanerOutputSchema = z.object({
     .min(0)
     .max(15)
     .describe('Specific data points extracted: statistics, dates, version numbers, character names, item names, damage values, percentages, etc. Empty array if no specific data found.'),
-  qualityScore: z
+  qualityScore: z.coerce
     .number()
     .int()
     .min(0)
     .max(100)
     .describe('Content quality score 0-100 based on depth, structure, authority, and junk ratio'),
-  relevanceScore: z
+  relevanceScore: z.coerce
     .number()
     .int()
     .min(0)
@@ -584,13 +584,13 @@ const PureCleanerOutputSchema = z.object({
     .string()
     .min(1)
     .describe('Full article content with web junk removed. Keep 90-100% of original article text. Do NOT summarize, condense, or paraphrase.'),
-  qualityScore: z
+  qualityScore: z.coerce
     .number()
     .int()
     .min(0)
     .max(100)
     .describe('Content quality 0-100: 90+: Comprehensive wiki | 70-89: Good guide | 50-69: Basic | <50: Poor/junk'),
-  relevanceScore: z
+  relevanceScore: z.coerce
     .number()
     .int()
     .min(0)
@@ -1417,13 +1417,13 @@ export async function cleanSourceTwoStep(
  * Uses two relevance scores for nuanced filtering.
  */
 const PreFilterOutputSchema = z.object({
-  relevanceToGaming: z
+  relevanceToGaming: z.coerce
     .number()
     .int()
     .min(0)
     .max(100)
     .describe('Is this content about VIDEO GAMES in general? 0 = not at all (cooking, programming, adult), 100 = definitely about video games (game guides, reviews, wikis)'),
-  relevanceToArticle: z
+  relevanceToArticle: z.coerce
     .number()
     .int()
     .min(0)
@@ -1588,7 +1588,7 @@ export async function preFilterSingleSource(
       },
       {
         context: `PreFilter: ${source.url}`,
-        maxRetries: 1, // Only 1 retry for pre-filter (speed > reliability)
+        maxRetries: 2, // 2 retries (3 attempts total) for pre-filter schema validation failures
         signal: deps.signal,
       }
     );
