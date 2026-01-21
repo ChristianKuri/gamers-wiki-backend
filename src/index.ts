@@ -1,5 +1,36 @@
 import type { Core } from '@strapi/strapi';
 import { runSeeders } from './bootstrap/seeders';
+import { TRANSIENT_NETWORK_ERROR_PATTERN } from './ai/articles/retry';
+
+/**
+ * Global unhandled rejection handler.
+ *
+ * Prevents the entire process from crashing when a promise rejection goes
+ * unhandled (e.g., socket termination errors from fetch operations).
+ * These errors are typically transient network issues that should be logged
+ * but not crash the server.
+ */
+process.on('unhandledRejection', (reason, _promise) => {
+  const message = reason instanceof Error ? reason.message : String(reason);
+  const cause = reason instanceof Error && 'cause' in reason
+    ? ` [cause: ${reason.cause instanceof Error ? reason.cause.message : String(reason.cause)}]`
+    : '';
+
+  // Log but don't crash - these are usually transient network errors
+  console.error(`[UnhandledRejection] Promise rejected: ${message}${cause}`);
+
+  // If it's a known transient error, just log and continue
+  const isTransient = TRANSIENT_NETWORK_ERROR_PATTERN.test(message + cause);
+  if (isTransient) {
+    console.warn('[UnhandledRejection] Transient error detected, continuing...');
+    return;
+  }
+
+  // For unknown errors, log the full stack but still don't crash
+  if (reason instanceof Error && reason.stack) {
+    console.error('[UnhandledRejection] Stack trace:', reason.stack);
+  }
+});
 
 /**
  * Extended HTTP request timeout for long-running operations.
