@@ -414,6 +414,33 @@ export async function runImagePhase(
     };
   }
 
+  // Create quality validator for sections if enabled
+  // Section images are validated for watermarks/logos as the final gate before acceptance
+  let sectionQualityValidator: QualityValidator | undefined;
+  let sectionQualityTokenUsage: TokenUsage = { input: 0, output: 0 };
+  if (IMAGE_QUALITY_VALIDATION_CONFIG.ENABLED) {
+    log?.debug(`${logPrefix} Section quality validation enabled`);
+    sectionQualityValidator = async (buffer: Buffer, mimeType: string) => {
+      const { result, tokenUsage } = await validateImageQuality(buffer, {
+        model,
+        generateText,
+        logger: log,
+        signal,
+      });
+      sectionQualityTokenUsage = addTokenUsage(sectionQualityTokenUsage, tokenUsage);
+      return {
+        passed: result.passed,
+        reason: result.passed
+          ? undefined
+          : result.hasWatermark
+            ? 'Watermark detected'
+            : result.hasUIOverlay
+              ? 'UI overlay detected'
+              : `Clarity too low (${result.clarityScore})`,
+      };
+    };
+  }
+
   // Process hero candidates
   let heroResult: ProcessedHeroResult | null = null;
   if (curatorOutput.heroCandidates.length > 0) {
@@ -439,6 +466,7 @@ export async function runImagePhase(
   const sectionResults = await processAllSectionCandidates(curatorOutput.sectionSelections, {
     minWidth: IMAGE_DIMENSION_CONFIG.SECTION_MIN_WIDTH,
     excludeUrls: heroExcludeUrls,
+    qualityValidator: sectionQualityValidator,
     logger: log,
     signal,
   });
@@ -621,7 +649,10 @@ export async function runImagePhase(
       heroImageFailed,
       sectionImages: uploadedSectionImages.map(s => s.upload),
       failedSections: failedSections.length > 0 ? failedSections : undefined,
-      tokenUsage: addTokenUsage(curatorOutput.tokenUsage, heroQualityTokenUsage),
+      tokenUsage: addTokenUsage(
+        addTokenUsage(curatorOutput.tokenUsage, heroQualityTokenUsage),
+        sectionQualityTokenUsage
+      ),
       poolSummary: { total: poolSummary.total, igdb: poolSummary.igdb, web: webCount },
     };
   }
@@ -639,7 +670,10 @@ export async function runImagePhase(
     heroImageFailed,
     sectionImages: insertionResult.sectionImages,
     failedSections: failedSections.length > 0 ? failedSections : undefined,
-    tokenUsage: addTokenUsage(curatorOutput.tokenUsage, heroQualityTokenUsage),
+    tokenUsage: addTokenUsage(
+      addTokenUsage(curatorOutput.tokenUsage, heroQualityTokenUsage),
+      sectionQualityTokenUsage
+    ),
     poolSummary: { total: poolSummary.total, igdb: poolSummary.igdb, web: webCount },
   };
 }

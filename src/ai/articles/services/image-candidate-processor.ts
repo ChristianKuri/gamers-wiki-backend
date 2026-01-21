@@ -121,6 +121,8 @@ export interface ProcessSectionOptions {
   readonly excludeUrls?: readonly string[];
   /** Shared cache for dimension probing (avoids redundant HTTP requests) */
   readonly dimensionCache?: Map<string, ImageDimensions | null>;
+  /** Optional quality validator for section images (watermark/clarity check) */
+  readonly qualityValidator?: QualityValidator;
   /** Logger for debugging */
   readonly logger?: Logger;
   /** AbortSignal for cancellation */
@@ -389,6 +391,7 @@ export async function processSectionCandidates(
     minWidth = IMAGE_DIMENSION_CONFIG.SECTION_MIN_WIDTH,
     excludeUrls = [],
     dimensionCache,
+    qualityValidator,
     logger,
     signal,
   } = options;
@@ -408,6 +411,7 @@ export async function processSectionCandidates(
   let downloadFailures = 0;
   let tooSmall = 0;
   let invalidAspectRatio = 0;
+  let qualityFailures = 0;
 
   for (let i = 0; i < selection.candidates.length; i++) {
     const candidate = selection.candidates[i];
@@ -460,11 +464,31 @@ export async function processSectionCandidates(
           invalidAspectRatio++;
           continue; // Try next candidate
         }
+
+        // Run quality validation if provided (watermark/clarity check)
+        if (qualityValidator) {
+          logger?.debug(`[CandidateProcessor] Section candidate ${i}: running quality validation`);
+          const qualityResult = await qualityValidator(downloadResult.buffer, downloadResult.mimeType);
+          if (!qualityResult.passed) {
+            logger?.debug(
+              `[CandidateProcessor] Section candidate ${i} failed quality check: ${qualityResult.reason ?? 'unknown'}`
+            );
+            qualityFailures++;
+            continue; // Try next candidate
+          }
+          logger?.debug(`[CandidateProcessor] Section candidate ${i} passed quality validation`);
+        }
         
         logger?.info(
           `[CandidateProcessor] Section candidate ${i} selected for "${selection.sectionHeadline}": ` +
           `${dims.width}x${dims.height}`
         );
+        if (qualityFailures > 0) {
+          logger?.debug(
+            `[CandidateProcessor] Section "${selection.sectionHeadline}": ` +
+            `${qualityFailures} candidates rejected by quality checks`
+          );
+        }
         return {
           sectionHeadline: selection.sectionHeadline,
           sectionIndex: selection.sectionIndex,
@@ -499,6 +523,9 @@ export async function processSectionCandidates(
     reasons.push(
       `${invalidAspectRatio} invalid aspect ratio (required: ${IMAGE_CURATOR_CONFIG.SECTION_ASPECT_RATIO_MIN}-${IMAGE_CURATOR_CONFIG.SECTION_ASPECT_RATIO_MAX})`
     );
+  }
+  if (qualityFailures > 0) {
+    reasons.push(`${qualityFailures} quality failures`);
   }
   
   logger?.warn(

@@ -676,8 +676,9 @@ export function mergeImagePools(pool1: ImagePool, pool2: ImagePool): ImagePool {
   const mergedWebImages: CollectedImage[] = [];
 
   for (const img of [...pool1.images, ...pool2.images]) {
-    if (seenInMerge.has(img.url)) continue;
-    seenInMerge.add(img.url);
+    const normalizedUrl = normalizeUrl(img.url);
+    if (seenInMerge.has(normalizedUrl)) continue;
+    seenInMerge.add(normalizedUrl);
 
     mergedImages.push(img);
     if (img.source === 'igdb') {

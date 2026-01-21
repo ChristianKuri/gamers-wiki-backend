@@ -4,13 +4,11 @@
  * Optional vision-based quality validation for image candidates.
  * Uses a vision LLM to detect watermarks, UI overlays, and assess image clarity.
  *
- * INTEGRATION STATUS: Staged for future use.
- * - Controlled by IMAGE_QUALITY_VALIDATION_CONFIG.ENABLED (default: false)
- * - When enabled, should be called in image-candidate-processor.ts after
- *   dimension validation succeeds: Download → Validate Dimensions → [Validate Quality] → Upload
- * - Currently disabled because text-based relevance scoring + dimension validation
- *   provides sufficient quality filtering for most use cases
- * - Enable when watermark detection becomes a significant issue
+ * INTEGRATION STATUS: Enabled for sections + hero (configurable).
+ * - Controlled by IMAGE_QUALITY_VALIDATION_CONFIG.ENABLED (sections)
+ * - Hero validation uses forceEnabled to ensure watermark checks
+ * - Called in image-candidate-processor.ts after dimension validation succeeds:
+ *   Download → Validate Dimensions → [Validate Quality] → Upload
  *
  * @see config.ts IMAGE_QUALITY_VALIDATION_CONFIG for settings
  */

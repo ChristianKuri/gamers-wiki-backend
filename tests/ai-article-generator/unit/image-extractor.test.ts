@@ -351,17 +351,17 @@ More strategy info here.
       expect(result.images).toHaveLength(1);
     });
 
-    it('caps images at MAX_IMAGES_PER_SOURCE', () => {
+    it('caps images at 75 per source', () => {
       // Create content with many images
-      const imageUrls = Array.from({ length: 30 }, (_, i) => `https://example.com/img${i}.jpg`);
+      const imageUrls = Array.from({ length: 100 }, (_, i) => `https://example.com/img${i}.jpg`);
       const rawContent = imageUrls.map(url => `<img src="${url}">`).join('\n');
       const cleanedContent = imageUrls.map((url, i) => `![Image ${i}](${url})`).join('\n\n');
       
       const result = extractImagesFromSource(rawContent, cleanedContent);
       
-      // Should be capped at MAX_IMAGES_PER_SOURCE (20 by default)
-      expect(result.images.length).toBeLessThanOrEqual(20);
-      expect(result.parsedCount).toBe(30);
+      // Should be capped at 75 (new MAX_IMAGES_PER_SOURCE)
+      expect(result.images.length).toBe(75);
+      expect(result.parsedCount).toBe(100);
     });
   });
 

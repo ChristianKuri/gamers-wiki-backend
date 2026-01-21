@@ -707,14 +707,14 @@ export const IMAGE_CURATOR_CONFIG = {
   MAX_IMAGES_PER_ARTICLE: 6,
   /**
    * Candidates to send to LLM for text-based relevance scoring per section.
-   * Increased from 5 to 30 - LLM evaluates more candidates via text metadata.
+   * Increased from 5 to 60 - LLM evaluates more candidates via text metadata.
    */
-  TEXT_CANDIDATES_PER_SECTION: 30,
+  TEXT_CANDIDATES_PER_SECTION: 60,
   /**
    * Top results to return from text-based relevance scoring per section.
    * These are then validated for dimensions before final selection.
    */
-  TEXT_TOP_RESULTS: 5,
+  TEXT_TOP_RESULTS: 10,
   /**
    * Max concurrent section LLM calls.
    * Trade-off: Too low = slow (sequential), too high = API rate limits / cost spikes.
@@ -796,10 +796,9 @@ export const IMAGE_CURATOR_CONFIG = {
 export const IMAGE_QUALITY_VALIDATION_CONFIG = {
   /**
    * Enable vision-based quality validation (watermarks, clarity) for section images.
-   * Off by default - expensive for many sections.
-   * When enabled, validates top candidates with vision LLM.
+   * Validates candidates as they pass dimension checks.
    */
-  ENABLED: false,
+  ENABLED: true,
   /**
    * Enable vision-based quality validation for hero image.
    * On by default - hero is the most important image and must not have watermarks.
@@ -810,7 +809,7 @@ export const IMAGE_QUALITY_VALIDATION_CONFIG = {
    * Maximum candidates to validate with vision per section.
    * Only top candidates (after dimension validation) are checked.
    */
-  MAX_CANDIDATES_PER_SECTION: 3,
+  MAX_CANDIDATES_PER_SECTION: 10,
   /**
    * Minimum clarity score to accept (0-100).
    * Images below this are rejected for blur/quality issues.
@@ -1180,7 +1179,7 @@ export const CLEANER_CONFIG = {
    * Caps image extraction to avoid bloating the image pool with too many
    * images from a single source. Images beyond this limit are dropped.
    */
-  MAX_IMAGES_PER_SOURCE: 20,
+  MAX_IMAGES_PER_SOURCE: 75,
   /**
    * Whether to use LLM pre-filter before full cleaning.
    * Pre-filter uses title + snippet to check relevance.

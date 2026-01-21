@@ -560,6 +560,79 @@ describe('processSectionCandidates', () => {
     expect(mockDownloadImage).not.toHaveBeenCalled();
   });
 
+  describe('quality validator', () => {
+    it('should call quality validator after dimension check passes', async () => {
+      const image = createMockImage({ url: 'https://example.com/clean.jpg' });
+      const selection = createMockSectionSelection('Boss Guide', 0, [
+        { imageIndex: 0, image },
+      ]);
+      const qualityValidator = vi.fn().mockResolvedValue({ passed: true });
+
+      mockImageDownloadAndDimensions(800, 600);
+
+      const result = await processSectionCandidates(selection, {
+        minWidth: 500,
+        qualityValidator,
+      });
+
+      expect(result).not.toBeNull();
+      expect(qualityValidator).toHaveBeenCalledTimes(1);
+      expect(qualityValidator).toHaveBeenCalledWith(
+        expect.any(Buffer),
+        'image/jpeg'
+      );
+    });
+
+    it('should try next candidate when quality validator rejects', async () => {
+      const image1 = createMockImage({ url: 'https://example.com/watermarked.jpg' });
+      const image2 = createMockImage({ url: 'https://example.com/clean.jpg' });
+      const selection = createMockSectionSelection('Location', 1, [
+        { imageIndex: 0, image: image1 },
+        { imageIndex: 1, image: image2 },
+      ]);
+      const qualityValidator = vi.fn()
+        .mockResolvedValueOnce({ passed: false, reason: 'Watermark detected' })
+        .mockResolvedValueOnce({ passed: true });
+
+      mockImageDownloadAndDimensions(800, 600);
+      mockImageDownloadAndDimensions(800, 600);
+
+      const result = await processSectionCandidates(selection, {
+        minWidth: 500,
+        qualityValidator,
+      });
+
+      expect(result).not.toBeNull();
+      expect(result?.image).toBe(image2);
+      expect(result?.selectedCandidateIndex).toBe(1);
+      expect(qualityValidator).toHaveBeenCalledTimes(2);
+    });
+
+    it('should return null when all candidates fail quality validation', async () => {
+      const image1 = createMockImage({ url: 'https://example.com/bad1.jpg' });
+      const image2 = createMockImage({ url: 'https://example.com/bad2.jpg' });
+      const selection = createMockSectionSelection('Strategy', 3, [
+        { imageIndex: 0, image: image1 },
+        { imageIndex: 1, image: image2 },
+      ]);
+      const qualityValidator = vi.fn().mockResolvedValue({
+        passed: false,
+        reason: 'Watermark detected',
+      });
+
+      mockImageDownloadAndDimensions(800, 600);
+      mockImageDownloadAndDimensions(800, 600);
+
+      const result = await processSectionCandidates(selection, {
+        minWidth: 500,
+        qualityValidator,
+      });
+
+      expect(result).toBeNull();
+      expect(qualityValidator).toHaveBeenCalledTimes(2);
+    });
+  });
+
   describe('aspect ratio validation', () => {
     it('should reject section images with aspect ratio below minimum', async () => {
       const image1 = createMockImage({ url: 'https://example.com/narrow.jpg' });

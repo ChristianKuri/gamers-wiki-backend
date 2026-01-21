@@ -233,11 +233,11 @@ describe('Image Curator Agent', () => {
     });
 
     it('should return section candidates with resolved images', async () => {
-      const screenshotUrl = 'https://images.igdb.com/igdb/image/upload/t_screenshot_big/ss1.jpg';
       const context = createMockContext(
         ['Section 1'],
-        [screenshotUrl],
-        []
+        [],
+        [],
+        [{ url: 'https://example.com/boss.jpg', description: 'Boss arena screenshot' }]
       );
 
       // Hero call
@@ -251,14 +251,15 @@ describe('Image Curator Agent', () => {
 
       expect(result.sectionSelections).toHaveLength(1);
       expect(result.sectionSelections[0].candidates).toHaveLength(1);
-      expect(result.sectionSelections[0].candidates[0].image.url).toContain('ss1.jpg');
+      expect(result.sectionSelections[0].candidates[0].image.url).toContain('boss.jpg');
     });
 
     it('should track token usage from LLM calls', async () => {
       const context = createMockContext(
         ['Section 1'],
         ['https://images.igdb.com/igdb/image/upload/t_screenshot_big/ss1.jpg'],
-        []
+        [],
+        [{ url: 'https://example.com/section.jpg', description: 'Section screenshot' }]
       );
 
       // Hero call with specific token usage
@@ -355,7 +356,8 @@ describe('Image Curator Agent', () => {
       const context = createMockContext(
         ['Section 1', 'Section 2', 'Section 3'],
         ['https://images.igdb.com/igdb/image/upload/t_screenshot_big/ss1.jpg'],
-        []
+        [],
+        [{ url: 'https://example.com/section.jpg', description: 'Section screenshot' }]
       );
 
       // Hero call
@@ -405,5 +407,50 @@ describe('Image Curator Agent', () => {
       // Should include context (sourceQuery is the search query used to find the image)
       expect(heroPrompt).toContain('Context: "boss guide"');
     });
+
+    it('should include IGDB images in section candidates when available', async () => {
+      const context = createMockContext(
+        ['Section 1'],
+        ['https://images.igdb.com/igdb/image/upload/t_screenshot_big/igdb1.jpg'],
+        [],
+        [{ url: 'https://example.com/section.jpg', description: 'Section screenshot' }]
+      );
+
+      // Hero call
+      mockGenerateText.mockResolvedValueOnce(createMockHeroResult([]));
+      // Section call
+      mockGenerateText.mockResolvedValueOnce(createMockSectionResult([]));
+
+      await runImageCurator(context, createMockDeps());
+
+      const sectionCall = mockGenerateText.mock.calls[1];
+      const sectionPrompt = sectionCall[0].prompt as string;
+
+      expect(sectionPrompt).toContain('example.com');
+      expect(sectionPrompt).toContain('IGDB');
+      expect(sectionPrompt).toContain('igdb1.jpg');
+    });
+
+    it('should request the top 10 candidates in section prompt', async () => {
+      const context = createMockContext(
+        ['Section 1'],
+        [],
+        [],
+        [{ url: 'https://example.com/section.jpg', description: 'Section screenshot' }]
+      );
+
+      // Hero call
+      mockGenerateText.mockResolvedValueOnce(createMockHeroResult([]));
+      // Section call
+      mockGenerateText.mockResolvedValueOnce(createMockSectionResult([]));
+
+      await runImageCurator(context, createMockDeps());
+
+      const sectionCall = mockGenerateText.mock.calls[1];
+      const sectionPrompt = sectionCall[0].prompt as string;
+
+      expect(sectionPrompt).toContain('top 10');
+    });
+
   });
 });
