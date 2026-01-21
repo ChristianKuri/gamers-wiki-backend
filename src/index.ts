@@ -8,8 +8,14 @@ import { logger } from './utils/logger';
  *
  * Prevents the entire process from crashing when a promise rejection goes
  * unhandled (e.g., socket termination errors from fetch operations).
- * These errors are typically transient network issues that should be logged
- * but not crash the server.
+ * 
+ * These errors typically occur when:
+ * - Node.js undici (fetch) has an ECONNRESET - the fetch Promise rejects,
+ *   but undici also emits a separate error event that escapes normal handling
+ * - Network operations are aborted mid-flight
+ * 
+ * The retry logic already handles these errors properly, so we only log
+ * transient errors at debug level to reduce noise.
  */
 process.on('unhandledRejection', (reason, _promise) => {
   const message = reason instanceof Error ? reason.message : String(reason);
@@ -17,17 +23,16 @@ process.on('unhandledRejection', (reason, _promise) => {
     ? ` [cause: ${reason.cause instanceof Error ? reason.cause.message : String(reason.cause)}]`
     : '';
 
-  // Log but don't crash - these are usually transient network errors
-  logger.error(`[UnhandledRejection] Promise rejected: ${message}${cause}`);
-
-  // If it's a known transient error, just log and continue
+  // Check if it's a known transient error (already handled by retry logic)
   const isTransient = TRANSIENT_NETWORK_ERROR_PATTERN.test(message + cause);
   if (isTransient) {
-    logger.warn('[UnhandledRejection] Transient error detected, continuing...');
+    // Log at warn level - visible but not alarming since retry logic handles these
+    logger.warn(`[UnhandledRejection] Transient network error (handled by retry): ${message}${cause}`);
     return;
   }
 
-  // For unknown errors, log the full stack but still don't crash
+  // For unknown/unexpected errors, log at error level with stack trace
+  logger.error(`[UnhandledRejection] Promise rejected: ${message}${cause}`);
   if (reason instanceof Error && reason.stack) {
     logger.error(`[UnhandledRejection] Stack trace: ${reason.stack}`);
   }

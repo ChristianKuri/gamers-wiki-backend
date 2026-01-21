@@ -1043,12 +1043,17 @@ export const CLEANER_CONFIG = {
    */
   BATCH_SIZE: 100,
   /**
-   * Timeout for cleaning a single URL (ms).
-   * Increased from 180s to 360s (6 min) to handle very large content.
-   * Two-step cleaning does 2 LLM calls, and large content (20k+ chars) needs more time.
-   * Timeouts here indicate content is too large or API is slow - not transient failures.
+   * Timeout for Step 1: Content cleaning (ms).
+   * Processes raw scraped content (can be 20-90K+ chars).
+   * Longest successful: ~35s. Set to 90s (2.5x buffer).
    */
-  TIMEOUT_MS: 360000,
+  STEP1_TIMEOUT_MS: 90_000,
+  /**
+   * Timeout for Step 2: Summarization (ms).
+   * Processes already cleaned content (typically smaller).
+   * Longest successful: ~20s. Set to 60s (3x buffer).
+   */
+  STEP2_TIMEOUT_MS: 60_000,
   /**
    * Maximum retry attempts for cleaner LLM calls.
    *
@@ -1063,10 +1068,10 @@ export const CLEANER_CONFIG = {
    *   Retrying wastes tokens since the request likely succeeded server-side.
    * - Abort signals: User/system cancelled the operation intentionally.
    *
-   * Set to 2 to allow recovery from transient network/API issues while
-   * avoiding wasted retries on content that consistently fails.
+   * Set to 1 to minimize wasted time on content that consistently fails.
+   * Each retry on large content (89KB+) can take 2-3 minutes.
    */
-  MAX_RETRIES: 2,
+  MAX_RETRIES: 1,
   /**
    * Minimum content length (chars) to attempt cleaning.
    * Content below this is likely a scrape failure (JS-heavy site, paywall, etc.)
@@ -1152,8 +1157,89 @@ export const CLEANER_CONFIG = {
   /**
    * Minimum cleaned content length to consider valid.
    * If cleaning results in less than this, content is likely garbage.
+   * 
+   * 1000 chars ≈ 150-200 words. Less than this and there's not enough
+   * substance to be useful for article generation.
    */
-  MIN_CLEANED_CHARS: 100,
+  MIN_CLEANED_CHARS: 1000,
+  /**
+   * Maximum ratio of output length to input length.
+   * If output > input * this ratio, the model likely got stuck in a
+   * degenerate loop (e.g., repeating table separators like "|:---|").
+   * 
+   * Cleaning should REDUCE content (remove junk), so output > input
+   * is suspicious. Allow 1.2x to account for markdown formatting expansion.
+   */
+  MAX_OUTPUT_EXPANSION_RATIO: 1.2,
+  /**
+   * Minimum length of repeated substring to detect degenerate output.
+   * If a substring >= this length repeats > DEGENERATE_REPEAT_THRESHOLD times,
+   * the output is considered degenerate (model stuck in a loop).
+   */
+  DEGENERATE_PATTERN_MIN_LENGTH: 10,
+  /**
+   * Number of times a pattern must repeat to be considered degenerate.
+   * Combined with DEGENERATE_PATTERN_MIN_LENGTH to detect looping output.
+   */
+  DEGENERATE_REPEAT_THRESHOLD: 50,
+  /**
+   * Maximum retries specifically for degenerate output recovery.
+   * These retries use progressively higher temperature to break the loop.
+   * Separate from MAX_RETRIES which handles transient errors.
+   * 
+   * Combined with MAX_RETRIES (1) = 2 total retries = 3 attempts max.
+   */
+  MAX_DEGENERATE_RETRIES: 1,
+  /**
+   * Temperature increment per degenerate retry.
+   * Each retry adds this to the base temperature (0.1).
+   * E.g., with 0.15 increment: retry 1 = 0.25, retry 2 = 0.40
+   */
+  DEGENERATE_RETRY_TEMP_INCREMENT: 0.15,
+  /**
+   * Maximum ratio of summarizer output to input.
+   * The summary schema includes summary, detailedSummary (500+ words), 
+   * keyFacts (30), dataPoints (120), procedures (50), requirements (30).
+   * This naturally produces large outputs, especially for shorter inputs.
+   * 
+   * 2.2 = allow up to 120% growth. Real degenerate outputs are 2.5x+.
+   * Legitimate summaries with full schema are typically 1.3-1.8x.
+   */
+  SUMMARIZER_MAX_OUTPUT_RATIO: 2.2,
+  /**
+   * Minimum input length (chars) before truncation retry is attempted.
+   * Shorter inputs naturally have worse ratios (baseline output size).
+   * Only truncate large inputs where it might help.
+   */
+  SUMMARIZER_TRUNCATE_MIN_INPUT: 50_000,
+  /**
+   * When summarization output is too large AND input > TRUNCATE_MIN_INPUT,
+   * retry with truncated input. This ratio determines how much to truncate.
+   * 
+   * Only one truncated retry is attempted to avoid infinite loops.
+   */
+  SUMMARIZER_TRUNCATE_RATIO: 0.5,
+  /**
+   * Minimum cleaned content length (chars) to attempt summarization.
+   * Content shorter than this is too sparse for meaningful extraction.
+   * 
+   * 1000 chars ≈ 150-200 words ≈ 2-3 paragraphs - enough for a few facts.
+   * Video pages, stubs, etc. often have <500 chars and produce garbage summaries.
+   */
+  SUMMARIZER_MIN_INPUT_CHARS: 1000,
+  /**
+   * Minimum input length (chars) before cleaner truncation retry is attempted.
+   * When cleaning fails for very large inputs (parse errors, timeouts), retry
+   * with truncated input. Only truncate inputs above this threshold.
+   */
+  CLEANER_TRUNCATE_MIN_INPUT: 50_000,
+  /**
+   * When cleaning fails AND input > CLEANER_TRUNCATE_MIN_INPUT,
+   * retry with truncated input. This ratio determines how much to truncate.
+   * 
+   * Only one truncated retry is attempted to avoid infinite loops.
+   */
+  CLEANER_TRUNCATE_RATIO: 0.5,
   /**
    * Whether the cleaner LLM is enabled.
    * When false, only checks DB cache - doesn't run LLM on misses.
@@ -1466,7 +1552,8 @@ function validateConfiguration(): void {
   validateTemperature(CLEANER_CONFIG.TEMPERATURE, 'CLEANER_CONFIG.TEMPERATURE');
   validatePositive(CLEANER_CONFIG.MAX_OUTPUT_TOKENS, 'CLEANER_CONFIG.MAX_OUTPUT_TOKENS');
   validatePositive(CLEANER_CONFIG.BATCH_SIZE, 'CLEANER_CONFIG.BATCH_SIZE');
-  validatePositive(CLEANER_CONFIG.TIMEOUT_MS, 'CLEANER_CONFIG.TIMEOUT_MS');
+  validatePositive(CLEANER_CONFIG.STEP1_TIMEOUT_MS, 'CLEANER_CONFIG.STEP1_TIMEOUT_MS');
+  validatePositive(CLEANER_CONFIG.STEP2_TIMEOUT_MS, 'CLEANER_CONFIG.STEP2_TIMEOUT_MS');
   validateNonNegative(CLEANER_CONFIG.MAX_RETRIES, 'CLEANER_CONFIG.MAX_RETRIES');
   validateNonNegative(CLEANER_CONFIG.MIN_QUALITY_FOR_STORAGE, 'CLEANER_CONFIG.MIN_QUALITY_FOR_STORAGE');
   validateNonNegative(CLEANER_CONFIG.MIN_QUALITY_FOR_RESULTS, 'CLEANER_CONFIG.MIN_QUALITY_FOR_RESULTS');
@@ -1489,6 +1576,21 @@ function validateConfiguration(): void {
   }
   validatePositive(CLEANER_CONFIG.MAX_INPUT_CHARS, 'CLEANER_CONFIG.MAX_INPUT_CHARS');
   validatePositive(CLEANER_CONFIG.MIN_CLEANED_CHARS, 'CLEANER_CONFIG.MIN_CLEANED_CHARS');
+  validatePositive(CLEANER_CONFIG.MAX_OUTPUT_EXPANSION_RATIO, 'CLEANER_CONFIG.MAX_OUTPUT_EXPANSION_RATIO');
+  validatePositive(CLEANER_CONFIG.DEGENERATE_PATTERN_MIN_LENGTH, 'CLEANER_CONFIG.DEGENERATE_PATTERN_MIN_LENGTH');
+  validatePositive(CLEANER_CONFIG.DEGENERATE_REPEAT_THRESHOLD, 'CLEANER_CONFIG.DEGENERATE_REPEAT_THRESHOLD');
+  validateNonNegative(CLEANER_CONFIG.MAX_DEGENERATE_RETRIES, 'CLEANER_CONFIG.MAX_DEGENERATE_RETRIES');
+  validatePositive(CLEANER_CONFIG.DEGENERATE_RETRY_TEMP_INCREMENT, 'CLEANER_CONFIG.DEGENERATE_RETRY_TEMP_INCREMENT');
+  validatePositive(CLEANER_CONFIG.SUMMARIZER_MAX_OUTPUT_RATIO, 'CLEANER_CONFIG.SUMMARIZER_MAX_OUTPUT_RATIO');
+  validatePositive(CLEANER_CONFIG.SUMMARIZER_TRUNCATE_MIN_INPUT, 'CLEANER_CONFIG.SUMMARIZER_TRUNCATE_MIN_INPUT');
+  if (CLEANER_CONFIG.SUMMARIZER_TRUNCATE_RATIO <= 0 || CLEANER_CONFIG.SUMMARIZER_TRUNCATE_RATIO >= 1) {
+    throw new Error('CLEANER_CONFIG.SUMMARIZER_TRUNCATE_RATIO must be between 0 and 1 (exclusive)');
+  }
+  validatePositive(CLEANER_CONFIG.SUMMARIZER_MIN_INPUT_CHARS, 'CLEANER_CONFIG.SUMMARIZER_MIN_INPUT_CHARS');
+  validatePositive(CLEANER_CONFIG.CLEANER_TRUNCATE_MIN_INPUT, 'CLEANER_CONFIG.CLEANER_TRUNCATE_MIN_INPUT');
+  if (CLEANER_CONFIG.CLEANER_TRUNCATE_RATIO <= 0 || CLEANER_CONFIG.CLEANER_TRUNCATE_RATIO >= 1) {
+    throw new Error('CLEANER_CONFIG.CLEANER_TRUNCATE_RATIO must be between 0 and 1 (exclusive)');
+  }
 
   // Retry Config
   validatePositive(RETRY_CONFIG.MAX_RETRIES, 'RETRY_CONFIG.MAX_RETRIES');

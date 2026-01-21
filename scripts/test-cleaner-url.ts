@@ -49,8 +49,9 @@ async function testCleaner() {
   
   // Check config
   console.log('\n📋 Cleaner Config:');
-  console.log(`   Timeout: ${CLEANER_CONFIG.TIMEOUT_MS}ms`);
-  console.log(`   Max retries: 4`);
+  console.log(`   Step 1 Timeout: ${CLEANER_CONFIG.STEP1_TIMEOUT_MS}ms`);
+  console.log(`   Step 2 Timeout: ${CLEANER_CONFIG.STEP2_TIMEOUT_MS}ms`);
+  console.log(`   Max retries: ${CLEANER_CONFIG.MAX_RETRIES + CLEANER_CONFIG.MAX_DEGENERATE_RETRIES}`);
   console.log(`   Max input chars: ${CLEANER_CONFIG.MAX_INPUT_CHARS.toLocaleString()}`);
   console.log(`   Model: ${getModel('ARTICLE_CLEANER')}`);
 

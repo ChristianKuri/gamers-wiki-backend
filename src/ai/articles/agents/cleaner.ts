@@ -7,12 +7,12 @@
  */
 
 import type { LanguageModel } from 'ai';
-import { Output } from 'ai';
+import { NoObjectGeneratedError, Output } from 'ai';
 import { z } from 'zod';
 
 import { createPrefixedLogger, type Logger } from '../../../utils/logger';
 import { CLEANER_CONFIG } from '../config';
-import { withRetry } from '../retry';
+import { isRetryableError, withRetry } from '../retry';
 import { extractDomain } from '../source-cache';
 import {
   addTokenUsage,
@@ -28,6 +28,348 @@ import { extractImagesFromSource } from '../utils/image-extractor';
 
 // Re-export config for backwards compatibility
 export { CLEANER_CONFIG } from '../config';
+
+// ============================================================================
+// Helper Functions
+// ============================================================================
+
+/**
+ * Format milliseconds duration into a human-readable string.
+ * Examples: "1.2s", "45.3s", "2m 15s"
+ */
+function formatDuration(ms: number): string {
+  if (ms < 1000) {
+    return `${ms}ms`;
+  }
+  const seconds = ms / 1000;
+  if (seconds < 60) {
+    return `${seconds.toFixed(1)}s`;
+  }
+  const minutes = Math.floor(seconds / 60);
+  const remainingSeconds = seconds % 60;
+  return `${minutes}m ${remainingSeconds.toFixed(0)}s`;
+}
+
+// ============================================================================
+// Degenerate Output Error
+// ============================================================================
+
+/**
+ * Error thrown when the LLM produces degenerate output (stuck in a loop).
+ * This error is retryable with increased temperature to break the pattern.
+ */
+export class DegenerateOutputError extends Error {
+  /** The detected degenerate pattern (if any) */
+  readonly pattern: string | null;
+  /** Number of times the pattern repeated */
+  readonly repeatCount: number;
+  /** Input content length */
+  readonly inputLength: number;
+  /** Output content length */
+  readonly outputLength: number;
+
+  constructor(
+    reason: string,
+    details: {
+      pattern: string | null;
+      repeatCount: number;
+      inputLength: number;
+      outputLength: number;
+    }
+  ) {
+    super(`Degenerate output: ${reason}`);
+    this.name = 'DegenerateOutputError';
+    this.pattern = details.pattern;
+    this.repeatCount = details.repeatCount;
+    this.inputLength = details.inputLength;
+    this.outputLength = details.outputLength;
+  }
+}
+
+/**
+ * Checks if an error is a DegenerateOutputError.
+ */
+export function isDegenerateOutputError(error: unknown): error is DegenerateOutputError {
+  return error instanceof DegenerateOutputError;
+}
+
+/**
+ * Error thrown when summarizer output is too large relative to input.
+ * This indicates the model is being too verbose (not actually summarizing).
+ */
+export class SummaryTooLargeError extends Error {
+  /** Input content length */
+  readonly inputLength: number;
+  /** Output content length */
+  readonly outputLength: number;
+  /** The ratio of output to input */
+  readonly ratio: number;
+
+  constructor(inputLength: number, outputLength: number) {
+    const ratio = outputLength / inputLength;
+    super(
+      `Summary output too large: ${outputLength.toLocaleString()} chars from ${inputLength.toLocaleString()} chars input (${ratio.toFixed(2)}x expansion)`
+    );
+    this.name = 'SummaryTooLargeError';
+    this.inputLength = inputLength;
+    this.outputLength = outputLength;
+    this.ratio = ratio;
+  }
+}
+
+/**
+ * Calculate total character length of a summary result.
+ */
+function calculateSummaryOutputSize(result: {
+  summary: string;
+  detailedSummary: string;
+  keyFacts: readonly string[];
+  dataPoints: readonly string[];
+  procedures: readonly string[];
+  requirements: readonly string[];
+}): number {
+  return (
+    result.summary.length +
+    result.detailedSummary.length +
+    result.keyFacts.reduce((sum, s) => sum + s.length, 0) +
+    result.dataPoints.reduce((sum, s) => sum + s.length, 0) +
+    result.procedures.reduce((sum, s) => sum + s.length, 0) +
+    result.requirements.reduce((sum, s) => sum + s.length, 0)
+  );
+}
+
+/**
+ * Log diagnostic information when a NoObjectGeneratedError occurs.
+ * This helps investigate why the model's response couldn't be parsed as JSON.
+ */
+function logParseErrorDiagnostics(
+  error: unknown,
+  context: string,
+  log: Logger
+): void {
+  if (!(error instanceof NoObjectGeneratedError)) {
+    return;
+  }
+
+  const rawText = error.text;
+  const finishReason = error.finishReason;
+  const textLength = rawText?.length ?? 0;
+
+  // Log summary
+  log.warn(
+    `[ParseError] ${context} - finishReason: ${finishReason}, rawLength: ${textLength}`
+  );
+
+  if (!rawText) {
+    log.warn(`[ParseError] ${context} - No raw text available in error`);
+    return;
+  }
+
+  // Log the first 1500 chars to see what the model actually returned
+  const preview = rawText.slice(0, 1500);
+  log.warn(`[ParseError] ${context} - Raw response preview:\n${preview}`);
+
+  // Check for common issues
+  if (rawText.startsWith('```')) {
+    log.warn(`[ParseError] ${context} - Model wrapped response in markdown code block`);
+  } else if (!rawText.trim().startsWith('{') && !rawText.trim().startsWith('[')) {
+    log.warn(`[ParseError] ${context} - Response doesn't start with JSON (starts with: "${rawText.slice(0, 50)}...")`);
+  }
+
+  // Check if it looks truncated (no closing brace/bracket)
+  const trimmed = rawText.trim();
+  if (!trimmed.endsWith('}') && !trimmed.endsWith(']')) {
+    log.warn(`[ParseError] ${context} - Response may be truncated (ends with: "...${rawText.slice(-50)}")`);
+  }
+}
+
+// ============================================================================
+// Degenerate Output Detection
+// ============================================================================
+
+/**
+ * Result of degenerate output detection.
+ */
+interface DegenerateCheckResult {
+  /** Whether the output is degenerate */
+  readonly isDegenerate: boolean;
+  /** Reason for degenerate classification (null if not degenerate) */
+  readonly reason: string | null;
+  /** The repeated pattern if detected (null otherwise) */
+  readonly pattern: string | null;
+  /** Number of times the pattern was found (0 if not applicable) */
+  readonly repeatCount: number;
+}
+
+/**
+ * Detects if cleaned content is degenerate (model got stuck in a loop).
+ * 
+ * Common degenerate patterns:
+ * - Repeated table separators: "|:---|:---|:---|..." repeated hundreds of times
+ * - Repeated markdown elements: "* " or "- " repeated excessively
+ * - Same sentence/phrase repeated many times
+ * 
+ * @param content - The cleaned content to check
+ * @param originalLength - Length of the original input content
+ * @returns Detection result with reason if degenerate
+ */
+function detectDegenerateOutput(content: string, originalLength: number): DegenerateCheckResult {
+  // Check 1: Output significantly larger than input (cleaning should reduce, not expand)
+  const expansionRatio = content.length / originalLength;
+  if (expansionRatio > CLEANER_CONFIG.MAX_OUTPUT_EXPANSION_RATIO) {
+    return {
+      isDegenerate: true,
+      reason: `Output expanded ${(expansionRatio * 100).toFixed(0)}% of input (max ${(CLEANER_CONFIG.MAX_OUTPUT_EXPANSION_RATIO * 100).toFixed(0)}%)`,
+      pattern: null,
+      repeatCount: 0,
+    };
+  }
+
+  // Check 2: Look for common degenerate patterns (table separators, list items, etc.)
+  // These are patterns that models get stuck generating in loops
+  const suspiciousPatterns = [
+    /(\|:?-+:?\|){20,}/g,           // Table separators: |---|---|...|
+    /(\|:?-+:?){20,}/g,             // Table column: |---|---|---...
+    /(^\s*[-*+]\s+){20,}/gm,        // Repeated list items at start of lines
+    /(\n\s*\n){10,}/g,              // Excessive blank lines
+  ];
+
+  for (const regex of suspiciousPatterns) {
+    const match = content.match(regex);
+    if (match && match[0].length > 500) {
+      return {
+        isDegenerate: true,
+        reason: `Detected repetitive pattern (${match[0].length} chars of repeated content)`,
+        pattern: match[0].slice(0, 50) + '...',
+        repeatCount: Math.floor(match[0].length / 10),
+      };
+    }
+  }
+
+  // Check 3: Look for any substring >= minLength that repeats > threshold times
+  const minLength = CLEANER_CONFIG.DEGENERATE_PATTERN_MIN_LENGTH;
+  const threshold = CLEANER_CONFIG.DEGENERATE_REPEAT_THRESHOLD;
+  
+  // Sample the content to find repeated substrings efficiently
+  // Check every 100th position to find patterns without O(n²) complexity
+  const sampleStep = Math.max(1, Math.floor(content.length / 1000));
+  const seenPatterns = new Map<string, number>();
+  
+  for (let i = 0; i < content.length - minLength; i += sampleStep) {
+    const substr = content.slice(i, i + minLength);
+    // Skip whitespace-only patterns
+    if (substr.trim().length < minLength / 2) continue;
+    
+    const count = (seenPatterns.get(substr) ?? 0) + 1;
+    seenPatterns.set(substr, count);
+    
+    if (count > threshold) {
+      return {
+        isDegenerate: true,
+        reason: `Pattern "${substr.slice(0, 20)}..." repeated ${count}+ times`,
+        pattern: substr,
+        repeatCount: count,
+      };
+    }
+  }
+
+  return {
+    isDegenerate: false,
+    reason: null,
+    pattern: null,
+    repeatCount: 0,
+  };
+}
+
+// ============================================================================
+// Duplicate Section Detection and Removal
+// ============================================================================
+
+/**
+ * Result of duplicate section detection.
+ */
+interface DuplicateSectionResult {
+  /** Content with duplicates removed */
+  dedupedContent: string;
+  /** Number of duplicate sections found */
+  duplicateCount: number;
+  /** Headers that were duplicated */
+  duplicatedHeaders: string[];
+  /** Original content length */
+  originalLength: number;
+  /** Deduped content length */
+  dedupedLength: number;
+}
+
+/**
+ * Detects and removes duplicate markdown sections based on H2/H3 headers.
+ * 
+ * Wiki pages often have duplicate content from:
+ * - Mobile/desktop versions in the same HTML
+ * - Wiki sitemaps that look like article content
+ * - Lazy-loaded sections that appear multiple times
+ * 
+ * This function keeps the FIRST occurrence of each section and removes subsequent duplicates.
+ * 
+ * @param content - Markdown content to deduplicate
+ * @returns Deduplication result with stats
+ */
+function deduplicateMarkdownSections(content: string): DuplicateSectionResult {
+  const lines = content.split('\n');
+  const outputLines: string[] = [];
+  const seenSections = new Map<string, boolean>();
+  const duplicatedHeaders: string[] = [];
+  
+  let currentSection: string[] = [];
+  let currentHeader: string | null = null;
+  
+  const flushSection = () => {
+    if (currentHeader === null) {
+      // Content before first header - always keep
+      outputLines.push(...currentSection);
+    } else {
+      const sectionContent = currentSection.join('\n');
+      // Use first 500 chars of section content as fingerprint (normalized)
+      const fingerprint = `${currentHeader}:${sectionContent.slice(0, 500).replace(/\s+/g, ' ').trim()}`;
+      
+      if (!seenSections.has(fingerprint)) {
+        seenSections.set(fingerprint, true);
+        outputLines.push(...currentSection);
+      } else {
+        // This is a duplicate - don't add to output
+        duplicatedHeaders.push(currentHeader);
+      }
+    }
+    currentSection = [];
+  };
+  
+  for (const line of lines) {
+    // Detect H2 and H3 markdown headers
+    const headerMatch = line.match(/^(#{2,3})\s+(.+)$/);
+    
+    if (headerMatch) {
+      // Flush previous section before starting new one
+      flushSection();
+      currentHeader = headerMatch[2].trim();
+      currentSection = [line];
+    } else {
+      currentSection.push(line);
+    }
+  }
+  
+  // Don't forget the last section
+  flushSection();
+  
+  const dedupedContent = outputLines.join('\n');
+  
+  return {
+    dedupedContent,
+    duplicateCount: duplicatedHeaders.length,
+    duplicatedHeaders,
+    originalLength: content.length,
+    dedupedLength: dedupedContent.length,
+  };
+}
 
 // ============================================================================
 // Zod Schema for LLM Output
@@ -300,6 +642,9 @@ CRITICAL FOR SUMMARIES:
 /**
  * Clean a single source using the LLM.
  *
+ * If the model produces degenerate output (stuck in a loop), it will retry
+ * with progressively higher temperature to break the pattern.
+ *
  * @param source - Raw source input
  * @param deps - Cleaner dependencies
  * @returns Cleaned source result with token usage
@@ -324,32 +669,76 @@ export async function cleanSingleSource(
 
   const domain = extractDomain(source.url);
   const originalLength = source.content.length;
+  
+  // Mutable temperature - increases on degenerate output retries
+  let temperature: number = CLEANER_CONFIG.TEMPERATURE;
+  let totalTokenUsage = createEmptyTokenUsage();
 
   try {
     const startTime = Date.now();
     const result = await withRetry(
       async () => {
-        const timeoutSignal = AbortSignal.timeout(CLEANER_CONFIG.TIMEOUT_MS);
+        const timeoutSignal = AbortSignal.timeout(CLEANER_CONFIG.STEP1_TIMEOUT_MS);
         const signal = deps.signal
           ? AbortSignal.any([deps.signal, timeoutSignal])
           : timeoutSignal;
 
-        return deps.generateText({
+        const genResult = await deps.generateText({
           model: deps.model,
           output: Output.object({
             schema: CleanerOutputSchema,
           }),
-          temperature: CLEANER_CONFIG.TEMPERATURE,
+          temperature,
           abortSignal: signal,
           system: getCleanerSystemPrompt(),
           prompt: getCleanerUserPrompt(source, deps.gameName),
         });
+        
+        // Accumulate token usage across retries
+        totalTokenUsage = addTokenUsage(totalTokenUsage, createTokenUsageFromResult(genResult));
+        
+        const output = genResult.output as CleanerLLMOutput;
+
+        // Validate cleaned content is substantial
+        if (output.cleanedContent.length < CLEANER_CONFIG.MIN_CLEANED_CHARS) {
+          // Not degenerate, just too short - return with flag
+          return { output, tooShort: true };
+        }
+
+        // Validate output isn't degenerate (model stuck in loop)
+        const degenerateCheck = detectDegenerateOutput(output.cleanedContent, originalLength);
+        if (degenerateCheck.isDegenerate) {
+          // Throw DegenerateOutputError to trigger retry with higher temperature
+          throw new DegenerateOutputError(degenerateCheck.reason!, {
+            pattern: degenerateCheck.pattern,
+            repeatCount: degenerateCheck.repeatCount,
+            inputLength: originalLength,
+            outputLength: output.cleanedContent.length,
+          });
+        }
+
+        return { output, tooShort: false };
       },
       {
         // Full URL + content length for debugging timeouts
         context: `Cleaner [${originalLength} chars]: ${source.url}`,
         signal: deps.signal,
-        maxRetries: CLEANER_CONFIG.MAX_RETRIES,
+        maxRetries: CLEANER_CONFIG.MAX_RETRIES + CLEANER_CONFIG.MAX_DEGENERATE_RETRIES,
+        // Include DegenerateOutputError as retryable
+        shouldRetry: (error) => isDegenerateOutputError(error) || isRetryableError(error),
+        // Bump temperature on degenerate output retries
+        onRetry: (attempt, error) => {
+          if (isDegenerateOutputError(error)) {
+            const newTemp = Math.min(
+              temperature + CLEANER_CONFIG.DEGENERATE_RETRY_TEMP_INCREMENT,
+              1.0 // Cap at 1.0 to avoid too much randomness
+            );
+            log.info(
+              `Degenerate output detected, bumping temperature ${temperature.toFixed(2)} → ${newTemp.toFixed(2)} for retry ${attempt}`
+            );
+            temperature = newTemp;
+          }
+        },
       }
     );
     
@@ -359,25 +748,33 @@ export async function cleanSingleSource(
       log.info(`[Cleaner] Slow clean: ${domain} took ${(elapsed / 1000).toFixed(1)}s for ${originalLength} chars`);
     }
 
-    // Use createTokenUsageFromResult to capture both tokens and actual cost from OpenRouter
-    const tokenUsage = createTokenUsageFromResult(result);
+    const output = result.output;
 
-    const output = result.output as CleanerLLMOutput;
-
-    // Validate cleaned content is substantial
-    if (output.cleanedContent.length < CLEANER_CONFIG.MIN_CLEANED_CHARS) {
+    // If content was too short (not degenerate), return null
+    if (result.tooShort) {
       log.debug(
         `Cleaned content too short (${output.cleanedContent.length} chars): ${source.url}`
       );
-      return { source: null, tokenUsage };
+      return { source: null, tokenUsage: totalTokenUsage };
     }
 
-    // Calculate junk ratio
-    const cleanedLength = output.cleanedContent.length;
+    // Post-process: deduplicate markdown sections (wiki pages often have duplicate content)
+    const dedupeResult = deduplicateMarkdownSections(output.cleanedContent);
+    if (dedupeResult.duplicateCount > 0) {
+      const reduction = ((1 - dedupeResult.dedupedLength / dedupeResult.originalLength) * 100).toFixed(1);
+      log.info(
+        `[Cleaner] Deduplication: removed ${dedupeResult.duplicateCount} duplicate section(s) ` +
+        `(${dedupeResult.originalLength.toLocaleString()}c → ${dedupeResult.dedupedLength.toLocaleString()}c, -${reduction}%) | ${source.url}`
+      );
+    }
+    const dedupedContent = dedupeResult.dedupedContent;
+
+    // Calculate junk ratio (based on deduped content)
+    const cleanedLength = dedupedContent.length;
     const junkRatio = 1 - cleanedLength / originalLength;
     
     // Extract images with validation and context (pass source URL for relative URL resolution)
-    const imageResult = extractImagesFromSource(source.content, output.cleanedContent, source.url);
+    const imageResult = extractImagesFromSource(source.content, dedupedContent, source.url);
     if (imageResult.discardedCount > 0) {
       // Log at warn level if high hallucination rate (>50% of images discarded)
       const hallucinationRate = imageResult.parsedCount > 0
@@ -392,7 +789,7 @@ export async function cleanSingleSource(
     
     // Log completion with raw→cleaned ratio
     const preservedPct = ((cleanedLength / originalLength) * 100).toFixed(0);
-    const costStr = tokenUsage.actualCostUsd ? ` ($${tokenUsage.actualCostUsd.toFixed(4)})` : '';
+    const costStr = totalTokenUsage.actualCostUsd ? ` ($${totalTokenUsage.actualCostUsd.toFixed(4)})` : '';
     const imageStr = imageResult.images.length > 0 ? `, ${imageResult.images.length} images` : '';
     log.info(`Single-step clean complete: ${domain} - ${originalLength.toLocaleString()}→${cleanedLength.toLocaleString()}c (${preservedPct}%), Q:${output.qualityScore}, R:${output.relevanceScore}${imageStr}${costStr}`);
 
@@ -405,7 +802,7 @@ export async function cleanSingleSource(
         detailedSummary: output.detailedSummary,
         keyFacts: output.keyFacts,
         dataPoints: output.dataPoints,
-        cleanedContent: output.cleanedContent,
+        cleanedContent: dedupedContent,
         originalContentLength: originalLength,
         qualityScore: output.qualityScore,
         relevanceScore: output.relevanceScore,
@@ -415,11 +812,19 @@ export async function cleanSingleSource(
         searchSource: source.searchSource,
         images: imageResult.images.length > 0 ? imageResult.images : null,
       },
-      tokenUsage,
+      tokenUsage: totalTokenUsage,
     };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    log.warn(`Failed to clean source ${source.url}: ${message}`);
+    // Log differently based on error type
+    if (isDegenerateOutputError(err)) {
+      log.warn(`Failed to clean source after degenerate retries ${source.url}: ${message}`);
+    } else if (err instanceof NoObjectGeneratedError) {
+      log.warn(`Failed to clean source ${source.url}: ${message}`);
+      logParseErrorDiagnostics(err, `cleanSingleSource: ${source.url}`, log);
+    } else {
+      log.warn(`Failed to clean source ${source.url}: ${message}`);
+    }
 
     // Fallback: return raw content with low quality score so it can still be used
     // This prevents losing potentially valuable content due to LLM timeouts
@@ -623,6 +1028,12 @@ NAVIGATION & CHROME:
 ✗ Site logos, search bars
 ✗ "Back to top" links
 
+WIKI NAVIGATION & SITEMAPS (Crucial for Wikis):
+✗ Massive lists of links at the bottom of the page (e.g., "All Bosses", "All Weapons", "All Items")
+✗ Footer tables containing links to other guides (e.g., "Recommended Articles")
+✗ "Related Guides" or "More from [Site Name]" grids
+✗ "Wiki Top" or "Guide Index" sections
+
 USER INTERACTION NOISE:
 ✗ Cookie/consent banners, popups, modals
 ✗ Login/signup prompts, paywalls
@@ -636,8 +1047,8 @@ PROMOTIONAL CONTENT:
 ✗ "You might also like", "Related articles" sections
 ✗ Cross-promotion banners
 
-USER-GENERATED NOISE:
-✗ Comments sections, replies, discussions
+USER-GENERATED NOISE (Strict Removal):
+✗ COMMENTS SECTIONS: Remove all user comments, replies, and "Join the discussion" areas.
 ✗ "X users found this helpful"
 ✗ User ratings/reviews (unless part of main article)
 
@@ -726,7 +1137,7 @@ ${source.content.slice(0, CLEANER_CONFIG.MAX_INPUT_CHARS)}
 YOUR TASK
 ═══════════════════════════════════════════════════════════════════
 
-cleanedContent: Extract the FULL article. Remove navigation, ads, comments, etc.
+cleanedContent: Extract the FULL article. Remove all JUNK: navigation, ads, comments, wiki navigation, sitemaps, etc.
 IMPORTANT: Do NOT summarize or condense. Output should be ~90-100% of the actual article length.
 
 QUALITY SCORING (0-100):
@@ -778,8 +1189,8 @@ const EnhancedSummarySchema = z.object({
   dataPoints: z
     .array(z.string())
     .min(0)
-    .max(150)
-    .describe('Raw data extraction - EVERY name and number. Extract ALL items from tables/lists. Names: characters, bosses, items, locations, abilities. Numbers: stats, costs, percentages, levels, versions.'),
+    .max(120)
+    .describe('Raw data extraction - KEY names and numbers. Extract important items from tables/lists. Names: characters, bosses, items, locations, abilities. Numbers: stats, costs, percentages, levels, versions.'),
   procedures: z
     .array(z.string())
     .min(0)
@@ -1080,7 +1491,7 @@ export async function extractSummariesFromCleanedContent(
   try {
     const result = await withRetry(
       async () => {
-        const timeoutSignal = AbortSignal.timeout(CLEANER_CONFIG.TIMEOUT_MS);
+        const timeoutSignal = AbortSignal.timeout(CLEANER_CONFIG.STEP2_TIMEOUT_MS);
         const signal = deps.signal
           ? AbortSignal.any([deps.signal, timeoutSignal])
           : timeoutSignal;
@@ -1116,6 +1527,9 @@ export async function extractSummariesFromCleanedContent(
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     log.warn(`Failed to extract summaries from "${title}": ${message}`);
+    if (err instanceof NoObjectGeneratedError) {
+      logParseErrorDiagnostics(err, `extractSummaries: ${title}`, log);
+    }
     return null;
   }
 }
@@ -1171,68 +1585,159 @@ export interface TwoStepCleanResult {
 /**
  * Step 1: Pure content cleaning (no summarization).
  * Focused only on removing junk and preserving content.
+ * 
+ * If the model produces degenerate output (stuck in a loop), it will retry
+ * with progressively higher temperature to break the pattern.
+ * 
+ * If the input is very large (> CLEANER_TRUNCATE_MIN_INPUT) and cleaning fails,
+ * it will retry once with truncated input.
  */
 async function cleanContentOnly(
   source: RawSourceInput,
-  deps: TwoStepCleanerDeps
+  deps: TwoStepCleanerDeps,
+  isTruncatedRetry = false
 ): Promise<{ cleanedContent: string; qualityScore: number; relevanceScore: number; qualityNotes: string; contentType: string; tokenUsage: TokenUsage } | null> {
   const log = deps.logger ?? createPrefixedLogger('[Cleaner:Step1]');
+  const inputLength = source.content.length;
 
   if (!source.content || source.content.trim().length === 0) {
     log.debug(`Skipping empty content: ${source.url}`);
     return null;
   }
 
-  if (source.content.length < CLEANER_CONFIG.MIN_CLEANED_CHARS) {
-    log.debug(`Skipping short content (${source.content.length} chars): ${source.url}`);
+  if (inputLength < CLEANER_CONFIG.MIN_CLEANED_CHARS) {
+    log.debug(`Skipping short content (${inputLength} chars): ${source.url}`);
     return null;
   }
+
+  // Mutable temperature - increases on degenerate output retries
+  let temperature: number = CLEANER_CONFIG.TEMPERATURE;
+  let totalTokenUsage = createEmptyTokenUsage();
 
   try {
     const result = await withRetry(
       async () => {
-        const timeoutSignal = AbortSignal.timeout(CLEANER_CONFIG.TIMEOUT_MS);
+        const timeoutSignal = AbortSignal.timeout(CLEANER_CONFIG.STEP1_TIMEOUT_MS);
         const signal = deps.signal
           ? AbortSignal.any([deps.signal, timeoutSignal])
           : timeoutSignal;
 
-        return deps.generateText({
+        const genResult = await deps.generateText({
           model: deps.cleanerModel,
           output: Output.object({
             schema: PureCleanerOutputSchema,
           }),
-          temperature: CLEANER_CONFIG.TEMPERATURE,
+          temperature,
           abortSignal: signal,
           system: getPureCleanerSystemPrompt(),
           prompt: getPureCleanerUserPrompt(source, deps.gameName),
         });
+
+        // Accumulate token usage across retries
+        totalTokenUsage = addTokenUsage(totalTokenUsage, createTokenUsageFromResult(genResult));
+        
+        const output = genResult.output;
+
+        // Validate minimum length
+        if (output.cleanedContent.length < CLEANER_CONFIG.MIN_CLEANED_CHARS) {
+          // Not degenerate, just too short - don't retry
+          return { output, tooShort: true };
+        }
+
+        // Validate output isn't degenerate (model stuck in loop)
+        const degenerateCheck = detectDegenerateOutput(output.cleanedContent, source.content.length);
+        if (degenerateCheck.isDegenerate) {
+          // Throw DegenerateOutputError to trigger retry with higher temperature
+          throw new DegenerateOutputError(degenerateCheck.reason!, {
+            pattern: degenerateCheck.pattern,
+            repeatCount: degenerateCheck.repeatCount,
+            inputLength: source.content.length,
+            outputLength: output.cleanedContent.length,
+          });
+        }
+
+        return { output, tooShort: false };
       },
       {
         context: `Cleaner Step1 [${source.content.length} chars]: ${source.url}`,
         signal: deps.signal,
-        maxRetries: CLEANER_CONFIG.MAX_RETRIES,
+        maxRetries: CLEANER_CONFIG.MAX_RETRIES + CLEANER_CONFIG.MAX_DEGENERATE_RETRIES,
+        // Include DegenerateOutputError as retryable
+        shouldRetry: (error) => isDegenerateOutputError(error) || isRetryableError(error),
+        // Bump temperature on degenerate output retries
+        onRetry: (attempt, error) => {
+          if (isDegenerateOutputError(error)) {
+            const newTemp = Math.min(
+              temperature + CLEANER_CONFIG.DEGENERATE_RETRY_TEMP_INCREMENT,
+              1.0 // Cap at 1.0 to avoid too much randomness
+            );
+            log.info(
+              `Degenerate output detected, bumping temperature ${temperature.toFixed(2)} → ${newTemp.toFixed(2)} for retry ${attempt}`
+            );
+            temperature = newTemp;
+          }
+        },
       }
     );
 
-    const tokenUsage = createTokenUsageFromResult(result);
-    const output = result.output;
-
-    if (output.cleanedContent.length < CLEANER_CONFIG.MIN_CLEANED_CHARS) {
-      log.debug(`Cleaned content too short (${output.cleanedContent.length} chars): ${source.url}`);
+    // If content was too short (not degenerate), return null
+    if (result.tooShort) {
+      log.debug(`Cleaned content too short (${result.output.cleanedContent.length} chars): ${source.url}`);
       return null;
     }
 
+    // Post-process: deduplicate markdown sections (wiki pages often have duplicate content)
+    const dedupeResult = deduplicateMarkdownSections(result.output.cleanedContent);
+    if (dedupeResult.duplicateCount > 0) {
+      const reduction = ((1 - dedupeResult.dedupedLength / dedupeResult.originalLength) * 100).toFixed(1);
+      log.info(
+        `[Cleaner:Step1] Deduplication: removed ${dedupeResult.duplicateCount} duplicate section(s) ` +
+        `(${dedupeResult.originalLength.toLocaleString()}c → ${dedupeResult.dedupedLength.toLocaleString()}c, -${reduction}%) | ${source.url}`
+      );
+    }
+
     return {
-      cleanedContent: output.cleanedContent,
-      qualityScore: output.qualityScore,
-      relevanceScore: output.relevanceScore,
-      qualityNotes: output.qualityNotes,
-      contentType: output.contentType,
-      tokenUsage,
+      cleanedContent: dedupeResult.dedupedContent,
+      qualityScore: result.output.qualityScore,
+      relevanceScore: result.output.relevanceScore,
+      qualityNotes: result.output.qualityNotes,
+      contentType: result.output.contentType,
+      tokenUsage: totalTokenUsage,
     };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    log.warn(`Step 1 (cleaning) failed for ${source.url}: ${message}`);
+    
+    // Log differently based on error type
+    if (isDegenerateOutputError(err)) {
+      log.warn(`Step 1 (cleaning) failed after degenerate retries for ${source.url}: ${message}`);
+    } else if (err instanceof NoObjectGeneratedError) {
+      log.warn(`Step 1 (cleaning) failed for ${source.url}: ${message}`);
+      logParseErrorDiagnostics(err, `cleanContentOnly: ${source.url}`, log);
+    } else {
+      log.warn(`Step 1 (cleaning) failed for ${source.url}: ${message}`);
+    }
+    
+    // For large inputs that failed, try once with truncated input
+    const canTruncate = inputLength >= CLEANER_CONFIG.CLEANER_TRUNCATE_MIN_INPUT;
+    const isRetryableFailure = 
+      err instanceof NoObjectGeneratedError ||
+      (err instanceof Error && /timeout|aborted/i.test(err.message));
+    
+    if (!isTruncatedRetry && canTruncate && isRetryableFailure) {
+      const truncatedLength = Math.floor(inputLength * CLEANER_CONFIG.CLEANER_TRUNCATE_RATIO);
+      log.info(
+        `[Cleaner:Step1] Retrying with truncated input: ${inputLength.toLocaleString()}c → ${truncatedLength.toLocaleString()}c | ${source.url}`
+      );
+      
+      // Create a new source with truncated content
+      const truncatedSource: RawSourceInput = {
+        ...source,
+        content: source.content.slice(0, truncatedLength),
+      };
+      
+      return cleanContentOnly(truncatedSource, deps, true);
+    }
+    
     return null;
   }
 }
@@ -1240,23 +1745,33 @@ async function cleanContentOnly(
 /**
  * Step 2: Enhanced summarization from cleaned content.
  * Creates detailed, accurate summaries.
+ * 
+ * If the output is too large relative to input (model being too verbose),
+ * automatically retries with truncated input.
+ * 
+ * @param title - Source title for logging
+ * @param cleanedContent - Content to summarize
+ * @param deps - Dependencies
+ * @param isTruncatedRetry - Internal flag to prevent infinite recursion
  */
 async function extractEnhancedSummaries(
   title: string,
   cleanedContent: string,
-  deps: TwoStepCleanerDeps
+  deps: TwoStepCleanerDeps,
+  isTruncatedRetry = false
 ): Promise<EnhancedSummaryResult | null> {
   const log = deps.logger ?? createPrefixedLogger('[Cleaner:Step2]');
+  const inputLength = cleanedContent.length;
 
-  if (cleanedContent.length < CLEANER_CONFIG.MIN_CLEANED_CHARS) {
-    log.debug(`Content too short for summarization: ${cleanedContent.length} chars`);
+  if (inputLength < CLEANER_CONFIG.MIN_CLEANED_CHARS) {
+    log.debug(`Content too short for summarization: ${inputLength} chars`);
     return null;
   }
 
   try {
     const result = await withRetry(
       async () => {
-        const timeoutSignal = AbortSignal.timeout(CLEANER_CONFIG.TIMEOUT_MS);
+        const timeoutSignal = AbortSignal.timeout(CLEANER_CONFIG.STEP2_TIMEOUT_MS);
         const signal = deps.signal
           ? AbortSignal.any([deps.signal, timeoutSignal])
           : timeoutSignal;
@@ -1282,6 +1797,46 @@ async function extractEnhancedSummaries(
     const tokenUsage = createTokenUsageFromResult(result);
     const output = result.output;
 
+    // Check if output is too large (model being too verbose)
+    const outputLength = calculateSummaryOutputSize(output);
+    const maxAllowedLength = inputLength * CLEANER_CONFIG.SUMMARIZER_MAX_OUTPUT_RATIO;
+    
+    if (outputLength > maxAllowedLength) {
+      const ratio = outputLength / inputLength;
+      log.warn(
+        `[Cleaner:Step2] Summary output too large for "${title.slice(0, 40)}...": ` +
+        `${outputLength.toLocaleString()}c from ${inputLength.toLocaleString()}c input (${ratio.toFixed(2)}x)`
+      );
+      
+      // Only truncate if input is large enough (smaller inputs have naturally worse ratios)
+      const canTruncate = inputLength >= CLEANER_CONFIG.SUMMARIZER_TRUNCATE_MIN_INPUT;
+      
+      // If not already a truncated retry AND input is large enough, try again with shorter input
+      if (!isTruncatedRetry && canTruncate) {
+        const truncatedLength = Math.floor(inputLength * CLEANER_CONFIG.SUMMARIZER_TRUNCATE_RATIO);
+        log.info(
+          `[Cleaner:Step2] Retrying with truncated input: ${inputLength.toLocaleString()}c → ${truncatedLength.toLocaleString()}c`
+        );
+        return extractEnhancedSummaries(
+          title,
+          cleanedContent.slice(0, truncatedLength),
+          deps,
+          true // Mark as truncated retry
+        );
+      }
+      
+      // Already retried with truncation OR input too small to truncate - reject
+      if (isTruncatedRetry) {
+        log.warn(`[Cleaner:Step2] Output still too large after truncation retry, rejecting summary`);
+      } else {
+        log.warn(
+          `[Cleaner:Step2] Output too large (${(outputLength / inputLength).toFixed(1)}x > ${CLEANER_CONFIG.SUMMARIZER_MAX_OUTPUT_RATIO}x max), ` +
+          `rejecting summary | input: ${inputLength.toLocaleString()}c`
+        );
+      }
+      return null;
+    }
+
     return {
       summary: output.summary,
       detailedSummary: output.detailedSummary,
@@ -1294,6 +1849,49 @@ async function extractEnhancedSummaries(
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     log.warn(`Step 2 (summarization) failed for "${title}": ${message}`);
+    
+    // Check if truncation retry might help
+    const canTruncate = inputLength >= CLEANER_CONFIG.SUMMARIZER_TRUNCATE_MIN_INPUT;
+    const isTimeoutError = err instanceof Error && /timeout|aborted/i.test(err.message);
+    
+    // Check if it's a parse error with very large raw output (truncation/overflow)
+    if (err instanceof NoObjectGeneratedError) {
+      logParseErrorDiagnostics(err, `extractEnhancedSummaries: ${title}`, log);
+      
+      // If raw text is much larger than input, try with truncated input
+      const rawLength = err.text?.length ?? 0;
+      const maxAllowedLength = inputLength * CLEANER_CONFIG.SUMMARIZER_MAX_OUTPUT_RATIO;
+      
+      if (rawLength > maxAllowedLength && !isTruncatedRetry && canTruncate) {
+        const truncatedLength = Math.floor(inputLength * CLEANER_CONFIG.SUMMARIZER_TRUNCATE_RATIO);
+        log.info(
+          `[Cleaner:Step2] Raw output too large (${rawLength.toLocaleString()}c), ` +
+          `retrying with truncated input: ${inputLength.toLocaleString()}c → ${truncatedLength.toLocaleString()}c`
+        );
+        return extractEnhancedSummaries(
+          title,
+          cleanedContent.slice(0, truncatedLength),
+          deps,
+          true // Mark as truncated retry
+        );
+      }
+    }
+    
+    // For large inputs that timed out, try with truncated input
+    if (isTimeoutError && !isTruncatedRetry && canTruncate) {
+      const truncatedLength = Math.floor(inputLength * CLEANER_CONFIG.SUMMARIZER_TRUNCATE_RATIO);
+      log.info(
+        `[Cleaner:Step2] Timeout on large input, retrying with truncated input: ` +
+        `${inputLength.toLocaleString()}c → ${truncatedLength.toLocaleString()}c`
+      );
+      return extractEnhancedSummaries(
+        title,
+        cleanedContent.slice(0, truncatedLength),
+        deps,
+        true // Mark as truncated retry
+      );
+    }
+    
     return null;
   }
 }
@@ -1319,12 +1917,18 @@ export async function cleanSourceTwoStep(
   const originalLength = source.content.length;
   const domain = extractDomain(source.url);
 
+  const twoStepStart = Date.now();
+  
   try {
     // Step 1: Clean content
-    log.debug(`Step 1: Cleaning ${originalLength} chars from ${domain}...`);
+    log.debug(`[Step1:Clean] Starting: ${originalLength.toLocaleString()}c from ${domain}`);
+    const step1Start = Date.now();
     const cleanResult = await cleanContentOnly(source, deps);
+    const step1DurationMs = Date.now() - step1Start;
+    const step1DurationStr = formatDuration(step1DurationMs);
 
     if (!cleanResult) {
+      log.warn(`[Step1:Clean] FAILED (${step1DurationStr}) - no output | ${source.url}`);
       return {
         source: null,
         cleaningTokenUsage: createEmptyTokenUsage(),
@@ -1334,11 +1938,57 @@ export async function cleanSourceTwoStep(
       };
     }
 
-    log.debug(`Step 1 complete: ${cleanResult.cleanedContent.length} chars cleaned (${((cleanResult.cleanedContent.length / originalLength) * 100).toFixed(0)}% preserved)`);
+    // Step 1 summary log with full URL and duration
+    const cleanedLength = cleanResult.cleanedContent.length;
+    const compressionPct = ((1 - cleanedLength / originalLength) * 100).toFixed(0);
+    const preservedPct = ((cleanedLength / originalLength) * 100).toFixed(0);
+    const cleanCostStr = cleanResult.tokenUsage.actualCostUsd
+      ? ` $${cleanResult.tokenUsage.actualCostUsd.toFixed(4)}`
+      : '';
+    log.info(
+      `[Step1:Clean] ${originalLength.toLocaleString()}c → ${cleanedLength.toLocaleString()}c ` +
+      `(${compressionPct}% removed, ${preservedPct}% kept) ` +
+      `Q:${cleanResult.qualityScore} R:${cleanResult.relevanceScore} ` +
+      `(${step1DurationStr})${cleanCostStr} | ${source.url}`
+    );
 
-    // Step 2: Extract enhanced summaries
-    log.debug(`Step 2: Summarizing ${cleanResult.cleanedContent.length} chars...`);
-    const summaryResult = await extractEnhancedSummaries(source.title, cleanResult.cleanedContent, deps);
+    // Step 2: Extract enhanced summaries (skip if content too short)
+    let summaryResult: EnhancedSummaryResult | null = null;
+    let step2DurationStr = '0ms';
+    
+    if (cleanedLength < CLEANER_CONFIG.SUMMARIZER_MIN_INPUT_CHARS) {
+      log.info(
+        `[Step2:Summary] SKIPPED - content too short (${cleanedLength.toLocaleString()}c < ${CLEANER_CONFIG.SUMMARIZER_MIN_INPUT_CHARS.toLocaleString()}c min) | ${source.url}`
+      );
+    } else {
+      log.debug(`[Step2:Summary] Starting: ${cleanedLength.toLocaleString()}c input`);
+      const step2Start = Date.now();
+      summaryResult = await extractEnhancedSummaries(source.title, cleanResult.cleanedContent, deps);
+      const step2DurationMs = Date.now() - step2Start;
+      step2DurationStr = formatDuration(step2DurationMs);
+    }
+
+    // Step 2 summary log with full URL and duration
+    if (summaryResult) {
+      const summaryOutputLength = calculateSummaryOutputSize(summaryResult);
+      const summaryRatio = (summaryOutputLength / cleanedLength * 100).toFixed(0);
+      const summaryCostStr = summaryResult.tokenUsage.actualCostUsd
+        ? ` $${summaryResult.tokenUsage.actualCostUsd.toFixed(4)}`
+        : '';
+      const fieldCounts = [
+        `${summaryResult.keyFacts.length} facts`,
+        `${summaryResult.dataPoints.length} data`,
+        `${summaryResult.procedures.length} procs`,
+        `${summaryResult.requirements.length} reqs`,
+      ].join(', ');
+      log.info(
+        `[Step2:Summary] ${cleanedLength.toLocaleString()}c → ${summaryOutputLength.toLocaleString()}c ` +
+        `(${summaryRatio}% of input) [${fieldCounts}] ` +
+        `(${step2DurationStr})${summaryCostStr} | ${source.url}`
+      );
+    } else {
+      log.warn(`[Step2:Summary] FAILED (${step2DurationStr}) - no summary extracted | ${source.url}`);
+    }
 
     const totalTokenUsage = addTokenUsage(
       cleanResult.tokenUsage,
@@ -1382,19 +2032,27 @@ export async function cleanSourceTwoStep(
       images: imageResult.images.length > 0 ? imageResult.images : null,
     };
 
-    const costStr = totalTokenUsage.actualCostUsd
-      ? ` ($${totalTokenUsage.actualCostUsd.toFixed(4)})`
-      : '';
-    const preservedPct = ((cleanResult.cleanedContent.length / originalLength) * 100).toFixed(0);
-    const imageStr = imageResult.images.length > 0 ? `, ${imageResult.images.length} images` : '';
-    
     // Warn if content EXPANDED (suspicious - LLM may be hallucinating/adding content)
     const expansionThreshold = 110; // 10% tolerance for formatting changes
     if (cleanResult.cleanedContent.length > originalLength * (expansionThreshold / 100)) {
-      log.warn(`[Cleaner] SUSPICIOUS EXPANSION: ${source.url} - content grew from ${originalLength.toLocaleString()} to ${cleanResult.cleanedContent.length.toLocaleString()} chars (${preservedPct}%). LLM may be adding content that wasn't in the original.`);
+      log.warn(
+        `[Cleaner] SUSPICIOUS EXPANSION: content grew from ${originalLength.toLocaleString()} to ` +
+        `${cleanResult.cleanedContent.length.toLocaleString()}c (${preservedPct}% of original). ` +
+        `LLM may be adding content that wasn't in the original. | ${source.url}`
+      );
     }
     
-    log.info(`Two-step clean complete: ${source.url} - ${originalLength.toLocaleString()}→${cleanResult.cleanedContent.length.toLocaleString()}c (${preservedPct}%), Q:${cleanResult.qualityScore}, R:${cleanResult.relevanceScore}${imageStr}${costStr}`);
+    // Final summary log (brief since we have per-step logs)
+    const totalDurationMs = Date.now() - twoStepStart;
+    const totalDurationStr = formatDuration(totalDurationMs);
+    const totalCostStr = totalTokenUsage.actualCostUsd
+      ? ` $${totalTokenUsage.actualCostUsd.toFixed(4)}`
+      : '';
+    const imageStr = imageResult.images.length > 0 ? `, ${imageResult.images.length} imgs` : '';
+    const summaryStatus = summaryResult ? 'OK' : 'SKIP';
+    log.info(
+      `[Complete] Clean:OK Summary:${summaryStatus}${imageStr} (${totalDurationStr})${totalCostStr} | ${source.url}`
+    );
 
     return {
       source: cleanedSource,
@@ -1405,8 +2063,13 @@ export async function cleanSourceTwoStep(
     };
   } catch (error) {
     // Catch any unhandled errors (socket terminations, etc.) to prevent crashes
+    const totalDurationMs = Date.now() - twoStepStart;
+    const totalDurationStr = formatDuration(totalDurationMs);
     const message = error instanceof Error ? error.message : String(error);
-    log.warn(`[Cleaner] Two-step clean failed for ${source.url}: ${message}`);
+    log.warn(`[Cleaner] Two-step clean failed (${totalDurationStr}) for ${source.url}: ${message}`);
+    if (error instanceof NoObjectGeneratedError) {
+      logParseErrorDiagnostics(error, `cleanSourceTwoStep: ${source.url}`, log);
+    }
     return {
       source: null,
       cleaningTokenUsage: createEmptyTokenUsage(),
@@ -1623,6 +2286,9 @@ export async function preFilterSingleSource(
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     log.warn(`Pre-filter failed for ${source.url}: ${message}`);
+    if (err instanceof NoObjectGeneratedError) {
+      logParseErrorDiagnostics(err, `preFilterSource: ${source.url}`, log);
+    }
 
     // On failure, assume relevant (don't filter out potentially good content)
     // Use neutral scores so it goes to full cleaning
