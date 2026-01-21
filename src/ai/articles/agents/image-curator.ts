@@ -19,7 +19,7 @@ import type { Logger } from '../../../utils/logger';
 import type { ArticlePlan } from '../article-plan';
 import type { TokenUsage } from '../types';
 import type { CollectedImage, ImagePool } from '../image-pool';
-import { getImagesForSection, getPoolSummary } from '../image-pool';
+import { getImagesForSection as getSectionCandidates, getPoolSummary } from '../image-pool';
 import { IMAGE_CURATOR_CONFIG, IMAGE_DIMENSION_CONFIG } from '../config';
 import { createTokenUsageFromResult, addTokenUsage } from '../types';
 import { normalizeHeadline, findMatchingHeadline, buildH2LineMap } from '../utils/headline-utils';
@@ -566,7 +566,7 @@ async function runAllSectionRelevanceScoring(
  * 2. Section selection: Per-section LLM calls with concurrency control
  *
  * This approach:
- * - Evaluates 30 candidates per section (vs 5 before)
+ * - Evaluates 60 candidates per section (vs 5 before)
  * - Uses text metadata only (cheap, no image tokens)
  * - Avoids huge prompts by processing sections individually
  * - Enables concurrency for faster processing
@@ -616,10 +616,10 @@ export async function runImageCurator(
   const heroCandidatePool = context.imagePool.images;
   log?.debug(`[ImageCurator] Hero candidate pool: ${heroCandidatePool.length} images`);
 
-  // Get candidates for each section (30 per section for text-based evaluation)
+  // Get candidates for each section (60 per section for text-based evaluation)
   const candidatesPerSection = new Map<string, readonly CollectedImage[]>();
   for (const section of context.plan.sections) {
-    const candidates = getImagesForSection(
+    const candidates = getSectionCandidates(
       context.imagePool,
       IMAGE_CURATOR_CONFIG.TEXT_CANDIDATES_PER_SECTION
     );

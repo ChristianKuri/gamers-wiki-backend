@@ -218,6 +218,19 @@ describe('ImagePool', () => {
 
       expect(merged.count).toBe(1);
     });
+
+    it('should deduplicate when merging by normalized URL', () => {
+      const pool1 = addWebImages(createEmptyImagePool(), [
+        { url: 'https://example.com/image.jpg?size=large' },
+      ], 'query');
+      const pool2 = addWebImages(createEmptyImagePool(), [
+        { url: 'https://example.com/image.jpg?size=small' },
+      ], 'query');
+
+      const merged = mergeImagePools(pool1, pool2);
+
+      expect(merged.count).toBe(1);
+    });
   });
 
   describe('getImagesBySourceQuality', () => {
