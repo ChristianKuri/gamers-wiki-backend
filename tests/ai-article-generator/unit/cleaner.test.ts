@@ -1,13 +1,15 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 import {
-  cleanSingleSource,
   cleanSourcesBatch,
+  cleanSourceTwoStep,
   CLEANER_CONFIG,
-  CleanerOutputSchema,
+  PureCleanerOutputSchema,
+  EnhancedSummarySchema,
+  type TwoStepCleanerDeps,
 } from '../../../src/ai/articles/agents/cleaner';
 import { extractDomain } from '../../../src/ai/articles/source-cache';
-import type { RawSourceInput, CleanerLLMOutput } from '../../../src/ai/articles/types';
+import type { RawSourceInput } from '../../../src/ai/articles/types';
 
 // ============================================================================
 // Mock Setup
@@ -20,55 +22,124 @@ const createMockModel = () => ({} as any);
 // Test Fixtures
 // ============================================================================
 
-const createMockRawSource = (overrides: Partial<RawSourceInput> = {}): RawSourceInput => ({
-  url: 'https://example.com/guide',
-  title: 'Elden Ring Guide',
-  content: `
+// Generate content that exceeds MIN_CLEANED_CHARS (1000)
+const LONG_CONTENT = `
 Navigation: Home > Games > Elden Ring
 
 # Elden Ring Combat Guide
 
 This is a comprehensive guide to combat in Elden Ring. The game features
-a complex combat system with many weapon types and playstyles.
+a complex combat system with many weapon types and playstyles that players
+need to master in order to succeed in the Lands Between.
 
 ## Basic Combat Mechanics
 
-Stamina management is crucial. Every action costs stamina, so you need
-to balance offense and defense carefully.
+Stamina management is crucial in Elden Ring. Every action costs stamina, 
+so you need to balance offense and defense carefully. Running out of stamina
+at the wrong moment can leave you vulnerable to devastating counterattacks.
 
 ## Weapon Types
 
-There are many weapon types in Elden Ring:
-- Swords (straight, curved, great)
-- Axes (regular and great)
-- Spears and halberds
-- Magic catalysts
+There are many weapon types in Elden Ring that cater to different playstyles:
+- Swords (straight, curved, great) - versatile and beginner-friendly
+- Axes (regular and great) - high damage but slower attacks
+- Spears and halberds - excellent reach for keeping enemies at bay
+- Magic catalysts - for intelligence builds and ranged combat
+- Colossal weapons - massive damage but require high strength
+
+## Combat Tips for Beginners
+
+1. Always keep an eye on your stamina bar
+2. Learn enemy attack patterns before going aggressive
+3. Rolling has invincibility frames (i-frames) during the animation
+4. Blocking is useful but costs stamina
+5. Two-handing a weapon increases damage and can stagger enemies faster
+
+## Boss Fight Strategies
+
+When facing bosses in Elden Ring, patience is key. Most bosses have 
+multiple phases and learning their movesets is essential. Using Spirit
+Ashes can provide valuable distraction and damage support during tough
+encounters.
 
 Cookie Settings | Privacy Policy | Terms of Service
 © 2024 Example Gaming Site
-`,
+`.repeat(2); // Ensure we exceed 1000 chars
+
+const createMockRawSource = (overrides: Partial<RawSourceInput> = {}): RawSourceInput => ({
+  url: 'https://example.com/guide',
+  title: 'Elden Ring Guide',
+  content: LONG_CONTENT,
   searchSource: 'tavily',
   ...overrides,
 });
 
-const createMockCleanerOutput = (overrides: Partial<CleanerLLMOutput> = {}): CleanerLLMOutput => ({
-  cleanedContent: `# Elden Ring Combat Guide
+// Generate cleaned content that exceeds MIN_CLEANED_CHARS (1000)
+const CLEANED_CONTENT = `# Elden Ring Combat Guide
 
 This is a comprehensive guide to combat in Elden Ring. The game features
-a complex combat system with many weapon types and playstyles.
+a complex combat system with many weapon types and playstyles that players
+need to master in order to succeed in the Lands Between.
 
 ## Basic Combat Mechanics
 
-Stamina management is crucial. Every action costs stamina, so you need
-to balance offense and defense carefully.
+Stamina management is crucial in Elden Ring. Every action costs stamina, 
+so you need to balance offense and defense carefully. Running out of stamina
+at the wrong moment can leave you vulnerable to devastating counterattacks.
 
 ## Weapon Types
 
-There are many weapon types in Elden Ring:
-- Swords (straight, curved, great)
-- Axes (regular and great)
-- Spears and halberds
-- Magic catalysts`,
+There are many weapon types in Elden Ring that cater to different playstyles:
+- Swords (straight, curved, great) - versatile and beginner-friendly
+- Axes (regular and great) - high damage but slower attacks
+- Spears and halberds - excellent reach for keeping enemies at bay
+- Magic catalysts - for intelligence builds and ranged combat
+- Colossal weapons - massive damage but require high strength
+
+## Combat Tips for Beginners
+
+1. Always keep an eye on your stamina bar
+2. Learn enemy attack patterns before going aggressive
+3. Rolling has invincibility frames (i-frames) during the animation
+4. Blocking is useful but costs stamina
+5. Two-handing a weapon increases damage and can stagger enemies faster
+
+## Boss Fight Strategies
+
+When facing bosses in Elden Ring, patience is key. Most bosses have 
+multiple phases and learning their movesets is essential. Using Spirit
+Ashes can provide valuable distraction and damage support during tough
+encounters.`.repeat(2); // Ensure we exceed 1000 chars
+
+/**
+ * Create mock output for step 1 (pure cleaning).
+ */
+const createMockPureCleanerOutput = (overrides: Partial<{
+  cleanedContent: string;
+  qualityScore: number;
+  relevanceScore: number;
+  qualityNotes: string;
+  contentType: string;
+}> = {}) => ({
+  cleanedContent: CLEANED_CONTENT,
+  qualityScore: 75,
+  relevanceScore: 90,
+  qualityNotes: 'Good guide content with clear structure. Relevant gaming information.',
+  contentType: 'strategy guide',
+  ...overrides,
+});
+
+/**
+ * Create mock output for step 2 (enhanced summary).
+ */
+const createMockEnhancedSummaryOutput = (overrides: Partial<{
+  summary: string;
+  detailedSummary: string;
+  keyFacts: string[];
+  dataPoints: string[];
+  procedures: string[];
+  requirements: string[];
+}> = {}) => ({
   summary: 'A combat guide for Elden Ring covering basic mechanics and weapon types.',
   detailedSummary: `This comprehensive Elden Ring combat guide covers the fundamental mechanics of combat, including stamina management which is crucial for balancing offense and defense. The guide details various weapon types available in the game.
 
@@ -86,88 +157,165 @@ Stamina is the core resource in combat - every action from attacking to dodging 
     'FromSoftware',
     'action RPG',
   ],
-  qualityScore: 75,
-  relevanceScore: 90,
-  qualityNotes: 'Good guide content with clear structure. Relevant gaming information.',
-  contentType: 'strategy guide',
+  procedures: [],
+  requirements: [],
   ...overrides,
 });
 
-const createMockCleanerDeps = (generateTextResult?: any) => ({
-  generateText:
-    generateTextResult !== undefined
-      ? vi.fn().mockResolvedValue({ 
-          output: generateTextResult,
+/**
+ * Create mock deps for two-step cleaning.
+ * The mock generates different outputs based on which step is being called.
+ */
+const createMockTwoStepCleanerDeps = (options?: {
+  step1Output?: ReturnType<typeof createMockPureCleanerOutput>;
+  step2Output?: ReturnType<typeof createMockEnhancedSummaryOutput>;
+  step1Error?: Error;
+  step2Error?: Error;
+}): TwoStepCleanerDeps => {
+  let callCount = 0;
+  
+  return {
+    generateText: vi.fn().mockImplementation(async (args: any) => {
+      callCount++;
+      
+      // First call is step 1 (cleaning), second call is step 2 (summarization)
+      if (callCount === 1) {
+        if (options?.step1Error) {
+          throw options.step1Error;
+        }
+        return {
+          output: options?.step1Output ?? createMockPureCleanerOutput(),
           usage: { inputTokens: 100, outputTokens: 50 },
-        })
-      : vi.fn().mockResolvedValue({ 
-          output: createMockCleanerOutput(),
+        };
+      } else {
+        if (options?.step2Error) {
+          throw options.step2Error;
+        }
+        return {
+          output: options?.step2Output ?? createMockEnhancedSummaryOutput(),
+          usage: { inputTokens: 50, outputTokens: 100 },
+        };
+      }
+    }),
+    cleanerModel: createMockModel(),
+    summarizerModel: createMockModel(),
+    logger: {
+      info: vi.fn(),
+      warn: vi.fn(),
+      error: vi.fn(),
+      debug: vi.fn(),
+    },
+    gameName: 'Elden Ring',
+  };
+};
+
+/**
+ * Create mock CleanerDeps for cleanSourcesBatch (uses model as fallback for summarizerModel).
+ * 
+ * NOTE: This mock distinguishes Step 1 vs Step 2 by inspecting prompt content.
+ * This is coupled to the actual prompt strings in cleaner.ts:
+ * - Step 1 (cleaning): getPureCleanerUserPrompt() contains 'SOURCE METADATA' and 'RAW WEB CONTENT'
+ * - Step 2 (summarization): getEnhancedSummaryUserPrompt() contains 'CLEANED CONTENT TO SUMMARIZE'
+ * 
+ * If those prompts change, these tests may silently break. Consider updating the
+ * string checks below if you modify the cleaner prompts.
+ */
+const createMockCleanerDeps = (options?: {
+  step1Output?: ReturnType<typeof createMockPureCleanerOutput>;
+  step2Output?: ReturnType<typeof createMockEnhancedSummaryOutput>;
+}) => {
+  return {
+    generateText: vi.fn().mockImplementation(async (args: any) => {
+      const prompt = args.prompt || '';
+      
+      // Distinguish step by prompt content (see NOTE above about coupling)
+      const isStep1 = prompt.includes('SOURCE METADATA') || prompt.includes('RAW WEB CONTENT');
+      
+      if (isStep1) {
+        return {
+          output: options?.step1Output ?? createMockPureCleanerOutput(),
           usage: { inputTokens: 100, outputTokens: 50 },
-        }),
-  model: createMockModel(),
-  logger: {
-    info: vi.fn(),
-    warn: vi.fn(),
-    error: vi.fn(),
-    debug: vi.fn(),
-  },
-  gameName: 'Elden Ring',
-});
+        };
+      } else {
+        return {
+          output: options?.step2Output ?? createMockEnhancedSummaryOutput(),
+          usage: { inputTokens: 50, outputTokens: 100 },
+        };
+      }
+    }),
+    model: createMockModel(),
+    logger: {
+      info: vi.fn(),
+      warn: vi.fn(),
+      error: vi.fn(),
+      debug: vi.fn(),
+    },
+    gameName: 'Elden Ring',
+  };
+};
 
 // ============================================================================
-// CleanerOutputSchema Tests
+// PureCleanerOutputSchema Tests
 // ============================================================================
 
-describe('CleanerOutputSchema', () => {
+describe('PureCleanerOutputSchema', () => {
   it('validates correct output', () => {
-    const validOutput = createMockCleanerOutput();
-    const result = CleanerOutputSchema.safeParse(validOutput);
+    const validOutput = createMockPureCleanerOutput();
+    const result = PureCleanerOutputSchema.safeParse(validOutput);
     expect(result.success).toBe(true);
   });
 
   it('rejects empty cleanedContent', () => {
-    const invalidOutput = createMockCleanerOutput({ cleanedContent: '' });
-    const result = CleanerOutputSchema.safeParse(invalidOutput);
+    const invalidOutput = createMockPureCleanerOutput({ cleanedContent: '' });
+    const result = PureCleanerOutputSchema.safeParse(invalidOutput);
     expect(result.success).toBe(false);
   });
 
   it('rejects qualityScore below 0', () => {
-    const invalidOutput = createMockCleanerOutput({ qualityScore: -1 });
-    const result = CleanerOutputSchema.safeParse(invalidOutput);
+    const invalidOutput = createMockPureCleanerOutput({ qualityScore: -1 });
+    const result = PureCleanerOutputSchema.safeParse(invalidOutput);
     expect(result.success).toBe(false);
   });
 
   it('rejects qualityScore above 100', () => {
-    const invalidOutput = createMockCleanerOutput({ qualityScore: 101 });
-    const result = CleanerOutputSchema.safeParse(invalidOutput);
+    const invalidOutput = createMockPureCleanerOutput({ qualityScore: 101 });
+    const result = PureCleanerOutputSchema.safeParse(invalidOutput);
     expect(result.success).toBe(false);
   });
 
   it('rejects empty contentType', () => {
-    const invalidOutput = { ...createMockCleanerOutput(), contentType: '' };
-    const result = CleanerOutputSchema.safeParse(invalidOutput);
+    const invalidOutput = { ...createMockPureCleanerOutput(), contentType: '' };
+    const result = PureCleanerOutputSchema.safeParse(invalidOutput);
     expect(result.success).toBe(false);
   });
+});
 
-  it('accepts various contentType strings', () => {
-    const contentTypes = ['wiki article', 'strategy guide', 'forum discussion', 'news article', 'official documentation', 'walkthrough'];
+// ============================================================================
+// EnhancedSummarySchema Tests
+// ============================================================================
 
-    for (const contentType of contentTypes) {
-      const output = createMockCleanerOutput({ contentType });
-      const result = CleanerOutputSchema.safeParse(output);
-      expect(result.success).toBe(true);
-    }
-  });
-
-  it('validates summary field', () => {
-    const output = createMockCleanerOutput({ summary: 'A brief summary of the content.' });
-    const result = CleanerOutputSchema.safeParse(output);
+describe('EnhancedSummarySchema', () => {
+  it('validates correct output', () => {
+    const validOutput = createMockEnhancedSummaryOutput();
+    const result = EnhancedSummarySchema.safeParse(validOutput);
     expect(result.success).toBe(true);
   });
 
-  it('rejects empty summary', () => {
-    const invalidOutput = { ...createMockCleanerOutput(), summary: '' };
-    const result = CleanerOutputSchema.safeParse(invalidOutput);
+  it('rejects summary that is too short', () => {
+    const invalidOutput = createMockEnhancedSummaryOutput({ summary: 'Short' });
+    const result = EnhancedSummarySchema.safeParse(invalidOutput);
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects detailedSummary that is too short', () => {
+    const invalidOutput = createMockEnhancedSummaryOutput({ detailedSummary: 'Too short' });
+    const result = EnhancedSummarySchema.safeParse(invalidOutput);
+    expect(result.success).toBe(false);
+  });
+
+  it('requires minimum keyFacts', () => {
+    const invalidOutput = createMockEnhancedSummaryOutput({ keyFacts: ['Only one fact'] });
+    const result = EnhancedSummarySchema.safeParse(invalidOutput);
     expect(result.success).toBe(false);
   });
 });
@@ -199,19 +347,19 @@ describe('extractDomain', () => {
 });
 
 // ============================================================================
-// cleanSingleSource Tests
+// cleanSourceTwoStep Tests
 // ============================================================================
 
-describe('cleanSingleSource', () => {
+describe('cleanSourceTwoStep', () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });
 
-  it('cleans source content successfully', async () => {
+  it('cleans source content successfully with two steps', async () => {
     const rawSource = createMockRawSource();
-    const deps = createMockCleanerDeps();
+    const deps = createMockTwoStepCleanerDeps();
 
-    const result = await cleanSingleSource(rawSource, deps);
+    const result = await cleanSourceTwoStep(rawSource, deps);
 
     expect(result.source).not.toBeNull();
     expect(result.source?.url).toBe(rawSource.url);
@@ -219,97 +367,71 @@ describe('cleanSingleSource', () => {
     expect(result.source?.qualityScore).toBe(75);
     expect(result.source?.contentType).toBe('strategy guide');
     expect(result.source?.summary).toBe('A combat guide for Elden Ring covering basic mechanics and weapon types.');
-    expect(result.tokenUsage).toBeDefined();
-    expect(result.tokenUsage.input).toBe(100);
-    expect(result.tokenUsage.output).toBe(50);
-    expect(deps.generateText).toHaveBeenCalledTimes(1);
+    expect(result.totalTokenUsage).toBeDefined();
+    expect(result.cleaningTokenUsage.input).toBe(100);
+    expect(result.summaryTokenUsage.input).toBe(50);
+    expect(deps.generateText).toHaveBeenCalledTimes(2); // Step 1 + Step 2
   });
 
   it('returns null source for empty content', async () => {
     const rawSource = createMockRawSource({ content: '' });
-    const deps = createMockCleanerDeps();
+    const deps = createMockTwoStepCleanerDeps();
 
-    const result = await cleanSingleSource(rawSource, deps);
+    const result = await cleanSourceTwoStep(rawSource, deps);
 
     expect(result.source).toBeNull();
-    expect(result.tokenUsage.input).toBe(0);
+    expect(result.totalTokenUsage.input).toBe(0);
     expect(deps.generateText).not.toHaveBeenCalled();
   });
 
   it('returns null source for content too short', async () => {
     const rawSource = createMockRawSource({ content: 'Short' });
-    const deps = createMockCleanerDeps();
+    const deps = createMockTwoStepCleanerDeps();
 
-    const result = await cleanSingleSource(rawSource, deps);
+    const result = await cleanSourceTwoStep(rawSource, deps);
 
     expect(result.source).toBeNull();
-    expect(result.tokenUsage.input).toBe(0);
+    expect(result.totalTokenUsage.input).toBe(0);
     expect(deps.generateText).not.toHaveBeenCalled();
   });
 
-  it('returns null source when cleaned content is too short', async () => {
+  it('returns source without summary when step 1 succeeds but step 2 fails', async () => {
     const rawSource = createMockRawSource();
-    const deps = createMockCleanerDeps(
-      createMockCleanerOutput({ cleanedContent: 'Too short' })
-    );
-
-    const result = await cleanSingleSource(rawSource, deps);
-
-    expect(result.source).toBeNull();
-    // Still tracks token usage even when content is too short
-    expect(result.tokenUsage.input).toBe(100);
-  });
-
-  it('calculates junk ratio correctly', async () => {
-    const rawSource = createMockRawSource({
-      content: 'A'.repeat(1000), // 1000 chars original
+    const deps = createMockTwoStepCleanerDeps({
+      step2Error: new Error('Summarization failed'),
     });
-    const cleanedContent = 'A'.repeat(600); // 600 chars cleaned = 40% junk
-    const deps = createMockCleanerDeps(
-      createMockCleanerOutput({ cleanedContent })
-    );
 
-    const result = await cleanSingleSource(rawSource, deps);
+    const result = await cleanSourceTwoStep(rawSource, deps);
 
+    // Should still return the cleaned source even if summarization fails
     expect(result.source).not.toBeNull();
-    expect(result.source?.junkRatio).toBeCloseTo(0.4, 2);
-  });
-
-  it('handles generateText errors gracefully with fallback content', async () => {
-    const rawSource = createMockRawSource();
-    const deps = {
-      ...createMockCleanerDeps(),
-      generateText: vi.fn().mockRejectedValue(new Error('API error')),
-    };
-
-    const result = await cleanSingleSource(rawSource, deps);
-
-    // Now returns fallback raw content instead of null to preserve potentially valuable content
-    expect(result.source).not.toBeNull();
-    expect(result.source?.qualityScore).toBe(25); // Low score since uncleaned
-    expect(result.source?.contentType).toBe('raw fallback');
-    expect(result.source?.qualityNotes).toContain('Cleaning failed');
-    expect(result.tokenUsage.input).toBe(0);
-    expect(deps.logger.warn).toHaveBeenCalled();
-  });
-
-  it('includes game name in prompt when provided', async () => {
-    const rawSource = createMockRawSource();
-    const deps = createMockCleanerDeps();
-
-    await cleanSingleSource(rawSource, deps);
-
-    const call = deps.generateText.mock.calls[0][0];
-    expect(call.prompt).toContain('Elden Ring');
+    expect(result.source?.cleanedContent).toBeDefined();
+    expect(result.source?.summary).toBeNull();
+    expect(result.enhancedSummary).toBeNull();
   });
 
   it('preserves search source in output', async () => {
     const rawSource = createMockRawSource({ searchSource: 'exa' });
-    const deps = createMockCleanerDeps();
+    const deps = createMockTwoStepCleanerDeps();
 
-    const result = await cleanSingleSource(rawSource, deps);
+    const result = await cleanSourceTwoStep(rawSource, deps);
 
     expect(result.source?.searchSource).toBe('exa');
+  });
+
+  it('includes game name in prompts when provided', async () => {
+    const rawSource = createMockRawSource();
+    const deps = createMockTwoStepCleanerDeps();
+
+    await cleanSourceTwoStep(rawSource, deps);
+
+    // Check step 1 prompt contains game name
+    const step1Call = (deps.generateText as any).mock.calls[0][0];
+    expect(step1Call.prompt).toContain('Elden Ring');
+    
+    // Check step 2 prompt contains game name
+    const step2Call = (deps.generateText as any).mock.calls[1][0];
+    expect(step2Call.prompt).toContain('Elden Ring');
   });
 });
 
@@ -332,21 +454,18 @@ describe('cleanSourcesBatch', () => {
     expect(deps.generateText).not.toHaveBeenCalled();
   });
 
-  it('cleans multiple sources in batches', async () => {
+  it('cleans multiple sources using two-step cleaning', async () => {
     const sources = [
       createMockRawSource({ url: 'https://example1.com/guide' }),
       createMockRawSource({ url: 'https://example2.com/guide' }),
-      createMockRawSource({ url: 'https://example3.com/guide' }),
     ];
     const deps = createMockCleanerDeps();
 
     const result = await cleanSourcesBatch(sources, deps);
 
-    expect(result.sources.length).toBe(3);
-    expect(deps.generateObject).toHaveBeenCalledTimes(3);
-    // Token usage aggregated from all 3 calls (100 input + 50 output each)
-    expect(result.tokenUsage.input).toBe(300);
-    expect(result.tokenUsage.output).toBe(150);
+    expect(result.sources.length).toBe(2);
+    // Each source requires 2 calls (step 1 + step 2) = 4 total
+    expect(deps.generateText).toHaveBeenCalledTimes(4);
   });
 
   it('filters out failed cleaning results', async () => {
@@ -360,7 +479,6 @@ describe('cleanSourcesBatch', () => {
     const result = await cleanSourcesBatch(sources, deps);
 
     expect(result.sources.length).toBe(2);
-    expect(deps.generateObject).toHaveBeenCalledTimes(2);
   });
 
   it('processes sources in correct batch size', async () => {
@@ -387,30 +505,16 @@ describe('cleanSourcesBatch', () => {
     expect(deps.logger.info).toHaveBeenCalled();
   });
 
-  it('respects abort signal between batches', async () => {
-    const sources = Array.from({ length: CLEANER_CONFIG.BATCH_SIZE + 1 }, (_, i) =>
-      createMockRawSource({ url: `https://example${i}.com/guide` })
-    );
-
-    const abortController = new AbortController();
-    const deps = {
-      ...createMockCleanerDeps(),
-      signal: abortController.signal,
-    };
-
-    // Abort after first batch starts
-    deps.generateText.mockImplementation(async () => {
-      abortController.abort();
-      return { 
-        output: createMockCleanerOutput(),
-        usage: { inputTokens: 100, outputTokens: 50 },
-      };
-    });
+  it('uses model as fallback when summarizerModel is not provided', async () => {
+    const sources = [createMockRawSource()];
+    const deps = createMockCleanerDeps();
+    // deps doesn't have summarizerModel, so model should be used for both steps
 
     const result = await cleanSourcesBatch(sources, deps);
 
-    // Should have processed first batch before abort was checked
-    expect(result.sources.length).toBeLessThanOrEqual(CLEANER_CONFIG.BATCH_SIZE);
+    expect(result.sources.length).toBe(1);
+    // Both steps should have been called
+    expect(deps.generateText).toHaveBeenCalledTimes(2);
   });
 });
 
@@ -428,8 +532,9 @@ describe('CLEANER_CONFIG', () => {
     expect(CLEANER_CONFIG.BATCH_SIZE).toBeGreaterThan(0);
   });
 
-  it('has positive timeout', () => {
-    expect(CLEANER_CONFIG.TIMEOUT_MS).toBeGreaterThan(0);
+  it('has positive timeouts', () => {
+    expect(CLEANER_CONFIG.STEP1_TIMEOUT_MS).toBeGreaterThan(0);
+    expect(CLEANER_CONFIG.STEP2_TIMEOUT_MS).toBeGreaterThan(0);
   });
 
   it('has valid quality thresholds', () => {

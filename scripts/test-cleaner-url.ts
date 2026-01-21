@@ -8,7 +8,7 @@ config();
 
 import { createOpenRouter } from '@openrouter/ai-sdk-provider';
 import { generateText } from 'ai';
-import { cleanSingleSource } from '../src/ai/articles/agents/cleaner';
+import { cleanSourceTwoStep, type TwoStepCleanerDeps } from '../src/ai/articles/agents/cleaner';
 import { getModel } from '../src/ai/config/utils';
 import { CLEANER_CONFIG } from '../src/ai/articles/config';
 
@@ -44,7 +44,7 @@ async function fetchUrlContent(url: string): Promise<string> {
 }
 
 async function testCleaner() {
-  console.log('🧪 Testing Cleaner on Specific URL\n');
+  console.log('🧪 Testing Two-Step Cleaner on Specific URL\n');
   console.log('=' .repeat(60));
   
   // Check config
@@ -53,7 +53,11 @@ async function testCleaner() {
   console.log(`   Step 2 Timeout: ${CLEANER_CONFIG.STEP2_TIMEOUT_MS}ms`);
   console.log(`   Max retries: ${CLEANER_CONFIG.MAX_RETRIES + CLEANER_CONFIG.MAX_DEGENERATE_RETRIES}`);
   console.log(`   Max input chars: ${CLEANER_CONFIG.MAX_INPUT_CHARS.toLocaleString()}`);
-  console.log(`   Model: ${getModel('ARTICLE_CLEANER')}`);
+  
+  const cleanerModelId = getModel('ARTICLE_CLEANER');
+  const summarizerModelId = getModel('ARTICLE_SUMMARIZER');
+  console.log(`   Cleaner Model: ${cleanerModelId}`);
+  console.log(`   Summarizer Model: ${summarizerModelId}`);
 
   // Try fetching the URL first
   let content: string;
@@ -70,33 +74,36 @@ async function testCleaner() {
   console.log(content.slice(0, 500));
   console.log('-'.repeat(60));
   
-  // Create model
+  // Create models
   const openrouter = createOpenRouter({
     apiKey: process.env.OPENROUTER_API_KEY,
   });
-  const modelId = getModel('ARTICLE_CLEANER');
-  const model = openrouter(modelId);
+  const cleanerModel = openrouter(cleanerModelId);
+  const summarizerModel = openrouter(summarizerModelId);
 
   // Test cleaning
-  console.log('\n🧹 Testing Cleaner Agent...');
+  console.log('\n🧹 Testing Two-Step Cleaner Agent...');
   console.log(`   Content length: ${content.length.toLocaleString()} chars`);
   console.log(`   Truncated to: ${Math.min(content.length, CLEANER_CONFIG.MAX_INPUT_CHARS).toLocaleString()} chars`);
   
   const start = Date.now();
   
   try {
-    const result = await cleanSingleSource(
+    const deps: TwoStepCleanerDeps = {
+      generateText,
+      cleanerModel,
+      summarizerModel,
+      gameName: 'Elden Ring',
+    };
+
+    const result = await cleanSourceTwoStep(
       {
         url: TEST_URL,
         title: 'Merchants - Elden Ring Wiki',
         content: content,
         searchSource: 'tavily',
       },
-      {
-        generateText,
-        model,
-        gameName: 'Elden Ring',
-      }
+      deps
     );
 
     const duration = Date.now() - start;
@@ -112,14 +119,23 @@ async function testCleaner() {
       console.log(`   Summary: ${result.source.summary}`);
       console.log(`   Cleaned Length: ${result.source.cleanedContent.length.toLocaleString()} chars`);
       console.log(`   Quality Notes: ${result.source.qualityNotes}`);
+      
+      if (result.enhancedSummary) {
+        console.log('\n📝 Enhanced Summary:');
+        console.log(`   Key Facts: ${result.enhancedSummary.keyFacts.length}`);
+        console.log(`   Data Points: ${result.enhancedSummary.dataPoints.length}`);
+        console.log(`   Procedures: ${result.enhancedSummary.procedures.length}`);
+        console.log(`   Requirements: ${result.enhancedSummary.requirements.length}`);
+      }
     } else {
       console.log('\n❌ No source returned (cleaning failed)');
     }
 
     console.log('\n💰 Token Usage:');
-    console.log(`   Input: ${result.tokenUsage.input.toLocaleString()}`);
-    console.log(`   Output: ${result.tokenUsage.output.toLocaleString()}`);
-    console.log(`   Cost: $${result.tokenUsage.actualCostUsd?.toFixed(4) ?? 'N/A'}`);
+    console.log(`   Step 1 (Cleaning): ${result.cleaningTokenUsage.input.toLocaleString()} in / ${result.cleaningTokenUsage.output.toLocaleString()} out`);
+    console.log(`   Step 2 (Summary): ${result.summaryTokenUsage.input.toLocaleString()} in / ${result.summaryTokenUsage.output.toLocaleString()} out`);
+    console.log(`   Total: ${result.totalTokenUsage.input.toLocaleString()} in / ${result.totalTokenUsage.output.toLocaleString()} out`);
+    console.log(`   Cost: $${result.totalTokenUsage.actualCostUsd?.toFixed(4) ?? 'N/A'}`);
 
   } catch (err) {
     const duration = Date.now() - start;

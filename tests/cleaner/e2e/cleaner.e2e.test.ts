@@ -19,7 +19,7 @@ import { createOpenRouter } from '@openrouter/ai-sdk-provider';
 import { generateText, Output } from 'ai';
 
 import { tavilySearch, isTavilyConfigured } from '../../../src/ai/tools/tavily';
-import { cleanSingleSource } from '../../../src/ai/articles/agents/cleaner';
+import { cleanSourceTwoStep, type TwoStepCleanerDeps } from '../../../src/ai/articles/agents/cleaner';
 import { getModel } from '../../../src/ai/config/utils';
 import {
   type CleanerE2ETestResult,
@@ -52,12 +52,18 @@ function isOpenRouterConfigured(): boolean {
   return Boolean(process.env.OPENROUTER_API_KEY);
 }
 
-function createModel() {
+function createModels() {
   const openrouter = createOpenRouter({
     apiKey: process.env.OPENROUTER_API_KEY,
   });
-  const modelId = getModel('ARTICLE_CLEANER');
-  return openrouter(modelId);
+  const cleanerModelId = getModel('ARTICLE_CLEANER');
+  const summarizerModelId = getModel('ARTICLE_SUMMARIZER');
+  return {
+    cleanerModel: openrouter(cleanerModelId),
+    summarizerModel: openrouter(summarizerModelId),
+    cleanerModelId,
+    summarizerModelId,
+  };
 }
 
 // ============================================================================
@@ -143,11 +149,11 @@ describeE2E('Cleaner Agent E2E', () => {
     // ========================================================================
     // Step 2: Clean with Cleaner Agent
     // ========================================================================
-    console.log('\n🧹 Cleaning with Cleaner Agent...');
+    console.log('\n🧹 Cleaning with Cleaner Agent (two-step)...');
 
-    const model = createModel();
-    const modelId = getModel('ARTICLE_CLEANER');
-    console.log(`   Model: ${modelId}`);
+    const { cleanerModel, summarizerModel, cleanerModelId, summarizerModelId } = createModels();
+    console.log(`   Cleaner Model: ${cleanerModelId}`);
+    console.log(`   Summarizer Model: ${summarizerModelId}`);
 
     const cleaningResults: CleaningResultInfo[] = [];
     const comparisons: ContentComparison[] = [];
@@ -166,25 +172,28 @@ describeE2E('Cleaner Agent E2E', () => {
       console.log(`   URL: ${searchResult.url}`);
       console.log(`   Original length: ${originalLength.toLocaleString()} chars`);
 
-      const cleanResult = await cleanSingleSource(
+      const twoStepDeps: TwoStepCleanerDeps = {
+        generateText,
+        cleanerModel,
+        summarizerModel,
+        gameName: TEST_CONFIG.gameName,
+      };
+
+      const cleanResult = await cleanSourceTwoStep(
         {
           url: searchResult.url,
           title: searchResult.title,
           content: rawContent,
           searchSource: TEST_CONFIG.searchSource,
         },
-        {
-          generateText,
-          model,
-          gameName: TEST_CONFIG.gameName,
-        }
+        twoStepDeps
       );
 
       // Aggregate token usage
       totalTokenUsage = {
-        input: totalTokenUsage.input + cleanResult.tokenUsage.input,
-        output: totalTokenUsage.output + cleanResult.tokenUsage.output,
-        actualCostUsd: (totalTokenUsage.actualCostUsd ?? 0) + (cleanResult.tokenUsage.actualCostUsd ?? 0),
+        input: totalTokenUsage.input + cleanResult.totalTokenUsage.input,
+        output: totalTokenUsage.output + cleanResult.totalTokenUsage.output,
+        actualCostUsd: (totalTokenUsage.actualCostUsd ?? 0) + (cleanResult.totalTokenUsage.actualCostUsd ?? 0),
       };
 
       const domain = extractDomain(searchResult.url);
@@ -207,7 +216,7 @@ describeE2E('Cleaner Agent E2E', () => {
           junkRatio: src.junkRatio,
           originalLength,
           cleanedLength: src.cleanedContent.length,
-          tokenUsage: cleanResult.tokenUsage,
+          tokenUsage: cleanResult.totalTokenUsage,
         });
 
         comparisons.push({
@@ -240,7 +249,7 @@ describeE2E('Cleaner Agent E2E', () => {
           domain,
           success: false,
           originalLength,
-          tokenUsage: cleanResult.tokenUsage,
+          tokenUsage: cleanResult.totalTokenUsage,
         });
 
         comparisons.push({
@@ -258,8 +267,8 @@ describeE2E('Cleaner Agent E2E', () => {
         console.log(`   ❌ Cleaning failed (content too short or invalid)`);
       }
 
-      if (cleanResult.tokenUsage.actualCostUsd !== undefined) {
-        console.log(`   LLM cost: $${cleanResult.tokenUsage.actualCostUsd.toFixed(4)}`);
+      if (cleanResult.totalTokenUsage.actualCostUsd !== undefined) {
+        console.log(`   LLM cost: $${cleanResult.totalTokenUsage.actualCostUsd.toFixed(4)}`);
       }
     }
 
@@ -272,7 +281,7 @@ describeE2E('Cleaner Agent E2E', () => {
         totalTokenUsage,
         avgQualityScore: successCount > 0 ? totalQualityScore / successCount : undefined,
         avgJunkRatio: successCount > 0 ? totalJunkRatio / successCount : undefined,
-        model: modelId,
+        model: `${cleanerModelId} / ${summarizerModelId}`,
       },
       results: cleaningResults,
     };

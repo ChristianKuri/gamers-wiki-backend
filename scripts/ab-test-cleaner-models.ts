@@ -82,8 +82,8 @@ const TEST_CONFIG = {
 // ============================================================================
 
 import { 
-  cleanSingleSource,
-  type CleanerDeps,
+  cleanSourceTwoStep,
+  type TwoStepCleanerDeps,
 } from '../src/ai/articles/agents/cleaner';
 import type { RawSourceInput } from '../src/ai/articles/types';
 
@@ -161,8 +161,9 @@ function classifyError(err: unknown): 'zod_validation' | 'timeout' | 'api_error'
 }
 
 /**
- * Clean content using the PRODUCTION cleaner function.
+ * Clean content using the PRODUCTION two-step cleaner function.
  * This ensures we use the exact same prompts and schema as production.
+ * Uses the same model for both cleaning and summarization for A/B testing purposes.
  */
 async function cleanWithModel(
   model: string,
@@ -182,13 +183,15 @@ async function cleanWithModel(
       searchSource: 'tavily',
     };
 
-    const deps: CleanerDeps = {
+    // Use the same model for both steps (A/B testing the model, not the pipeline)
+    const deps: TwoStepCleanerDeps = {
       generateText,
-      model: llmModel,
+      cleanerModel: llmModel,
+      summarizerModel: llmModel,
       gameName: TEST_CONFIG.gameName,
     };
 
-    const result = await cleanSingleSource(rawSource, deps);
+    const result = await cleanSourceTwoStep(rawSource, deps);
 
     const durationMs = Date.now() - startTime;
 
@@ -199,9 +202,9 @@ async function cleanWithModel(
         success: true,
         zodPassed: true,
         durationMs,
-        inputTokens: result.tokenUsage.input,
-        outputTokens: result.tokenUsage.output,
-        actualCostUsd: result.tokenUsage.actualCostUsd ?? null,
+        inputTokens: result.totalTokenUsage.input,
+        outputTokens: result.totalTokenUsage.output,
+        actualCostUsd: result.totalTokenUsage.actualCostUsd ?? null,
         qualityScore: src.qualityScore,
         relevanceScore: src.relevanceScore,
         cleanedContentLength: src.cleanedContent.length,
@@ -226,9 +229,9 @@ async function cleanWithModel(
         success: false,
         zodPassed: true, // Zod passed, but content was filtered
         durationMs,
-        inputTokens: result.tokenUsage.input,
-        outputTokens: result.tokenUsage.output,
-        actualCostUsd: result.tokenUsage.actualCostUsd ?? null,
+        inputTokens: result.totalTokenUsage.input,
+        outputTokens: result.totalTokenUsage.output,
+        actualCostUsd: result.totalTokenUsage.actualCostUsd ?? null,
         qualityScore: null,
         relevanceScore: null,
         cleanedContentLength: null,

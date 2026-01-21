@@ -51,12 +51,13 @@ export {
   type ReviewIssueCategory,
 } from './reviewer';
 export {
-  cleanSingleSource,
   cleanSourcesBatch,
+  cleanSourceTwoStep,
   CLEANER_CONFIG,
-  CleanerOutputSchema,
   type CleanerDeps,
   type CleanSourcesBatchResult,
+  type TwoStepCleanerDeps,
+  type TwoStepCleanResult,
 } from './cleaner';
 export {
   runImageCurator,
