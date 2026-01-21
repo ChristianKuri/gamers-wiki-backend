@@ -35,6 +35,18 @@ export interface RetryOptions {
 // ============================================================================
 
 /**
+ * Pattern to detect transient network/socket errors.
+ * Used by both retry logic and the global unhandled rejection handler.
+ *
+ * Matches errors like:
+ * - TypeError: terminated (aborted fetch)
+ * - SocketError: other side closed
+ * - ECONNRESET, ETIMEDOUT, ECONNABORTED
+ */
+export const TRANSIENT_NETWORK_ERROR_PATTERN =
+  /terminated|socket|ECONNRESET|ETIMEDOUT|ECONNABORTED|other side closed|UND_ERR/i;
+
+/**
  * Known transient error patterns that should trigger a retry.
  */
 const RETRYABLE_ERROR_PATTERNS = [
@@ -49,6 +61,11 @@ const RETRYABLE_ERROR_PATTERNS = [
   /ECONNRESET/,
   /ECONNREFUSED/,
   /socket.?hang.?up/i,
+  // Socket/connection termination (undici/Node.js internal errors)
+  /terminated/i,  // TypeError: terminated from aborted fetch
+  /other side closed/i,  // SocketError: other side closed
+  /UND_ERR_SOCKET/i,  // Undici socket error code
+  /ECONNABORTED/,
   // Server errors (5xx)
   /5\d{2}/,
   /internal.?server.?error/i,

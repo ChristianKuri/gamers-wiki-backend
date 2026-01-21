@@ -1317,11 +1317,87 @@ export async function cleanSourceTwoStep(
   const originalLength = source.content.length;
   const domain = extractDomain(source.url);
 
-  // Step 1: Clean content
-  log.debug(`Step 1: Cleaning ${originalLength} chars from ${domain}...`);
-  const cleanResult = await cleanContentOnly(source, deps);
+  try {
+    // Step 1: Clean content
+    log.debug(`Step 1: Cleaning ${originalLength} chars from ${domain}...`);
+    const cleanResult = await cleanContentOnly(source, deps);
 
-  if (!cleanResult) {
+    if (!cleanResult) {
+      return {
+        source: null,
+        cleaningTokenUsage: createEmptyTokenUsage(),
+        summaryTokenUsage: createEmptyTokenUsage(),
+        totalTokenUsage: createEmptyTokenUsage(),
+        enhancedSummary: null,
+      };
+    }
+
+    log.debug(`Step 1 complete: ${cleanResult.cleanedContent.length} chars cleaned (${((cleanResult.cleanedContent.length / originalLength) * 100).toFixed(0)}% preserved)`);
+
+    // Step 2: Extract enhanced summaries
+    log.debug(`Step 2: Summarizing ${cleanResult.cleanedContent.length} chars...`);
+    const summaryResult = await extractEnhancedSummaries(source.title, cleanResult.cleanedContent, deps);
+
+    const totalTokenUsage = addTokenUsage(
+      cleanResult.tokenUsage,
+      summaryResult?.tokenUsage ?? createEmptyTokenUsage()
+    );
+
+    // Calculate junk ratio
+    const junkRatio = 1 - cleanResult.cleanedContent.length / originalLength;
+
+    // Extract images with validation and context (pass source URL for relative URL resolution)
+    const imageResult = extractImagesFromSource(source.content, cleanResult.cleanedContent, source.url);
+    if (imageResult.discardedCount > 0) {
+      // Log at warn level if high hallucination rate (>50% of images discarded)
+      const hallucinationRate = imageResult.parsedCount > 0
+        ? imageResult.discardedCount / imageResult.parsedCount
+        : 0;
+      if (hallucinationRate > 0.5) {
+        log.warn(`[Cleaner] High image hallucination rate for ${domain}: ${imageResult.discardedCount}/${imageResult.parsedCount} (${(hallucinationRate * 100).toFixed(0)}%) discarded`);
+      } else {
+        log.debug(`[Cleaner] Discarded ${imageResult.discardedCount} hallucinated image URL(s) for ${domain}`);
+      }
+    }
+
+    // Build cleaned source
+    const cleanedSource: CleanedSource = {
+      url: source.url,
+      domain,
+      title: source.title,
+      summary: summaryResult?.summary ?? null,
+      detailedSummary: summaryResult?.detailedSummary ?? null,
+      keyFacts: summaryResult?.keyFacts ?? null,
+      dataPoints: summaryResult?.dataPoints ?? null,
+      cleanedContent: cleanResult.cleanedContent,
+      originalContentLength: originalLength,
+      qualityScore: cleanResult.qualityScore,
+      relevanceScore: cleanResult.relevanceScore,
+      qualityNotes: cleanResult.qualityNotes,
+      contentType: cleanResult.contentType,
+      junkRatio: Math.max(0, Math.min(1, junkRatio)),
+      searchSource: source.searchSource,
+      images: imageResult.images.length > 0 ? imageResult.images : null,
+    };
+
+    const costStr = totalTokenUsage.actualCostUsd
+      ? ` ($${totalTokenUsage.actualCostUsd.toFixed(4)})`
+      : '';
+    const preservedPct = ((cleanResult.cleanedContent.length / originalLength) * 100).toFixed(0);
+    const imageStr = imageResult.images.length > 0 ? `, ${imageResult.images.length} images` : '';
+    log.info(`Two-step clean complete: ${source.url} - ${originalLength.toLocaleString()}→${cleanResult.cleanedContent.length.toLocaleString()}c (${preservedPct}%), Q:${cleanResult.qualityScore}, R:${cleanResult.relevanceScore}${imageStr}${costStr}`);
+
+    return {
+      source: cleanedSource,
+      cleaningTokenUsage: cleanResult.tokenUsage,
+      summaryTokenUsage: summaryResult?.tokenUsage ?? createEmptyTokenUsage(),
+      totalTokenUsage,
+      enhancedSummary: summaryResult,
+    };
+  } catch (error) {
+    // Catch any unhandled errors (socket terminations, etc.) to prevent crashes
+    const message = error instanceof Error ? error.message : String(error);
+    log.warn(`[Cleaner] Two-step clean failed for ${source.url}: ${message}`);
     return {
       source: null,
       cleaningTokenUsage: createEmptyTokenUsage(),
@@ -1330,69 +1406,6 @@ export async function cleanSourceTwoStep(
       enhancedSummary: null,
     };
   }
-
-  log.debug(`Step 1 complete: ${cleanResult.cleanedContent.length} chars cleaned (${((cleanResult.cleanedContent.length / originalLength) * 100).toFixed(0)}% preserved)`);
-
-  // Step 2: Extract enhanced summaries
-  log.debug(`Step 2: Summarizing ${cleanResult.cleanedContent.length} chars...`);
-  const summaryResult = await extractEnhancedSummaries(source.title, cleanResult.cleanedContent, deps);
-
-  const totalTokenUsage = addTokenUsage(
-    cleanResult.tokenUsage,
-    summaryResult?.tokenUsage ?? createEmptyTokenUsage()
-  );
-
-  // Calculate junk ratio
-  const junkRatio = 1 - cleanResult.cleanedContent.length / originalLength;
-
-  // Extract images with validation and context (pass source URL for relative URL resolution)
-  const imageResult = extractImagesFromSource(source.content, cleanResult.cleanedContent, source.url);
-  if (imageResult.discardedCount > 0) {
-    // Log at warn level if high hallucination rate (>50% of images discarded)
-    const hallucinationRate = imageResult.parsedCount > 0
-      ? imageResult.discardedCount / imageResult.parsedCount
-      : 0;
-    if (hallucinationRate > 0.5) {
-      log.warn(`[Cleaner] High image hallucination rate for ${domain}: ${imageResult.discardedCount}/${imageResult.parsedCount} (${(hallucinationRate * 100).toFixed(0)}%) discarded`);
-    } else {
-      log.debug(`[Cleaner] Discarded ${imageResult.discardedCount} hallucinated image URL(s) for ${domain}`);
-    }
-  }
-
-  // Build cleaned source
-  const cleanedSource: CleanedSource = {
-    url: source.url,
-    domain,
-    title: source.title,
-    summary: summaryResult?.summary ?? null,
-    detailedSummary: summaryResult?.detailedSummary ?? null,
-    keyFacts: summaryResult?.keyFacts ?? null,
-    dataPoints: summaryResult?.dataPoints ?? null,
-    cleanedContent: cleanResult.cleanedContent,
-    originalContentLength: originalLength,
-    qualityScore: cleanResult.qualityScore,
-    relevanceScore: cleanResult.relevanceScore,
-    qualityNotes: cleanResult.qualityNotes,
-    contentType: cleanResult.contentType,
-    junkRatio: Math.max(0, Math.min(1, junkRatio)),
-    searchSource: source.searchSource,
-    images: imageResult.images.length > 0 ? imageResult.images : null,
-  };
-
-  const costStr = totalTokenUsage.actualCostUsd 
-    ? ` ($${totalTokenUsage.actualCostUsd.toFixed(4)})` 
-    : '';
-  const preservedPct = ((cleanResult.cleanedContent.length / originalLength) * 100).toFixed(0);
-  const imageStr = imageResult.images.length > 0 ? `, ${imageResult.images.length} images` : '';
-  log.info(`Two-step clean complete: ${source.url} - ${originalLength.toLocaleString()}→${cleanResult.cleanedContent.length.toLocaleString()}c (${preservedPct}%), Q:${cleanResult.qualityScore}, R:${cleanResult.relevanceScore}${imageStr}${costStr}`);
-
-  return {
-    source: cleanedSource,
-    cleaningTokenUsage: cleanResult.tokenUsage,
-    summaryTokenUsage: summaryResult?.tokenUsage ?? createEmptyTokenUsage(),
-    totalTokenUsage,
-    enhancedSummary: summaryResult,
-  };
 }
 
 // ============================================================================
