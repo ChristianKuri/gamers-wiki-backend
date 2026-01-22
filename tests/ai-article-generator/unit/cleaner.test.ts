@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 import {
+  applyDomainTruncation,
   cleanSourcesBatch,
   cleanSourceTwoStep,
   CLEANER_CONFIG,
@@ -551,5 +552,172 @@ describe('CLEANER_CONFIG', () => {
     expect(TIER_THRESHOLDS.excellent).toBeGreaterThan(TIER_THRESHOLDS.good);
     expect(TIER_THRESHOLDS.good).toBeGreaterThan(TIER_THRESHOLDS.average);
     expect(TIER_THRESHOLDS.average).toBeGreaterThan(TIER_THRESHOLDS.poor);
+  });
+});
+
+// ============================================================================
+// applyDomainTruncation Tests
+// ============================================================================
+
+describe('applyDomainTruncation', () => {
+  const SAMPLE_CONTENT = `
+# Game Guide
+
+This is useful content about the game.
+
+## Strategy Section
+
+Here are some tips and strategies.
+
+Join the page discussion
+
+User123: Great guide!
+User456: Thanks for the tips.
+`;
+
+  const GAME8_CONTENT = `
+# Boss Guide
+
+How to defeat the boss.
+
+## Comment
+
+Anonymous: This was helpful!
+Another: Thanks!
+`;
+
+  const IGN_CONTENT = `
+# Walkthrough Guide
+
+Step 1: Do this thing.
+Step 2: Do that thing.
+
+## Tips
+
+Some helpful tips here.
+
+Was this guide helpful?
+
+Leave feedback
+
+In This Guide
+
+Related articles here.
+`;
+
+  describe('domain matching', () => {
+    it('returns unchanged content when no domain matches', () => {
+      const result = applyDomainTruncation(SAMPLE_CONTENT, 'https://example.com/page');
+      
+      expect(result.wasTruncated).toBe(false);
+      expect(result.content).toBe(SAMPLE_CONTENT);
+      expect(result.appliedRule).toBeNull();
+      expect(result.originalLength).toBe(SAMPLE_CONTENT.length);
+      expect(result.newLength).toBe(SAMPLE_CONTENT.length);
+    });
+
+    it('matches exact domain', () => {
+      const result = applyDomainTruncation(SAMPLE_CONTENT, 'https://fextralife.com/page');
+      
+      expect(result.wasTruncated).toBe(true);
+      expect(result.appliedRule?.domainPattern).toBe('fextralife.com');
+    });
+
+    it('matches subdomain (e.g., wiki.fextralife.com)', () => {
+      const result = applyDomainTruncation(SAMPLE_CONTENT, 'https://expedition33.wiki.fextralife.com/Simon');
+      
+      expect(result.wasTruncated).toBe(true);
+      expect(result.appliedRule?.domainPattern).toBe('fextralife.com');
+    });
+
+    it('does NOT match domain with similar suffix (evil-fextralife.com)', () => {
+      const result = applyDomainTruncation(SAMPLE_CONTENT, 'https://evil-fextralife.com/page');
+      
+      expect(result.wasTruncated).toBe(false);
+      expect(result.appliedRule).toBeNull();
+    });
+
+    it('does NOT match domain with pattern as subdomain (fextralife.com.evil.com)', () => {
+      const result = applyDomainTruncation(SAMPLE_CONTENT, 'https://fextralife.com.evil.com/page');
+      
+      expect(result.wasTruncated).toBe(false);
+      expect(result.appliedRule).toBeNull();
+    });
+
+    it('handles malformed URLs gracefully', () => {
+      const result = applyDomainTruncation(SAMPLE_CONTENT, 'not-a-valid-url');
+      
+      expect(result.wasTruncated).toBe(false);
+      expect(result.content).toBe(SAMPLE_CONTENT);
+    });
+  });
+
+  describe('marker truncation', () => {
+    it('returns unchanged content when marker is not found', () => {
+      const contentWithoutMarker = 'This content has no comment section marker.';
+      const result = applyDomainTruncation(contentWithoutMarker, 'https://fextralife.com/page');
+      
+      expect(result.wasTruncated).toBe(false);
+      expect(result.content).toBe(contentWithoutMarker);
+    });
+
+    it('truncates content after fextralife marker', () => {
+      const result = applyDomainTruncation(SAMPLE_CONTENT, 'https://fextralife.com/page');
+      
+      expect(result.wasTruncated).toBe(true);
+      expect(result.content).not.toContain('Join the page discussion');
+      expect(result.content).not.toContain('User123');
+      expect(result.content).toContain('Strategy Section');
+      expect(result.newLength).toBeLessThan(result.originalLength);
+    });
+
+    it('truncates content after game8 marker', () => {
+      const result = applyDomainTruncation(GAME8_CONTENT, 'https://game8.co/games/Test/archives/123');
+      
+      expect(result.wasTruncated).toBe(true);
+      expect(result.content).not.toContain('## Comment');
+      expect(result.content).not.toContain('Anonymous');
+      expect(result.content).toContain('Boss Guide');
+    });
+
+    it('truncates content after ign marker', () => {
+      const result = applyDomainTruncation(IGN_CONTENT, 'https://www.ign.com/wikis/game/Guide');
+      
+      expect(result.wasTruncated).toBe(true);
+      expect(result.content).not.toContain('Was this guide helpful?');
+      expect(result.content).not.toContain('Leave feedback');
+      expect(result.content).not.toContain('In This Guide');
+      expect(result.content).toContain('Walkthrough Guide');
+      expect(result.content).toContain('Tips');
+    });
+
+    it('performs case-insensitive marker search', () => {
+      const contentWithUpperMarker = 'Content here.\n\nJOIN THE PAGE DISCUSSION\n\nComments here.';
+      const result = applyDomainTruncation(contentWithUpperMarker, 'https://fextralife.com/page');
+      
+      expect(result.wasTruncated).toBe(true);
+      expect(result.content).not.toContain('JOIN THE PAGE DISCUSSION');
+    });
+
+    it('trims whitespace from truncated content', () => {
+      const contentWithTrailingWhitespace = 'Content here.   \n\n\nJoin the page discussion\n\nComments.';
+      const result = applyDomainTruncation(contentWithTrailingWhitespace, 'https://fextralife.com/page');
+      
+      expect(result.wasTruncated).toBe(true);
+      expect(result.content).toBe('Content here.');
+    });
+  });
+
+  describe('rule application', () => {
+    it('applies only the first matching rule when multiple could match', () => {
+      // Both fextralife marker and game8 marker present, but fextralife domain
+      const mixedContent = 'Content.\n\n## Comment\n\nJoin the page discussion\n\nMore.';
+      const result = applyDomainTruncation(mixedContent, 'https://fextralife.com/page');
+      
+      // Should use fextralife's marker ("Join the page discussion"), not game8's ("## Comment")
+      expect(result.wasTruncated).toBe(true);
+      expect(result.content).toContain('## Comment'); // game8 marker should remain
+      expect(result.content).not.toContain('Join the page discussion');
+    });
   });
 });

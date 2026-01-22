@@ -8,6 +8,23 @@
 import { AI_DEFAULT_MODELS } from '../config/utils';
 
 // ============================================================================
+// Domain Truncation Types
+// ============================================================================
+
+/**
+ * Configuration for domain-specific content truncation.
+ * Used to remove boilerplate (comments, forums, etc.) before LLM cleaning.
+ */
+export interface DomainTruncationRule {
+  /** Domain pattern to match (e.g., 'fextralife.com'). Matched case-insensitively. */
+  readonly domainPattern: string;
+  /** Text marker - everything after this (inclusive) is removed. */
+  readonly truncateAfter: string;
+  /** Human-readable description of what this rule removes. */
+  readonly description: string;
+}
+
+// ============================================================================
 // UNIFIED EXCLUDED DOMAINS LIST
 // ============================================================================
 
@@ -726,9 +743,9 @@ export const IMAGE_CURATOR_CONFIG = {
   /**
    * Timeout for entire image phase (ms).
    * Includes curation + all image downloads + all uploads.
-   * Set higher than TIMEOUT_MS to allow for network operations.
+   * Set high to allow thorough quality validation - good images are worth the wait.
    */
-  PHASE_TIMEOUT_MS: 120000,
+  PHASE_TIMEOUT_MS: 600000, // 10 minutes
   /**
    * Maximum concurrent image evaluations.
    * @planned Currently unused - reserved for future batch evaluation feature
@@ -1018,6 +1035,48 @@ export const TTS_CONFIG = {
    * Initial retry delay in milliseconds.
    */
   RETRY_DELAY_MS: 1000,
+} as const;
+
+// ============================================================================
+// Content Preprocessor Configuration
+// ============================================================================
+
+/**
+ * Configuration for content preprocessing BEFORE LLM cleaning.
+ * This handles domain-specific boilerplate removal (comments, forums, etc.)
+ * to reduce token usage and prevent timeouts on large pages.
+ */
+export const CONTENT_PREPROCESSOR_CONFIG = {
+  /**
+   * Domain-specific content truncation rules.
+   * Applied BEFORE the LLM cleaner to remove boilerplate/comments.
+   * 
+   * Each rule specifies a domain pattern and a marker string.
+   * Everything AFTER the marker (inclusive) is removed.
+   * 
+   * This is useful for wiki pages that have comment sections, discussion
+   * forums, or other noise after the main content.
+   */
+  DOMAIN_TRUNCATION_RULES: [
+    {
+      // Fextralife wikis have "Join the page discussion" followed by comments
+      domainPattern: 'fextralife.com',
+      truncateAfter: 'Join the page discussion',
+      description: 'Remove Fextralife wiki comment section',
+    },
+    {
+      // Game8 pages have "## Comment" H2 header followed by user comments
+      domainPattern: 'game8.co',
+      truncateAfter: '## Comment',
+      description: 'Remove Game8 comment section',
+    },
+    {
+      // IGN wiki pages have feedback/footer section after main content
+      domainPattern: 'ign.com',
+      truncateAfter: 'Was this guide helpful?',
+      description: 'Remove IGN feedback and footer sections',
+    },
+  ] as const satisfies readonly DomainTruncationRule[],
 } as const;
 
 // ============================================================================

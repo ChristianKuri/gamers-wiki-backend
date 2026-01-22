@@ -11,7 +11,7 @@ import { NoObjectGeneratedError, Output } from 'ai';
 import { z } from 'zod';
 
 import { createPrefixedLogger, type Logger } from '../../../utils/logger';
-import { CLEANER_CONFIG } from '../config';
+import { CLEANER_CONFIG, CONTENT_PREPROCESSOR_CONFIG, type DomainTruncationRule } from '../config';
 import { isRetryableError, withRetry } from '../retry';
 import { extractDomain } from '../source-cache';
 import {
@@ -46,6 +46,94 @@ function formatDuration(ms: number): string {
   const minutes = Math.floor(seconds / 60);
   const remainingSeconds = seconds % 60;
   return `${minutes}m ${remainingSeconds.toFixed(0)}s`;
+}
+
+// ============================================================================
+// Domain-Specific Content Preprocessing
+// ============================================================================
+
+/**
+ * Result of applying domain truncation rules.
+ */
+interface DomainTruncationResult {
+  /** The processed content (possibly truncated) */
+  content: string;
+  /** Whether any truncation was applied */
+  wasTruncated: boolean;
+  /** The rule that was applied (if any) */
+  appliedRule: DomainTruncationRule | null;
+  /** Original length before truncation */
+  originalLength: number;
+  /** Length after truncation */
+  newLength: number;
+}
+
+/**
+ * Apply domain-specific content truncation rules BEFORE LLM cleaning.
+ * 
+ * This removes boilerplate sections (comments, forums, etc.) that waste
+ * LLM tokens and can cause timeouts on large wiki pages.
+ * 
+ * Rules are defined in CONTENT_PREPROCESSOR_CONFIG.DOMAIN_TRUNCATION_RULES.
+ * 
+ * @param content - Raw content to preprocess
+ * @param url - Source URL (used to match domain patterns)
+ * @returns Processed content and metadata about truncation
+ */
+export function applyDomainTruncation(content: string, url: string): DomainTruncationResult {
+  const originalLength = content.length;
+  const domain = extractDomain(url).toLowerCase();
+  
+  // Early return for malformed URLs (extractDomain returns '' on parse failure)
+  if (!domain) {
+    return {
+      content,
+      wasTruncated: false,
+      appliedRule: null,
+      originalLength,
+      newLength: originalLength,
+    };
+  }
+  
+  // Find matching rules for this domain (exact match or subdomain match)
+  const matchingRules = CONTENT_PREPROCESSOR_CONFIG.DOMAIN_TRUNCATION_RULES.filter((rule) => {
+    const pattern = rule.domainPattern.toLowerCase();
+    return domain === pattern || domain.endsWith('.' + pattern);
+  });
+  
+  if (matchingRules.length === 0) {
+    return {
+      content,
+      wasTruncated: false,
+      appliedRule: null,
+      originalLength,
+      newLength: originalLength,
+    };
+  }
+  
+  // Try each matching rule in order; apply the first one whose marker is found
+  let processedContent = content;
+  let appliedRule: DomainTruncationRule | null = null;
+  
+  for (const rule of matchingRules) {
+    // Case-insensitive search for the marker
+    const markerIndex = processedContent.toLowerCase().indexOf(rule.truncateAfter.toLowerCase());
+    
+    if (markerIndex !== -1) {
+      // Truncate everything from the marker onwards
+      processedContent = processedContent.slice(0, markerIndex).trim();
+      appliedRule = rule;
+      break;
+    }
+  }
+  
+  return {
+    content: processedContent,
+    wasTruncated: appliedRule !== null,
+    appliedRule,
+    originalLength,
+    newLength: processedContent.length,
+  };
 }
 
 // ============================================================================
@@ -1456,10 +1544,31 @@ export async function cleanSourceTwoStep(
   const twoStepStart = Date.now();
   
   try {
-    // Step 1: Clean content
-    log.debug(`[Step1:Clean] Starting: ${originalLength.toLocaleString()}c from ${domain}`);
+    // Step 0: Apply domain-specific preprocessing (remove comments, forums, etc.)
+    const truncationResult = applyDomainTruncation(source.content, source.url);
+    let preprocessedSource = source;
+    
+    if (truncationResult.wasTruncated) {
+      const reduction = ((1 - truncationResult.newLength / truncationResult.originalLength) * 100).toFixed(1);
+      log.info(
+        `[Preprocess] ${truncationResult.originalLength.toLocaleString()}c → ${truncationResult.newLength.toLocaleString()}c ` +
+        `(-${reduction}%) | ${truncationResult.appliedRule?.domainPattern}: ${truncationResult.appliedRule?.description} | ${source.url}`
+      );
+      // Create new source with preprocessed content
+      preprocessedSource = {
+        ...source,
+        content: truncationResult.content,
+      };
+    }
+    
+    // Use preprocessed length for accurate expansion/junk detection
+    // (comparing LLM output against what the LLM actually received, not the original with comments)
+    const preprocessedLength = preprocessedSource.content.length;
+
+    // Step 1: Clean content (using preprocessed source)
+    log.debug(`[Step1:Clean] Starting: ${preprocessedSource.content.length.toLocaleString()}c from ${domain}`);
     const step1Start = Date.now();
-    const cleanResult = await cleanContentOnly(source, deps);
+    const cleanResult = await cleanContentOnly(preprocessedSource, deps);
     const step1DurationMs = Date.now() - step1Start;
     const step1DurationStr = formatDuration(step1DurationMs);
 
@@ -1476,13 +1585,14 @@ export async function cleanSourceTwoStep(
 
     // Step 1 summary log with full URL and duration
     const cleanedLength = cleanResult.cleanedContent.length;
-    const compressionPct = ((1 - cleanedLength / originalLength) * 100).toFixed(0);
-    const preservedPct = ((cleanedLength / originalLength) * 100).toFixed(0);
+    // Use preprocessedLength for accurate compression stats (what LLM actually received)
+    const compressionPct = ((1 - cleanedLength / preprocessedLength) * 100).toFixed(0);
+    const preservedPct = ((cleanedLength / preprocessedLength) * 100).toFixed(0);
     const cleanCostStr = cleanResult.tokenUsage.actualCostUsd
       ? ` $${cleanResult.tokenUsage.actualCostUsd.toFixed(4)}`
       : '';
     log.info(
-      `[Step1:Clean] ${originalLength.toLocaleString()}c → ${cleanedLength.toLocaleString()}c ` +
+      `[Step1:Clean] ${preprocessedLength.toLocaleString()}c → ${cleanedLength.toLocaleString()}c ` +
       `(${compressionPct}% removed, ${preservedPct}% kept) ` +
       `Q:${cleanResult.qualityScore} R:${cleanResult.relevanceScore} ` +
       `(${step1DurationStr})${cleanCostStr} | ${source.url}`
@@ -1531,11 +1641,11 @@ export async function cleanSourceTwoStep(
       summaryResult?.tokenUsage ?? createEmptyTokenUsage()
     );
 
-    // Calculate junk ratio
-    const junkRatio = 1 - cleanResult.cleanedContent.length / originalLength;
+    // Calculate junk ratio (use preprocessedLength for accuracy - what LLM received vs output)
+    const junkRatio = 1 - cleanResult.cleanedContent.length / preprocessedLength;
 
-    // Extract images with validation and context (pass source URL for relative URL resolution)
-    const imageResult = extractImagesFromSource(source.content, cleanResult.cleanedContent, source.url);
+    // Extract images with validation and context (use preprocessedSource to exclude images from removed sections)
+    const imageResult = extractImagesFromSource(preprocessedSource.content, cleanResult.cleanedContent, source.url);
     if (imageResult.discardedCount > 0) {
       // Log at warn level if high hallucination rate (>50% of images discarded)
       const hallucinationRate = imageResult.parsedCount > 0
@@ -1569,12 +1679,13 @@ export async function cleanSourceTwoStep(
     };
 
     // Warn if content EXPANDED (suspicious - LLM may be hallucinating/adding content)
+    // Use preprocessedLength for accurate detection (compare LLM output vs what LLM received)
     const expansionThreshold = 110; // 10% tolerance for formatting changes
-    if (cleanResult.cleanedContent.length > originalLength * (expansionThreshold / 100)) {
+    if (cleanResult.cleanedContent.length > preprocessedLength * (expansionThreshold / 100)) {
       log.warn(
-        `[Cleaner] SUSPICIOUS EXPANSION: content grew from ${originalLength.toLocaleString()} to ` +
-        `${cleanResult.cleanedContent.length.toLocaleString()}c (${preservedPct}% of original). ` +
-        `LLM may be adding content that wasn't in the original. | ${source.url}`
+        `[Cleaner] SUSPICIOUS EXPANSION: content grew from ${preprocessedLength.toLocaleString()} to ` +
+        `${cleanResult.cleanedContent.length.toLocaleString()}c (${preservedPct}% of input). ` +
+        `LLM may be adding content that wasn't in the input. | ${source.url}`
       );
     }
     
