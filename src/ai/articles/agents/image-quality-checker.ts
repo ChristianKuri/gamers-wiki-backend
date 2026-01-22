@@ -54,6 +54,8 @@ export interface QualityValidationOptions {
   readonly signal?: AbortSignal;
   /** Force enable validation even if globally disabled (for hero images) */
   readonly forceEnabled?: boolean;
+  /** Image URL for logging (helps verify watermark/logo detection) */
+  readonly imageUrl?: string;
 }
 
 /**
@@ -208,10 +210,11 @@ export async function validateImageQuality(
     // Determine if image passed validation
     const passed = !response.hasWatermark && response.clarityScore >= minClarityScore;
 
+    const urlSuffix = options.imageUrl ? ` | ${options.imageUrl}` : '';
     log?.info(
       `[QualityChecker] Validation result: ` +
       `watermark=${response.hasWatermark}, UI=${response.hasUIOverlay}, ` +
-      `clarity=${response.clarityScore}, passed=${passed}`
+      `clarity=${response.clarityScore}, passed=${passed}${urlSuffix}`
     );
 
     return {

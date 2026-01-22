@@ -94,7 +94,8 @@ export interface QualityValidatorResult {
  */
 export type QualityValidator = (
   buffer: Buffer,
-  mimeType: string
+  mimeType: string,
+  imageUrl?: string
 ) => Promise<QualityValidatorResult>;
 
 /**
@@ -236,7 +237,7 @@ export async function processHeroCandidates(
           // Run quality validation if provided (for hero images)
           if (qualityValidator) {
             logger?.debug(`[CandidateProcessor] Hero candidate ${i}: running quality validation`);
-            const qualityResult = await qualityValidator(downloadResult.buffer, downloadResult.mimeType);
+            const qualityResult = await qualityValidator(downloadResult.buffer, downloadResult.mimeType, candidate.image.url);
             if (!qualityResult.passed) {
               logger?.debug(
                 `[CandidateProcessor] Hero candidate ${i} failed quality check: ${qualityResult.reason ?? 'unknown'}`
@@ -246,7 +247,7 @@ export async function processHeroCandidates(
             }
             logger?.debug(`[CandidateProcessor] Hero candidate ${i} passed quality validation`);
           }
-          
+
           logger?.info(
             `[CandidateProcessor] Hero candidate ${i} selected: ${dims.width}x${dims.height} (IGDB)`
           );
@@ -303,7 +304,7 @@ export async function processHeroCandidates(
           // Run quality validation if provided (for hero images)
           if (qualityValidator) {
             logger?.debug(`[CandidateProcessor] Hero candidate ${i}: running quality validation`);
-            const qualityResult = await qualityValidator(downloadResult.buffer, downloadResult.mimeType);
+            const qualityResult = await qualityValidator(downloadResult.buffer, downloadResult.mimeType, candidate.image.url);
             if (!qualityResult.passed) {
               logger?.debug(
                 `[CandidateProcessor] Hero candidate ${i} failed quality check: ${qualityResult.reason ?? 'unknown'}`
@@ -313,7 +314,7 @@ export async function processHeroCandidates(
             }
             logger?.debug(`[CandidateProcessor] Hero candidate ${i} passed quality validation`);
           }
-          
+
           logger?.info(
             `[CandidateProcessor] Hero candidate ${i} selected: ${dims.width}x${dims.height}`
           );
@@ -468,7 +469,7 @@ export async function processSectionCandidates(
         // Run quality validation if provided (watermark/clarity check)
         if (qualityValidator) {
           logger?.debug(`[CandidateProcessor] Section candidate ${i}: running quality validation`);
-          const qualityResult = await qualityValidator(downloadResult.buffer, downloadResult.mimeType);
+          const qualityResult = await qualityValidator(downloadResult.buffer, downloadResult.mimeType, candidate.image.url);
           if (!qualityResult.passed) {
             logger?.debug(
               `[CandidateProcessor] Section candidate ${i} failed quality check: ${qualityResult.reason ?? 'unknown'}`

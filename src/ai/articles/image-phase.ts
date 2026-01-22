@@ -394,13 +394,13 @@ export async function runImagePhase(
   let heroQualityTokenUsage: TokenUsage = { input: 0, output: 0 };
   if (IMAGE_QUALITY_VALIDATION_CONFIG.ENABLED_FOR_HERO) {
     log?.debug(`${logPrefix} Hero quality validation enabled`);
-    heroQualityValidator = async (buffer: Buffer, mimeType: string) => {
+    heroQualityValidator = async (buffer: Buffer, mimeType: string, imageUrl?: string) => {
       const { result, tokenUsage } = await validateImageQuality(buffer, {
         model,
         generateText,
         logger: log,
         signal,
-      }, { forceEnabled: true });
+      }, { forceEnabled: true, imageUrl });
       // Track token usage
       heroQualityTokenUsage = addTokenUsage(heroQualityTokenUsage, tokenUsage);
       return {
@@ -420,13 +420,13 @@ export async function runImagePhase(
   let sectionQualityTokenUsage: TokenUsage = { input: 0, output: 0 };
   if (IMAGE_QUALITY_VALIDATION_CONFIG.ENABLED) {
     log?.debug(`${logPrefix} Section quality validation enabled`);
-    sectionQualityValidator = async (buffer: Buffer, mimeType: string) => {
+    sectionQualityValidator = async (buffer: Buffer, mimeType: string, imageUrl?: string) => {
       const { result, tokenUsage } = await validateImageQuality(buffer, {
         model,
         generateText,
         logger: log,
         signal,
-      });
+      }, { imageUrl });
       sectionQualityTokenUsage = addTokenUsage(sectionQualityTokenUsage, tokenUsage);
       return {
         passed: result.passed,

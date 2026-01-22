@@ -823,7 +823,7 @@ export const IMAGE_QUALITY_VALIDATION_CONFIG = {
    * Maximum candidates to validate with vision per section.
    * Only top candidates (after dimension validation) are checked.
    */
-  MAX_CANDIDATES_PER_SECTION: 10,
+  MAX_CANDIDATES_PER_SECTION: 15,
   /**
    * Minimum clarity score to accept (0-100).
    * Images below this are rejected for blur/quality issues.
