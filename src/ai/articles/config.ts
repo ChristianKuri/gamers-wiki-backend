@@ -86,6 +86,11 @@ export const UNIFIED_EXCLUDED_DOMAINS = new Set([
   'boards.4chan.org',
   'resetera.com', // Gaming forum, low quality (25 avg score in DB)
   'forum.psnprofiles.com', // Trophy hunting forum
+  'neogaf.com', // Gaming forum, UGC
+  'famiboards.com', // Gaming forum, UGC
+  'bluegartr.com', // FFXI/XIV forum, UGC
+  'talking-time.net', // Gaming forum, UGC
+  'mail.rpgcodex.net', // RPG forum, UGC
 
   // === OFF_TOPIC: Generic tech (not gaming-focused) ===
   'techradar.com',
