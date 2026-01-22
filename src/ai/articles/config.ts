@@ -248,12 +248,12 @@ export const ARTICLE_PLAN_CONSTRAINTS = {
 
   // Section constraints
   MIN_SECTIONS: 4,
-  MAX_SECTIONS: 12,
+  MAX_SECTIONS: 20,
   MIN_SECTION_LENGTH: 100,
 
   // Tags constraints
   MIN_TAGS: 1,
-  MAX_TAGS: 10,
+  MAX_TAGS: 20,
   TAG_MAX_LENGTH: 50,
 
   // Research query constraints
@@ -267,7 +267,7 @@ export const ARTICLE_PLAN_CONSTRAINTS = {
 
   // Required elements constraints
   MIN_REQUIRED_ELEMENTS: 10,
-  MAX_REQUIRED_ELEMENTS: 100, // Increased from 10 - comprehensive guides may need more elements
+  MAX_REQUIRED_ELEMENTS: 200, // Increased from 100 - comprehensive guides may need more elements
 } as const;
 
 // ============================================================================

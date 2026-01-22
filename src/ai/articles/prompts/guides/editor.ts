@@ -31,7 +31,11 @@ Only AFTER extraction, organize elements into sections.
 
 === ELEMENT FORMAT (STRICT) ===
 
-Format: "[Type]: [NAME] ([PARENT LOCATION] > [SPECIFIC LOCATION], [HOW/CONTROLS])"
+Format for Physical Items (Items, NPCs, Locations):
+"[Type]: [NAME] ([PARENT LOCATION] > [SPECIFIC LOCATION], [HOW/CONTROLS])"
+
+Format for Abstract Elements (Mechanics, Strategies, Attacks):
+"[Type]: [NAME] ([TRIGGER/CONTEXT] > [EFFECT/DETAILS], [COUNTER/HOW])"
 
 CONTROLS FORMAT — Use [X] brackets with action verbs:
 ✅ "[L] hold to activate → [A] press to grab → [R] hold + D-pad to rotate"
@@ -81,7 +85,7 @@ ${ctx.topSourcesSummary ? `\n${ctx.topSourcesSummary}\n` : ''}
 🎯 GOAL: Extract EVERY useful fact as a requiredElement — be exhaustive!
 You have detailed summaries, key facts, and data points from the best sources.
 Mine them COMPLETELY. Every fact, number, name, mechanic, and strategy becomes a requiredElement.
-Don't stop at 20-30 — comprehensive guides typically have 40-60+ requiredElements.
+Don't stop at 30-40 — comprehensive guides typically have 40-80+ requiredElements.
 requiredElements are the core of our guide. If you miss something, the guide will be incomplete, dont miss anything,
 make sure to include everything you can find in the research, its better to have more than less.
 
@@ -90,11 +94,15 @@ Scan ALL research above (briefings, detailed summaries, top sources) and identif
 □ ITEMS: Armor pieces, weapons, shields, consumables, key items, materials
   → For each: What's the EXACT name? WHERE is it? HOW do you get it?
   → Don't miss: crafting materials, upgrade items, consumables for buffs
-  
-□ ABILITIES/SKILLS: Powers, skills, unlockable moves, party member abilities
-  → For each: What's the name? WHO has it? WHAT are the EXACT controls?
-  → Don't miss: passive skills, buff abilities, combo skills between characters
-  
+
+□ UNLOCKABLE ABILITIES: Permanent upgrades, traversal skills, Metroidvania abilities
+  → For each: What's the name? HOW do you unlock it? WHAT does it do?
+  → Don't miss: story-gated abilities, optional traversal upgrades
+
+□ COMBAT SKILLS/LOADOUT: Active skills, spells, moves, specific gear for builds, passive skills, buff abilities, combo skills between characters
+  → For each: What's the specific Skill name? WHO uses it? WHY is it recommended?
+  → Don't miss: synergy skills, status effect skills, specific Pictos/Runes
+
 □ LOCATIONS: Shrines, dungeons, caves, landmarks, settlements, portals
   → For each: What's the name? WHERE is it relative to known landmarks?
   → Don't miss: hidden areas, prerequisite locations, fast travel points
@@ -106,9 +114,14 @@ Scan ALL research above (briefings, detailed summaries, top sources) and identif
 □ MECHANICS: Combat systems, boss attack patterns, phase transitions
   → For each: What's the mechanic? What's the VISUAL CUE? HOW do you counter it?
   → Don't miss: timing windows, button inputs, phase thresholds (% HP)
-  
+
+□ BOSS VARIANTS: Hard modes, post-game versions, or phase-specific forms
+  → For each: What's the variant name? HOW is it different? (e.g., "Simon, the Divergent Star")
+  → Don't miss: unlock conditions for the variant, new mechanics
+
 □ STRATEGIES: Specific tactics, cheese methods, optimal rotations
   → For each: What's the strategy? WHO executes it? WHAT's the sequence?
+  → Break down complex strategies into ATOMIC steps (e.g. "Step 1: Cast X", "Step 2: Equip Y")
   → Don't miss: setup steps, fallback plans, reset conditions
 
 □ REQUIREMENTS/PREREQUISITES: Levels, gear, quests, unlocks needed
@@ -122,14 +135,18 @@ Scan ALL research above (briefings, detailed summaries, top sources) and identif
   → For each: What's the tip? WHO can use it? WHAT's the sequence?
   → Don't miss: hidden mechanics, secrets, shortcuts, tips, tricks, etc.
 
+□ PHASES: If the subject has multiple phases, each phase must have its own sections, unless the content per phase is very small (consider carefully).
+  → For each: What's the phase name? HOW is it different?
+  → Don't miss: unlock conditions for the phase, new mechanics
+
 IMPORTANT: But dont limit yourself to this list, if you find something else that is useful, include it.
 
 
 📊 HIGHLY IMPORTANT: requiredElements SANITY CHECK (if you have fewer, you likely missed something):
-• Boss guide (multi-phase): AT LEAST expect 35-50+ (phases, mechanics, counters, setup, rewards)
-• Build/loadout guide: AT LEAST expect 25-40 (gear, skills, stats, synergies)
-• Area exploration: AT LEAST expect 20-35 (locations, items, NPCs, secrets)
-• Simple mechanic tip: AT LEAST expect 15-25 (core mechanic + variations)
+• Boss guide (multi-phase): AT LEAST expect 45-70+ (phases, mechanics, counters, setup, rewards)
+• Build/loadout guide: AT LEAST expect 35-50 (gear, skills, stats, synergies)
+• Area exploration: AT LEAST expect 30-45 (locations, items, NPCs, secrets)
+• Simple mechanic tip: AT LEAST expect 25-35 (core mechanic + variations)
 
 ⚠️ These are MINIMUMS based on typical content depth, not quotas!
 The goal is COMPLETE extraction. If research contains 60 unique facts, include 60.
