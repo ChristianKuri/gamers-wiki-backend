@@ -1076,6 +1076,12 @@ export const CONTENT_PREPROCESSOR_CONFIG = {
       truncateAfter: 'Was this guide helpful?',
       description: 'Remove IGN feedback and footer sections',
     },
+    {
+      // PowerPyx trophy/collectible guides have comments section (h3 header)
+      domainPattern: 'powerpyx.com',
+      truncateAfter: '### Comments',
+      description: 'Remove PowerPyx comments section',
+    },
   ] as const satisfies readonly DomainTruncationRule[],
 } as const;
 
@@ -1113,6 +1119,18 @@ export const CLEANER_CONFIG = {
    * Longest successful: ~20s. Set to 60s (3x buffer).
    */
   STEP2_TIMEOUT_MS: 60_000,
+  /**
+   * Extended timeout for Step 2 when content exceeds STEP2_LARGE_CONTENT_THRESHOLD.
+   * Large content (30k+ chars) consistently times out at 60s even after preprocessing.
+   * 120s provides 2x buffer for these edge cases.
+   */
+  STEP2_TIMEOUT_LARGE_MS: 120_000,
+  /**
+   * Content length threshold (chars) to trigger extended timeout for Step 2.
+   * Based on E2E observations: 30k+ char content after preprocessing still times out.
+   * Content below this uses STEP2_TIMEOUT_MS, above uses STEP2_TIMEOUT_LARGE_MS.
+   */
+  STEP2_LARGE_CONTENT_THRESHOLD: 30_000,
   /**
    * Maximum retry attempts for cleaner LLM calls.
    *
@@ -1607,6 +1625,8 @@ function validateConfiguration(): void {
   validatePositive(CLEANER_CONFIG.BATCH_SIZE, 'CLEANER_CONFIG.BATCH_SIZE');
   validatePositive(CLEANER_CONFIG.STEP1_TIMEOUT_MS, 'CLEANER_CONFIG.STEP1_TIMEOUT_MS');
   validatePositive(CLEANER_CONFIG.STEP2_TIMEOUT_MS, 'CLEANER_CONFIG.STEP2_TIMEOUT_MS');
+  validatePositive(CLEANER_CONFIG.STEP2_TIMEOUT_LARGE_MS, 'CLEANER_CONFIG.STEP2_TIMEOUT_LARGE_MS');
+  validatePositive(CLEANER_CONFIG.STEP2_LARGE_CONTENT_THRESHOLD, 'CLEANER_CONFIG.STEP2_LARGE_CONTENT_THRESHOLD');
   validateNonNegative(CLEANER_CONFIG.MAX_RETRIES, 'CLEANER_CONFIG.MAX_RETRIES');
   validateNonNegative(CLEANER_CONFIG.MIN_QUALITY_FOR_STORAGE, 'CLEANER_CONFIG.MIN_QUALITY_FOR_STORAGE');
   validateNonNegative(CLEANER_CONFIG.MIN_QUALITY_FOR_RESULTS, 'CLEANER_CONFIG.MIN_QUALITY_FOR_RESULTS');

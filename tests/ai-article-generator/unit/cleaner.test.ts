@@ -605,6 +605,32 @@ In This Guide
 Related articles here.
 `;
 
+  const POWERPYX_CONTENT = `
+# Trophy Guide
+
+## Collectibles
+
+Location 1: Find item here.
+Location 2: Find item there.
+
+## Boss Strategy
+
+Phase 1: Attack patterns.
+Phase 2: More patterns.
+
+### Comments
+
+User1 says:
+Great guide!
+
+User2 says:
+Thanks for this!
+
+### Leave a Reply
+
+Your email address will not be published.
+`;
+
   describe('domain matching', () => {
     it('returns unchanged content when no domain matches', () => {
       const result = applyDomainTruncation(SAMPLE_CONTENT, 'https://example.com/page');
@@ -689,6 +715,18 @@ Related articles here.
       expect(result.content).not.toContain('In This Guide');
       expect(result.content).toContain('Walkthrough Guide');
       expect(result.content).toContain('Tips');
+    });
+
+    it('truncates content after powerpyx marker', () => {
+      const result = applyDomainTruncation(POWERPYX_CONTENT, 'https://www.powerpyx.com/game-trophy-guide/');
+      
+      expect(result.wasTruncated).toBe(true);
+      expect(result.content).not.toContain('### Comments');
+      expect(result.content).not.toContain('User1 says');
+      expect(result.content).not.toContain('Leave a Reply');
+      expect(result.content).toContain('Trophy Guide');
+      expect(result.content).toContain('Boss Strategy');
+      expect(result.appliedRule?.domainPattern).toBe('powerpyx.com');
     });
 
     it('performs case-insensitive marker search', () => {

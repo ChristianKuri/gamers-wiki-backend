@@ -1107,15 +1107,21 @@ export async function extractSummariesFromCleanedContent(
   const log = deps.logger ?? createPrefixedLogger('[Cleaner]');
 
   // Skip if content is too short
-  if (cleanedContent.length < CLEANER_CONFIG.MIN_CLEANED_CHARS) {
-    log.debug(`Content too short for summary extraction: ${cleanedContent.length} chars`);
+  const inputLength = cleanedContent.length;
+  if (inputLength < CLEANER_CONFIG.MIN_CLEANED_CHARS) {
+    log.debug(`Content too short for summary extraction: ${inputLength} chars`);
     return null;
   }
+
+  // Use extended timeout for large content that consistently times out at 60s
+  const timeoutMs = inputLength >= CLEANER_CONFIG.STEP2_LARGE_CONTENT_THRESHOLD
+    ? CLEANER_CONFIG.STEP2_TIMEOUT_LARGE_MS
+    : CLEANER_CONFIG.STEP2_TIMEOUT_MS;
 
   try {
     const result = await withRetry(
       async () => {
-        const timeoutSignal = AbortSignal.timeout(CLEANER_CONFIG.STEP2_TIMEOUT_MS);
+        const timeoutSignal = AbortSignal.timeout(timeoutMs);
         const signal = deps.signal
           ? AbortSignal.any([deps.signal, timeoutSignal])
           : timeoutSignal;
@@ -1392,10 +1398,15 @@ async function extractEnhancedSummaries(
     return null;
   }
 
+  // Use extended timeout for large content that consistently times out at 60s
+  const timeoutMs = inputLength >= CLEANER_CONFIG.STEP2_LARGE_CONTENT_THRESHOLD
+    ? CLEANER_CONFIG.STEP2_TIMEOUT_LARGE_MS
+    : CLEANER_CONFIG.STEP2_TIMEOUT_MS;
+
   try {
     const result = await withRetry(
       async () => {
-        const timeoutSignal = AbortSignal.timeout(CLEANER_CONFIG.STEP2_TIMEOUT_MS);
+        const timeoutSignal = AbortSignal.timeout(timeoutMs);
         const signal = deps.signal
           ? AbortSignal.any([deps.signal, timeoutSignal])
           : timeoutSignal;
