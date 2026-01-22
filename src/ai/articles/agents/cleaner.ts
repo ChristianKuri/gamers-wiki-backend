@@ -1964,6 +1964,15 @@ export async function preFilterSingleSource(
 }
 
 /**
+ * Check if a domain has a forum subdomain (forum.* or forums.*).
+ * These are user-generated content and should be filtered out.
+ */
+function isForumSubdomain(domain: string): boolean {
+  const lowerDomain = domain.toLowerCase();
+  return lowerDomain.startsWith('forum.') || lowerDomain.startsWith('forums.');
+}
+
+/**
  * Pre-filter multiple sources in parallel.
  * Separates relevant from irrelevant sources before full cleaning.
  * Logs full URLs of filtered sources for debugging.
@@ -1982,23 +1991,73 @@ export async function preFilterSourcesBatch(
     return { relevant: [], irrelevant: [], results: [], tokenUsage: createEmptyTokenUsage() };
   }
 
-  log.info(`Pre-filtering ${sources.length} sources for relevance...`);
+  // Step 0: Filter out forum subdomains (forum.* / forums.*) before LLM pre-filter
+  // These are user-generated content with high misinformation risk
+  const forumFiltered: Array<{
+    source: RawSourceInput;
+    relevanceToGaming: number;
+    relevanceToArticle: number;
+    reason: string;
+  }> = [];
+  const forumFilterResults: PreFilterSingleResult[] = [];
+  const nonForumSources: RawSourceInput[] = [];
+
+  for (const source of sources) {
+    const domain = extractDomain(source.url);
+    if (isForumSubdomain(domain)) {
+      log.info(`[PreFilter] Skipping forum subdomain (UGC): ${source.url}`);
+      forumFiltered.push({
+        source,
+        relevanceToGaming: 0,
+        relevanceToArticle: 0,
+        reason: 'Forum subdomain (forum.*/forums.*) - user-generated content with misinformation risk',
+      });
+      forumFilterResults.push({
+        url: source.url,
+        domain,
+        title: source.title,
+        relevanceToGaming: 0,
+        relevanceToArticle: 0,
+        reason: 'Forum subdomain (forum.*/forums.*) - user-generated content with misinformation risk',
+        contentType: 'forum',
+        tokenUsage: createEmptyTokenUsage(),
+      });
+    } else {
+      nonForumSources.push(source);
+    }
+  }
+
+  if (forumFiltered.length > 0) {
+    log.info(`[PreFilter] Filtered ${forumFiltered.length} forum subdomain source(s) before LLM pre-filter`);
+  }
+
+  // If all sources were forum subdomains, return early
+  if (nonForumSources.length === 0) {
+    return { 
+      relevant: [], 
+      irrelevant: forumFiltered, 
+      results: forumFilterResults, 
+      tokenUsage: createEmptyTokenUsage() 
+    };
+  }
+
+  log.info(`Pre-filtering ${nonForumSources.length} sources for relevance...`);
 
   // Run all pre-filters in parallel (they're cheap)
   // Use Promise.allSettled to prevent one hanging request from blocking the entire batch
   const settledResults = await Promise.allSettled(
-    sources.map((source) => preFilterSingleSource(source, deps))
+    nonForumSources.map((source) => preFilterSingleSource(source, deps))
   );
 
   // Extract results from settled promises, handling both fulfilled and rejected
   let prefilterFailures = 0;
-  const results = settledResults.map((settled, index) => {
+  const llmResults = settledResults.map((settled, index) => {
     if (settled.status === 'fulfilled') {
       return settled.value;
     } else {
       // If pre-filter promise rejects (shouldn't happen due to try-catch, but handle it)
       prefilterFailures++;
-      const source = sources[index];
+      const source = nonForumSources[index];
       const errorMsg = settled.reason instanceof Error ? settled.reason.message : String(settled.reason);
       log.warn(`Pre-filter promise rejected unexpectedly for ${source.url}: ${errorMsg}`);
       // Return fallback result (assume relevant to avoid filtering out potentially good content)
@@ -2017,7 +2076,7 @@ export async function preFilterSourcesBatch(
   });
 
   if (prefilterFailures > 0) {
-    log.warn(`Pre-filter: ${prefilterFailures}/${sources.length} sources failed (Promise.allSettled fallback, assigned relevance=50)`);
+    log.warn(`Pre-filter: ${prefilterFailures}/${nonForumSources.length} sources failed (Promise.allSettled fallback, assigned relevance=50)`);
   }
 
   // Use thresholds from deps or defaults
@@ -2030,12 +2089,12 @@ export async function preFilterSourcesBatch(
     relevanceToGaming: number;
     relevanceToArticle: number;
     reason: string;
-  }> = [];
+  }> = [...forumFiltered]; // Start with forum-filtered sources
   let totalTokenUsage = createEmptyTokenUsage();
 
-  for (let i = 0; i < sources.length; i++) {
-    const source = sources[i];
-    const result = results[i];
+  for (let i = 0; i < nonForumSources.length; i++) {
+    const source = nonForumSources[i];
+    const result = llmResults[i];
     totalTokenUsage = addTokenUsage(totalTokenUsage, result.tokenUsage);
 
     // Pass if BOTH scores meet minimum thresholds
@@ -2054,12 +2113,15 @@ export async function preFilterSourcesBatch(
     }
   }
 
+  // Merge all results (forum-filtered + LLM pre-filtered)
+  const allResults = [...forumFilterResults, ...llmResults];
+
   // Log results with FULL URLs
   const costStr = totalTokenUsage.actualCostUsd
     ? ` ($${totalTokenUsage.actualCostUsd.toFixed(4)})`
     : '';
   log.info(
-    `Pre-filter: ${relevant.length} relevant, ${irrelevant.length} irrelevant${costStr}`
+    `Pre-filter: ${relevant.length} relevant, ${irrelevant.length} irrelevant (${forumFiltered.length} forum subdomains)${costStr}`
   );
 
   // Log each filtered source with FULL URL for debugging
@@ -2073,7 +2135,7 @@ export async function preFilterSourcesBatch(
     }
   }
 
-  return { relevant, irrelevant, results, tokenUsage: totalTokenUsage };
+  return { relevant, irrelevant, results: allResults, tokenUsage: totalTokenUsage };
 }
 
 // ============================================================================
