@@ -37,6 +37,7 @@
  */
 
 import { createPrefixedLogger } from '../../utils/logger';
+import { logFetchError } from './error-utils';
 
 const log = createPrefixedLogger('[Exa]');
 
@@ -535,19 +536,12 @@ export async function exaSearch(
     const json = (await res.json()) as unknown;
     return parseExaResponse(cleanedQuery, json);
   } catch (err) {
-    // Log timeout/network errors with query context for debugging
-    const errMsg = err instanceof Error ? err.message : String(err);
-    const isTimeout = errMsg.includes('abort') || errMsg.includes('timeout');
-    const isNetwork = errMsg.includes('fetch failed') || errMsg.includes('ECONNRESET');
-    
-    if (isTimeout) {
-      log.warn(`Timeout (${timeoutMs}ms) for query: "${cleanedQuery.slice(0, 60)}..."`);
-    } else if (isNetwork) {
-      log.warn(`Network error for query: "${cleanedQuery.slice(0, 60)}..." - ${errMsg}`);
-    } else {
-      log.warn(`Error for query: "${cleanedQuery.slice(0, 60)}..." - ${errMsg}`);
-    }
-    
+    logFetchError({
+      err,
+      context: cleanedQuery,
+      timeoutMs,
+      warn: log.warn,
+    });
     return { query: cleanedQuery, results: [] };
   } finally {
     clearTimeout(timer);
@@ -635,19 +629,14 @@ export async function exaFindSimilar(
     const json = (await res.json()) as unknown;
     return parseExaResponse(cleanedUrl, json);
   } catch (err) {
-    // Log timeout/network errors with URL context for debugging
-    const errMsg = err instanceof Error ? err.message : String(err);
-    const isTimeout = errMsg.includes('abort') || errMsg.includes('timeout');
-    const isNetwork = errMsg.includes('fetch failed') || errMsg.includes('ECONNRESET');
-    
-    if (isTimeout) {
-      log.warn(`[FindSimilar] Timeout (${timeoutMs}ms) for URL: "${cleanedUrl.slice(0, 60)}..."`);
-    } else if (isNetwork) {
-      log.warn(`[FindSimilar] Network error for URL: "${cleanedUrl.slice(0, 60)}..." - ${errMsg}`);
-    } else {
-      log.warn(`[FindSimilar] Error for URL: "${cleanedUrl.slice(0, 60)}..." - ${errMsg}`);
-    }
-    
+    logFetchError({
+      err,
+      context: cleanedUrl,
+      timeoutMs,
+      prefix: '[FindSimilar]',
+      contextLabel: 'URL',
+      warn: log.warn,
+    });
     return { query: cleanedUrl, results: [] };
   } finally {
     clearTimeout(timer);

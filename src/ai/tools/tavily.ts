@@ -23,6 +23,7 @@
  */
 
 import { createPrefixedLogger } from '../../utils/logger';
+import { logFetchError } from './error-utils';
 
 const log = createPrefixedLogger('[Tavily]');
 
@@ -264,19 +265,12 @@ export async function tavilySearch(
     const json = (await res.json()) as unknown;
     return parseTavilyResponse(cleanedQuery, json);
   } catch (err) {
-    // Log timeout/network errors with query context for debugging
-    const errMsg = err instanceof Error ? err.message : String(err);
-    const isTimeout = errMsg.includes('abort') || errMsg.includes('timeout');
-    const isNetwork = errMsg.includes('fetch failed') || errMsg.includes('ECONNRESET');
-    
-    if (isTimeout) {
-      log.warn(`Timeout (${timeoutMs}ms) for query: "${cleanedQuery.slice(0, 60)}..."`);
-    } else if (isNetwork) {
-      log.warn(`Network error for query: "${cleanedQuery.slice(0, 60)}..." - ${errMsg}`);
-    } else {
-      log.warn(`Error for query: "${cleanedQuery.slice(0, 60)}..." - ${errMsg}`);
-    }
-    
+    logFetchError({
+      err,
+      context: cleanedQuery,
+      timeoutMs,
+      warn: log.warn,
+    });
     return { query: cleanedQuery, answer: null, results: [] };
   } finally {
     clearTimeout(timer);
