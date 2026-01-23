@@ -722,6 +722,30 @@ async function writeSection(
     section.headline
   );
 
+  // Log research context stats (always log with origin breakdown)
+  const { stats, discardedSources } = researchResult;
+  const discardInfo = 
+    (stats.duplicatesRemoved > 0 ? `, ${stats.duplicatesRemoved} duplicates removed` : '') +
+    (stats.limitExceeded > 0 ? `, ${stats.limitExceeded} exceeded limit` : '');
+  
+  log.info(
+    `[Section "${section.headline}"] Research context: ` +
+    `${stats.used}/${stats.totalAvailable} sources ` +
+    `(${stats.fromScout} Scout, ${stats.fromSpecialist} Specialist)` +
+    discardInfo
+  );
+  
+  // Detailed log for each discarded source (debug level)
+  if (discardedSources.length > 0) {
+    for (const discarded of discardedSources) {
+      const positionInfo = discarded.position ? ` (position: ${discarded.position})` : '';
+      log.debug(
+        `  Discarded [${discarded.reason}]: "${discarded.title}" (${discarded.url}) ` +
+        `- query: "${discarded.query.slice(0, 50)}..."${positionInfo}`
+      );
+    }
+  }
+
   const sectionContext: SpecialistSectionContext = {
     sectionIndex,
     totalSections: plan.sections.length,

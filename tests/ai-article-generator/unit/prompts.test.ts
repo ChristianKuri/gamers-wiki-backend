@@ -354,6 +354,15 @@ describe('Specialist Prompts', () => {
 
       expect(result.context).toBe('');
       expect(result.sourceUsage).toEqual([]);
+      expect(result.discardedSources).toEqual([]);
+      expect(result.stats).toEqual({
+        totalAvailable: 0,
+        used: 0,
+        duplicatesRemoved: 0,
+        limitExceeded: 0,
+        fromScout: 0,
+        fromSpecialist: 0,
+      });
     });
 
     it('formats research results with query and category', () => {
@@ -427,6 +436,147 @@ describe('Specialist Prompts', () => {
       expect(result.sourceUsage.length).toBeGreaterThan(0);
       expect(result.sourceUsage[0].section).toBe('Test Section');
       expect(result.sourceUsage[0].query).toBe('test query');
+    });
+
+    it('deduplicates URLs across multiple research results and tracks discarded sources', () => {
+      const research: CategorizedSearchResult[] = [
+        {
+          query: 'query1',
+          answer: 'Answer 1',
+          results: [
+            { title: 'Duplicate Source', url: 'https://wiki.com/boss', content: 'Content A' },
+            { title: 'Unique 1', url: 'https://unique1.com', content: 'Unique content 1' },
+          ],
+          category: 'section-specific',
+          timestamp: Date.now(),
+        },
+        {
+          query: 'query2',
+          answer: 'Answer 2',
+          results: [
+            { title: 'Duplicate Source', url: 'https://wiki.com/boss', content: 'Content B' },
+            { title: 'Unique 2', url: 'https://unique2.com', content: 'Unique content 2' },
+          ],
+          category: 'overview',
+          timestamp: Date.now(),
+        },
+      ];
+
+      const result = buildResearchContext(research, 5, 600);
+
+      // Should only appear once (first occurrence)
+      const matches = result.context.match(/wiki\.com\/boss/g);
+      expect(matches?.length).toBe(1);
+
+      // Both unique sources should appear
+      expect(result.context).toContain('unique1.com');
+      expect(result.context).toContain('unique2.com');
+
+      // Source usage should also only track the first occurrence
+      const wikiUsage = result.sourceUsage.filter(s => s.url === 'https://wiki.com/boss');
+      expect(wikiUsage.length).toBe(1);
+
+      // Check stats
+      expect(result.stats.totalAvailable).toBe(4);
+      expect(result.stats.used).toBe(3);
+      expect(result.stats.duplicatesRemoved).toBe(1);
+      expect(result.stats.limitExceeded).toBe(0);
+      // query1 is 'section-specific' (specialist) with 2 sources
+      // query2 is 'overview' (scout) with 1 source after dedup
+      expect(result.stats.fromScout).toBe(1);
+      expect(result.stats.fromSpecialist).toBe(2);
+
+      // Check discarded sources
+      expect(result.discardedSources).toHaveLength(1);
+      expect(result.discardedSources[0]).toEqual({
+        url: 'https://wiki.com/boss',
+        title: 'Duplicate Source',
+        query: 'query2',
+        reason: 'duplicate_url',
+      });
+    });
+
+    it('tracks discarded sources due to exceeded limit', () => {
+      const searchResult: CategorizedSearchResult = {
+        query: 'test query',
+        answer: 'Test answer',
+        results: [
+          { title: 'R1', url: 'https://1.com', content: 'C1' },
+          { title: 'R2', url: 'https://2.com', content: 'C2' },
+          { title: 'R3', url: 'https://3.com', content: 'C3' },
+          { title: 'R4', url: 'https://4.com', content: 'C4' },
+          { title: 'R5', url: 'https://5.com', content: 'C5' },
+          { title: 'R6', url: 'https://6.com', content: 'C6' },
+          { title: 'R7', url: 'https://7.com', content: 'C7' },
+        ],
+        category: 'section-specific',
+        timestamp: Date.now(),
+      };
+
+      // Limit to 5 results
+      const result = buildResearchContext([searchResult], 5, 600);
+
+      // Check stats
+      expect(result.stats.totalAvailable).toBe(7);
+      expect(result.stats.used).toBe(5);
+      expect(result.stats.duplicatesRemoved).toBe(0);
+      expect(result.stats.limitExceeded).toBe(2);
+      // All sources are from 'section-specific' category (specialist)
+      expect(result.stats.fromScout).toBe(0);
+      expect(result.stats.fromSpecialist).toBe(5);
+
+      // Check discarded sources
+      expect(result.discardedSources).toHaveLength(2);
+      
+      const exceededSources = result.discardedSources.filter(d => d.reason === 'exceeded_limit');
+      expect(exceededSources).toHaveLength(2);
+      expect(exceededSources[0].url).toBe('https://6.com');
+      expect(exceededSources[0].position).toBe(6);
+      expect(exceededSources[1].url).toBe('https://7.com');
+      expect(exceededSources[1].position).toBe(7);
+    });
+
+    it('tracks origin and sets phase correctly based on category', () => {
+      const research: CategorizedSearchResult[] = [
+        {
+          query: 'overview query',
+          answer: 'Overview answer',
+          results: [
+            { title: 'Scout Source 1', url: 'https://scout1.com', content: 'Scout content 1' },
+            { title: 'Scout Source 2', url: 'https://scout2.com', content: 'Scout content 2' },
+          ],
+          category: 'overview',
+          timestamp: Date.now(),
+        },
+        {
+          query: 'section query',
+          answer: 'Section answer',
+          results: [
+            { title: 'Specialist Source', url: 'https://specialist.com', content: 'Specialist content' },
+          ],
+          category: 'section-specific',
+          timestamp: Date.now(),
+        },
+      ];
+
+      const result = buildResearchContext(research, 5, 600);
+
+      // Check origin stats
+      expect(result.stats.fromScout).toBe(2);
+      expect(result.stats.fromSpecialist).toBe(1);
+      expect(result.stats.used).toBe(3);
+
+      // Check that phase is set correctly on sourceUsage
+      const scoutSources = result.sourceUsage.filter(s => s.phase === 'scout');
+      const specialistSources = result.sourceUsage.filter(s => s.phase === 'specialist');
+      
+      expect(scoutSources).toHaveLength(2);
+      expect(specialistSources).toHaveLength(1);
+      
+      // Verify the URLs match
+      expect(scoutSources.map(s => s.url)).toContain('https://scout1.com');
+      expect(scoutSources.map(s => s.url)).toContain('https://scout2.com');
+      expect(specialistSources[0].url).toBe('https://specialist.com');
     });
   });
 

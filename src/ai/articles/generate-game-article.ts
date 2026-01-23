@@ -1105,9 +1105,9 @@ export async function generateGameArticleDraft(
   } = await executeEditorPhaseWithRetry(phaseContext, scoutOutput, editorModel);
 
   // ===== PHASE 3: SPECIALIST =====
-  // Use option override if provided, otherwise auto-decide based on category
-  // (parallel for 'lists' category where sections are independent)
-  const useParallelSections = options?.parallelSections ?? (plan.categorySlug === 'lists');
+  // Use option override if provided, otherwise default to sequential mode.
+  // Sequential mode maintains narrative flow between sections and is preferred for all categories.
+  const useParallelSections = options?.parallelSections ?? false;
 
   // Calculate effective word count based on context or category defaults
   const effectiveWordCount = getEffectiveWordCount(context.targetWordCount, plan.categorySlug);
