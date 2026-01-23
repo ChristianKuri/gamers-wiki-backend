@@ -38,6 +38,11 @@ export interface QualityValidationResult {
   readonly clarityScore: number;
   /** Whether the image passed validation */
   readonly passed: boolean;
+  /** 
+   * Human-readable rejection reason (only set when passed=false).
+   * Single source of truth - use this instead of reconstructing from fields.
+   */
+  readonly rejectionReason?: string;
   /** Optional notes about quality issues */
   readonly notes?: string;
 }
@@ -173,6 +178,7 @@ export async function validateImageQuality(
         hasUIOverlay: false,
         clarityScore: 0,
         passed: false,
+        rejectionReason: 'Validation cancelled',
         notes: 'Validation cancelled',
       },
       tokenUsage: { input: 0, output: 0 },
@@ -207,8 +213,16 @@ export async function validateImageQuality(
     const response = result.output;
     const tokenUsage = createTokenUsageFromResult(result);
 
-    // Determine if image passed validation
+    // Determine if image passed validation (watermark or low clarity = fail)
+    // Note: UI overlay is acceptable for game screenshots
     const passed = !response.hasWatermark && response.clarityScore >= minClarityScore;
+    
+    // Build rejection reason (single source of truth)
+    const rejectionReason = passed
+      ? undefined
+      : response.hasWatermark
+        ? 'Watermark detected'
+        : `Clarity too low (${response.clarityScore})`;
 
     const urlSuffix = options.imageUrl ? ` | ${options.imageUrl}` : '';
     log?.info(
@@ -223,6 +237,7 @@ export async function validateImageQuality(
         hasUIOverlay: response.hasUIOverlay,
         clarityScore: response.clarityScore,
         passed,
+        rejectionReason,
         notes: response.notes,
       },
       tokenUsage,
@@ -238,6 +253,7 @@ export async function validateImageQuality(
         hasUIOverlay: false,
         clarityScore: 0,
         passed: false,
+        rejectionReason: 'Validation error',
         notes: `Validation error: ${errorMsg}`,
       },
       tokenUsage: { input: 0, output: 0 },

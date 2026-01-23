@@ -26,8 +26,18 @@ process.on('unhandledRejection', (reason, _promise) => {
   // Check if it's a known transient error (already handled by retry logic)
   const isTransient = TRANSIENT_NETWORK_ERROR_PATTERN.test(message + cause);
   if (isTransient) {
-    // Log at warn level - visible but not alarming since retry logic handles these
-    logger.warn(`[UnhandledRejection] Transient network error (handled by retry): ${message}${cause}`);
+    // Log at warn level with stack trace to identify WHERE the timeout occurred
+    // Stack trace shows the code path: e.g., tavily.ts fetch, cleaner generateText, etc.
+    const stack = reason instanceof Error && reason.stack ? reason.stack : '';
+    // Extract the first few lines of the stack that show the actual location
+    const relevantStack = stack
+      .split('\n')
+      .slice(0, 5) // Error message + first 4 stack frames
+      .join('\n');
+    logger.warn(
+      `[UnhandledRejection] Transient network error (handled by retry): ${message}${cause}\n` +
+      `Stack trace:\n${relevantStack}`
+    );
     return;
   }
 

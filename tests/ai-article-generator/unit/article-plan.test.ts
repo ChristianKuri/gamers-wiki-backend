@@ -48,6 +48,45 @@ describe('ArticlePlanSchema', () => {
     expect(plan.categorySlug).toBe('guide');
     expect(plan.sections.length).toBeGreaterThanOrEqual(4);
   });
+
+  it('accepts sections with empty researchQueries when existing research is sufficient', () => {
+    const plan = ArticlePlanSchema.parse({
+      categorySlug: 'guides',
+      sections: [
+        {
+          headline: 'Section with query',
+          goal: 'This section needs additional research.',
+          researchQueries: ['Elden Ring specific topic guide'],
+          mustCover: ['Topic A'],
+        },
+        {
+          headline: 'Section without query',
+          goal: 'Scout research is sufficient for this section.',
+          researchQueries: [], // Empty array - existing research is enough
+          mustCover: ['Topic B'],
+        },
+        {
+          headline: 'Another section with query',
+          goal: 'More research needed.',
+          researchQueries: ['Elden Ring another topic'],
+          mustCover: ['Topic C'],
+        },
+        {
+          headline: 'Final section without query',
+          goal: 'Scout research covers this.',
+          researchQueries: [], // Empty array - existing research is enough
+          mustCover: ['Topic D'],
+        },
+      ],
+      safety: {
+        noScoresUnlessReview: true,
+      },
+    });
+
+    expect(plan.sections[0].researchQueries).toHaveLength(1);
+    expect(plan.sections[1].researchQueries).toHaveLength(0);
+    expect(plan.sections[3].researchQueries).toHaveLength(0);
+  });
 });
 
 describe('ArticleMetadataSchema', () => {

@@ -22,6 +22,11 @@
  * @see docs/ai-article-generation-technical-reference.md for full API reference
  */
 
+import { createPrefixedLogger } from '../../utils/logger';
+import { logFetchError } from './error-utils';
+
+const log = createPrefixedLogger('[Tavily]');
+
 export type TavilySearchDepth = 'basic' | 'advanced';
 
 export interface TavilySearchOptions {
@@ -253,12 +258,19 @@ export async function tavilySearch(
     });
 
     if (!res.ok) {
+      log.warn(`HTTP ${res.status} for query: "${cleanedQuery.slice(0, 60)}..."`);
       return { query: cleanedQuery, answer: null, results: [] };
     }
 
     const json = (await res.json()) as unknown;
     return parseTavilyResponse(cleanedQuery, json);
-  } catch {
+  } catch (err) {
+    logFetchError({
+      err,
+      context: cleanedQuery,
+      timeoutMs,
+      warn: log.warn,
+    });
     return { query: cleanedQuery, answer: null, results: [] };
   } finally {
     clearTimeout(timer);

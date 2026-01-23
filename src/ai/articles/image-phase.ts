@@ -388,57 +388,79 @@ export async function runImagePhase(
   // the first valid image for each slot (hero, sections).
   log?.info(`${logPrefix} Processing candidates with dimension validation...`);
 
-  // Create quality validator for hero if enabled
-  // Hero images are validated for watermarks and clarity (most important image)
-  let heroQualityValidator: QualityValidator | undefined;
-  let heroQualityTokenUsage: TokenUsage = { input: 0, output: 0 };
-  if (IMAGE_QUALITY_VALIDATION_CONFIG.ENABLED_FOR_HERO) {
-    log?.debug(`${logPrefix} Hero quality validation enabled`);
-    heroQualityValidator = async (buffer: Buffer, mimeType: string, imageUrl?: string) => {
+  // Shared cache for quality validation results (persists across hero + all sections)
+  // Key: image URL, Value: { passed, reason }
+  // This prevents re-validating the same watermarked/low-quality image multiple times
+  const qualityResultCache = new Map<string, { passed: boolean; reason?: string }>();
+  let qualityCacheHits = 0;
+  let qualityCacheMisses = 0;
+  let qualityTokenUsage: TokenUsage = { input: 0, output: 0 };
+
+  /**
+   * Factory function to create quality validators with shared cache.
+   * Reduces code duplication between hero and section validators.
+   * 
+   * @param opts.forceEnabled - Force validation even if globally disabled (for hero)
+   * @param opts.debugLabel - Label for debug logging (e.g., "hero", "section")
+   */
+  function createQualityValidator(opts: {
+    forceEnabled?: boolean;
+    debugLabel?: string;
+  }): QualityValidator {
+    const { forceEnabled = false, debugLabel = '' } = opts;
+    const labelSuffix = debugLabel ? ` for ${debugLabel}` : '';
+    
+    return async (buffer: Buffer, mimeType: string, imageUrl?: string) => {
+      // Check cache first (same image may appear across hero and multiple sections)
+      if (imageUrl) {
+        const cached = qualityResultCache.get(imageUrl);
+        if (cached !== undefined) {
+          qualityCacheHits++;
+          const statusText = cached.passed ? 'passed' : `rejected: ${cached.reason ?? 'unknown'}`;
+          log?.debug(`${logPrefix} Quality cache hit${labelSuffix}: ${imageUrl.slice(0, 60)}... (${statusText})`);
+          return cached;
+        }
+      }
+      qualityCacheMisses++;
+
       const { result, tokenUsage } = await validateImageQuality(buffer, {
         model,
         generateText,
         logger: log,
         signal,
-      }, { forceEnabled: true, imageUrl });
-      // Track token usage
-      heroQualityTokenUsage = addTokenUsage(heroQualityTokenUsage, tokenUsage);
-      return {
+      }, { forceEnabled, imageUrl });
+      
+      qualityTokenUsage = addTokenUsage(qualityTokenUsage, tokenUsage);
+      
+      // Use rejectionReason from source (single source of truth)
+      // Rejection criteria: watermark or low clarity
+      // UI overlay is acceptable (games naturally have HUD elements)
+      const validatorResult = {
         passed: result.passed,
-        reason: result.passed
-          ? undefined
-          : result.hasWatermark
-            ? 'Watermark detected'
-            : `Clarity too low (${result.clarityScore})`,
+        reason: result.rejectionReason,
       };
+      
+      // Cache the result for future lookups
+      if (imageUrl) {
+        qualityResultCache.set(imageUrl, validatorResult);
+      }
+      
+      return validatorResult;
     };
   }
 
-  // Create quality validator for sections if enabled
-  // Section images are validated for watermarks/logos as the final gate before acceptance
+  // Create validators using factory (hero uses forceEnabled to bypass global disable)
+  let heroQualityValidator: QualityValidator | undefined;
   let sectionQualityValidator: QualityValidator | undefined;
-  let sectionQualityTokenUsage: TokenUsage = { input: 0, output: 0 };
+  
+  if (IMAGE_QUALITY_VALIDATION_CONFIG.ENABLED_FOR_HERO) {
+    log?.debug(`${logPrefix} Hero quality validation enabled`);
+    heroQualityValidator = createQualityValidator({ forceEnabled: true, debugLabel: 'hero' });
+  }
+  
   if (IMAGE_QUALITY_VALIDATION_CONFIG.ENABLED) {
     log?.debug(`${logPrefix} Section quality validation enabled`);
-    sectionQualityValidator = async (buffer: Buffer, mimeType: string, imageUrl?: string) => {
-      const { result, tokenUsage } = await validateImageQuality(buffer, {
-        model,
-        generateText,
-        logger: log,
-        signal,
-      }, { imageUrl });
-      sectionQualityTokenUsage = addTokenUsage(sectionQualityTokenUsage, tokenUsage);
-      return {
-        passed: result.passed,
-        reason: result.passed
-          ? undefined
-          : result.hasWatermark
-            ? 'Watermark detected'
-            : result.hasUIOverlay
-              ? 'UI overlay detected'
-              : `Clarity too low (${result.clarityScore})`,
-      };
-    };
+    sectionQualityValidator = createQualityValidator({ debugLabel: 'section' });
   }
 
   // Process hero candidates
@@ -478,6 +500,16 @@ export async function runImagePhase(
   const sectionAssignments: SectionImageAssignment[] = toSectionAssignments(sectionResults);
 
   log?.info(`${logPrefix} Dimension validation complete: hero=${heroAssignment ? 'yes' : 'no'}, sections=${sectionAssignments.length}`);
+
+  // Log quality validation cache stats
+  if (qualityCacheHits > 0 || qualityCacheMisses > 0) {
+    const totalRequests = qualityCacheHits + qualityCacheMisses;
+    const hitRate = totalRequests > 0 ? Math.round((qualityCacheHits / totalRequests) * 100) : 0;
+    log?.info(
+      `${logPrefix} Quality validation cache: ${qualityCacheHits} hits, ${qualityCacheMisses} misses ` +
+      `(${hitRate}% hit rate, ${qualityResultCache.size} unique images)`
+    );
+  }
 
   // ===== STEP 3: Process and Upload Hero Image =====
   // Hero images are processed (resize/optimize) for consistent quality
@@ -649,10 +681,7 @@ export async function runImagePhase(
       heroImageFailed,
       sectionImages: uploadedSectionImages.map(s => s.upload),
       failedSections: failedSections.length > 0 ? failedSections : undefined,
-      tokenUsage: addTokenUsage(
-        addTokenUsage(curatorOutput.tokenUsage, heroQualityTokenUsage),
-        sectionQualityTokenUsage
-      ),
+      tokenUsage: addTokenUsage(curatorOutput.tokenUsage, qualityTokenUsage),
       poolSummary: { total: poolSummary.total, igdb: poolSummary.igdb, web: webCount },
     };
   }
@@ -670,10 +699,7 @@ export async function runImagePhase(
     heroImageFailed,
     sectionImages: insertionResult.sectionImages,
     failedSections: failedSections.length > 0 ? failedSections : undefined,
-    tokenUsage: addTokenUsage(
-      addTokenUsage(curatorOutput.tokenUsage, heroQualityTokenUsage),
-      sectionQualityTokenUsage
-    ),
+    tokenUsage: addTokenUsage(curatorOutput.tokenUsage, qualityTokenUsage),
     poolSummary: { total: poolSummary.total, igdb: poolSummary.igdb, web: webCount },
   };
 }
