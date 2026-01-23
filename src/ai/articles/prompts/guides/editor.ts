@@ -176,6 +176,19 @@ STRUCTURE TEMPLATES:
 • Boss Guide: Preparation → Phase breakdown → Strategy → Rewards
 • Area Guide: Overview → Subarea 1 → Subarea 2 → ... → Secrets
 
+=== FULL COVERAGE PRINCIPLE ===
+
+Each major aspect of the subject deserves its own section. Don't combine phases or topics.
+
+Examples of complete section breakdowns:
+• Boss guide (3 phases) should have at least: → How to Find, Best Party/Build, Phase 1, Phase 2, Phase 3, Rewards
+• Location guide (4 subareas) should have at least: → How to Reach, Subarea A, Subarea B, Subarea C, Subarea D, Collectibles, Rewards
+• Character guide should have at least: → How to Recruit, Best Build, Team Synergies, Tips
+• Quest guide (multi-step) should have at least: → How to Start, Step 1, Step 2, Step 3, Choices & Consequences, Rewards
+• Weapon/Item guide should have at least: → How to Obtain, Stats & Scaling, Best Builds For It, Upgrade Path, Tips
+IMPORTANT: The idea is to have full coverage of what we are talking about, each important thing in its own section.
+
+
 === H2 HEADLINE FORMAT (SEO-CRITICAL) ===
 
 Every H2 headline MUST follow one of these patterns:
@@ -263,12 +276,29 @@ OUTPUT STRUCTURE:
   ]
 }
 
-RESEARCH QUERY FORMAT (CRITICAL — ONE QUERY PER SECTION):
-Each section gets exactly ONE search query. Make it count!
+RESEARCH QUERY DECISION (One query OR empty array per section):
 
+For EACH section, decide if additional research is needed based on existing coverage:
+
+SKIP query (researchQueries: []) when:
+• All mustCover elements are well-documented in the source summaries above
+• The Scout research already covers the section's specific topic in detail
+• Adding a query would return redundant/duplicate content you already have
+
+ADD query (researchQueries: ["..."]) when:
+• Section covers specific mechanics/items NOT found in existing research
+• mustCover includes details not found in any source summary above
+• The topic is specialized (boss phases, build stats, hidden locations, exact timings)
+
+Example decisions:
+• "How to Find Malenia" section → SKIP if sources already detail the location
+• "Malenia Phase 2 Scarlet Rot Attacks" → ADD query for specific phase mechanics
+• "Malenia Rewards and Drops" section → SKIP if sources already list all drops
+
+QUERY FORMAT (when adding a query):
 FORMAT: "Game Name" + section topic + "guide"
 • ALWAYS start with game name in quotes: "Elden Ring"
-• ALWAYS include "guide" — we're creating guides, search results should be guides
+• ALWAYS include "guide" — search results should be guides
 • Be specific about the section's main topic
 • Tavily uses semantic search — clear, natural queries work best
 
@@ -276,11 +306,9 @@ EXAMPLES:
 ✅ "Elden Ring" best starting class and keepsake guide
 ✅ "Zelda Tears of the Kingdom" Ultrahand and Fuse abilities guide
 ✅ "Elden Ring" Spirit Calling Bell location guide
-✅ "Elden Ring" guard counter and stance break combat guide
 
 ❌ "Elden Ring" class (too vague)
 ❌ "how to get Torrent" (missing game name — returns mod sites)
-❌ Three separate queries (wasteful — combine into one)
 `;
   }
 };

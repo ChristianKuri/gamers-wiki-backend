@@ -36,6 +36,10 @@
  * @see https://docs.exa.ai/reference/how-exa-search-works
  */
 
+import { createPrefixedLogger } from '../../utils/logger';
+
+const log = createPrefixedLogger('[Exa]');
+
 // ============================================================================
 // Types
 // ============================================================================
@@ -524,12 +528,26 @@ export async function exaSearch(
     });
 
     if (!res.ok) {
+      log.warn(`HTTP ${res.status} for query: "${cleanedQuery.slice(0, 60)}..."`);
       return { query: cleanedQuery, results: [] };
     }
 
     const json = (await res.json()) as unknown;
     return parseExaResponse(cleanedQuery, json);
-  } catch {
+  } catch (err) {
+    // Log timeout/network errors with query context for debugging
+    const errMsg = err instanceof Error ? err.message : String(err);
+    const isTimeout = errMsg.includes('abort') || errMsg.includes('timeout');
+    const isNetwork = errMsg.includes('fetch failed') || errMsg.includes('ECONNRESET');
+    
+    if (isTimeout) {
+      log.warn(`Timeout (${timeoutMs}ms) for query: "${cleanedQuery.slice(0, 60)}..."`);
+    } else if (isNetwork) {
+      log.warn(`Network error for query: "${cleanedQuery.slice(0, 60)}..." - ${errMsg}`);
+    } else {
+      log.warn(`Error for query: "${cleanedQuery.slice(0, 60)}..." - ${errMsg}`);
+    }
+    
     return { query: cleanedQuery, results: [] };
   } finally {
     clearTimeout(timer);
@@ -610,12 +628,26 @@ export async function exaFindSimilar(
     });
 
     if (!res.ok) {
+      log.warn(`[FindSimilar] HTTP ${res.status} for URL: "${cleanedUrl.slice(0, 60)}..."`);
       return { query: cleanedUrl, results: [] };
     }
 
     const json = (await res.json()) as unknown;
     return parseExaResponse(cleanedUrl, json);
-  } catch {
+  } catch (err) {
+    // Log timeout/network errors with URL context for debugging
+    const errMsg = err instanceof Error ? err.message : String(err);
+    const isTimeout = errMsg.includes('abort') || errMsg.includes('timeout');
+    const isNetwork = errMsg.includes('fetch failed') || errMsg.includes('ECONNRESET');
+    
+    if (isTimeout) {
+      log.warn(`[FindSimilar] Timeout (${timeoutMs}ms) for URL: "${cleanedUrl.slice(0, 60)}..."`);
+    } else if (isNetwork) {
+      log.warn(`[FindSimilar] Network error for URL: "${cleanedUrl.slice(0, 60)}..." - ${errMsg}`);
+    } else {
+      log.warn(`[FindSimilar] Error for URL: "${cleanedUrl.slice(0, 60)}..." - ${errMsg}`);
+    }
+    
     return { query: cleanedUrl, results: [] };
   } finally {
     clearTimeout(timer);

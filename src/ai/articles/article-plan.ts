@@ -54,6 +54,11 @@ export function normalizeArticleCategorySlug(value: ArticleCategorySlugInput): A
 export const ArticleSectionPlanSchema = z.object({
   headline: z.string().min(1),
   goal: z.string().min(1),
+  /**
+   * Search queries to run for this section's research.
+   * Empty array [] is allowed when existing Scout research is sufficient.
+   * Editor decides per-section based on mustCover coverage in sourceSummaries.
+   */
   researchQueries: z
     .array(z.string().min(1))
     .min(ARTICLE_PLAN_CONSTRAINTS.MIN_RESEARCH_QUERIES_PER_SECTION)

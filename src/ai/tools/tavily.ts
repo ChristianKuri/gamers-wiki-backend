@@ -22,6 +22,10 @@
  * @see docs/ai-article-generation-technical-reference.md for full API reference
  */
 
+import { createPrefixedLogger } from '../../utils/logger';
+
+const log = createPrefixedLogger('[Tavily]');
+
 export type TavilySearchDepth = 'basic' | 'advanced';
 
 export interface TavilySearchOptions {
@@ -253,12 +257,26 @@ export async function tavilySearch(
     });
 
     if (!res.ok) {
+      log.warn(`HTTP ${res.status} for query: "${cleanedQuery.slice(0, 60)}..."`);
       return { query: cleanedQuery, answer: null, results: [] };
     }
 
     const json = (await res.json()) as unknown;
     return parseTavilyResponse(cleanedQuery, json);
-  } catch {
+  } catch (err) {
+    // Log timeout/network errors with query context for debugging
+    const errMsg = err instanceof Error ? err.message : String(err);
+    const isTimeout = errMsg.includes('abort') || errMsg.includes('timeout');
+    const isNetwork = errMsg.includes('fetch failed') || errMsg.includes('ECONNRESET');
+    
+    if (isTimeout) {
+      log.warn(`Timeout (${timeoutMs}ms) for query: "${cleanedQuery.slice(0, 60)}..."`);
+    } else if (isNetwork) {
+      log.warn(`Network error for query: "${cleanedQuery.slice(0, 60)}..." - ${errMsg}`);
+    } else {
+      log.warn(`Error for query: "${cleanedQuery.slice(0, 60)}..." - ${errMsg}`);
+    }
+    
     return { query: cleanedQuery, answer: null, results: [] };
   } finally {
     clearTimeout(timer);
